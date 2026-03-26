@@ -180,6 +180,7 @@ export const webhookConfig = pgTable('webhook_config', {
   authPass: varchar('auth_pass', { length: 255 }),
   authHeaderName: varchar('auth_header_name', { length: 255 }),
   authHeaderValue: varchar('auth_header_value', { length: 500 }),
+  typFilter: varchar('typ_filter', { length: 20 }).notNull().default('ALLE'), // ALLE | REISEKOSTEN | ERSTATTUNG
   eventEingereicht: boolean('event_eingereicht').notNull().default(true),
   eventStatusGeaendert: boolean('event_status_geaendert').notNull().default(true),
   eventFehler: boolean('event_fehler').notNull().default(true),

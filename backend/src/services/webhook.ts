@@ -69,6 +69,9 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
   for (const config of configs) {
     if (!config.aktiv || !config.url) continue;
 
+    // Typ-Filter prüfen (ALLE, REISEKOSTEN, ERSTATTUNG)
+    if (config.typFilter && config.typFilter !== 'ALLE' && config.typFilter !== data.typ) continue;
+
     // Event-Filter prüfen
     if (event === 'eingereicht' && !config.eventEingereicht) continue;
     if (event === 'status_geaendert' && !config.eventStatusGeaendert) continue;

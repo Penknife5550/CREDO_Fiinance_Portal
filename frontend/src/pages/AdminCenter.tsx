@@ -822,11 +822,18 @@ interface WebhookConfig {
   authPass: string | null;
   authHeaderName: string | null;
   authHeaderValue: string | null;
+  typFilter: 'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG';
   eventEingereicht: boolean;
   eventStatusGeaendert: boolean;
   eventFehler: boolean;
   updatedAt: string;
 }
+
+const TYP_FILTER_LABELS: Record<string, string> = {
+  ALLE: 'Alle Einreichungen',
+  REISEKOSTEN: 'Nur Reisekosten',
+  ERSTATTUNG: 'Nur Erstattungen',
+};
 
 const AUTH_TYPE_LABELS: Record<string, string> = {
   NONE: 'Keine',
@@ -1030,7 +1037,8 @@ function WebhookCard({ webhook, onUpdate }: { webhook: WebhookConfig; onUpdate: 
             </span>
           </div>
           <p className="font-mono text-sm text-credo-700 truncate mt-2">{webhook.url || '—'}</p>
-          <div className="flex gap-3 mt-2 text-xs text-credo-500">
+          <div className="flex flex-wrap gap-2 mt-2 text-xs text-credo-500">
+            <span className="bg-credo-100 text-credo-700 px-1.5 py-0.5 rounded font-medium">{TYP_FILTER_LABELS[webhook.typFilter] || 'Alle'}</span>
             {webhook.eventEingereicht && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Eingereicht</span>}
             {webhook.eventStatusGeaendert && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Status</span>}
             {webhook.eventFehler && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Fehler</span>}
@@ -1091,6 +1099,7 @@ function WebhookForm({ initial, onSave, onCancel }: {
   const [authPass, setAuthPass] = useState('');
   const [authHeaderName, setAuthHeaderName] = useState(initial?.authHeaderName || '');
   const [authHeaderValue, setAuthHeaderValue] = useState('');
+  const [typFilter, setTypFilter] = useState<'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG'>(initial?.typFilter || 'ALLE');
   const [aktiv, setAktiv] = useState(initial?.aktiv ?? true);
   const [eventEingereicht, setEventEingereicht] = useState(initial?.eventEingereicht ?? true);
   const [eventStatusGeaendert, setEventStatusGeaendert] = useState(initial?.eventStatusGeaendert ?? true);
@@ -1132,6 +1141,7 @@ function WebhookForm({ initial, onSave, onCancel }: {
       authPass: authType === 'BASIC' ? (authPass || (initial?.authPass === '***' ? '***' : '')) : null,
       authHeaderName: authType === 'HEADER' ? authHeaderName : null,
       authHeaderValue: authType === 'HEADER' ? (authHeaderValue || (initial?.authHeaderValue === '***' ? '***' : '')) : null,
+      typFilter,
       aktiv,
       eventEingereicht,
       eventStatusGeaendert,
@@ -1143,6 +1153,19 @@ function WebhookForm({ initial, onSave, onCancel }: {
   return (
     <form onSubmit={handleSubmit} className="border border-blue-200 bg-blue-50/30 rounded-lg p-4 space-y-4">
       <h4 className="font-semibold text-credo-900">{initial ? 'Webhook bearbeiten' : 'Neuer Webhook'}</h4>
+
+      <div>
+        <label className="label">Einreichungstyp</label>
+        <select
+          className="input-field"
+          value={typFilter}
+          onChange={e => setTypFilter(e.target.value as 'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG')}
+        >
+          <option value="ALLE">Alle Einreichungen</option>
+          <option value="REISEKOSTEN">Nur Reisekosten</option>
+          <option value="ERSTATTUNG">Nur Erstattungen</option>
+        </select>
+      </div>
 
       <div>
         <label className="label">Webhook-URL (n8n)</label>
