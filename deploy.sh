@@ -48,7 +48,7 @@ case "${1:-deploy}" in
     if docker inspect --format='{{.State.Health.Status}}' "$APP_CONTAINER" 2>/dev/null | grep -q "healthy"; then
       echo ""
       echo "  ✓ Deployment erfolgreich!"
-      echo "  → https://finanzen.fes-credo.de"
+      echo "  → https://finance.fes-credo.de"
       echo ""
     else
       echo ""

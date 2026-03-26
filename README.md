@@ -2,7 +2,7 @@
 
 Internes Self-Service-Portal fuer Reisekosten- und Kostenerstattungen der CREDO Gruppe (Freie Evangelische Schulen).
 
-**Domain:** `finanzen.fes-credo.de`
+**Domain:** `finance.fes-credo.de`
 **Repository:** `github.com/Penknife5550/CREDO_Fiinance_Portal`
 
 ---
@@ -135,7 +135,7 @@ npm run dev:frontend    # Frontend auf Port 3000 (Proxy → 3001)
 
 - Server mit Docker + Docker Compose
 - Caddy Reverse Proxy mit externem Netzwerk `reverse_proxy`
-- DNS: `finanzen.fes-credo.de` zeigt auf den Server
+- DNS: `finance.fes-credo.de` zeigt auf den Server
 
 ### 1. Repository klonen
 
@@ -163,14 +163,14 @@ Alle Werte in `.env.production` anpassen:
 | `MAIL_FROM_NAME` | Absendername | `CREDO Finanzportal` |
 | `MAIL_FROM_EMAIL` | Absender-E-Mail | `finanzportal@credo.de` |
 | `ADMIN_INITIAL_PASSWORD` | Admin-Passwort | `...` |
-| `APP_URL` | Oeffentliche URL | `https://finanzen.fes-credo.de` |
+| `APP_URL` | Oeffentliche URL | `https://finance.fes-credo.de` |
 
 ### 3. Caddy konfigurieren
 
 Den folgenden Block in die bestehende Caddyfile einfuegen (neben `hr.fes-credo.de`):
 
 ```
-finanzen.fes-credo.de {
+finance.fes-credo.de {
     reverse_proxy credo-finanz-app:3000
 }
 ```

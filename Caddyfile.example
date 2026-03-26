@@ -6,7 +6,7 @@
 # Caddy muss im selben Docker-Netzwerk "reverse_proxy" sein.
 # =============================================================================
 
-finanzen.fes-credo.de {
+finance.fes-credo.de {
 	reverse_proxy credo-finanz-app:3000
 
 	# Security Headers

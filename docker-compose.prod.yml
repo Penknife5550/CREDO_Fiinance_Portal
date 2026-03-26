@@ -3,7 +3,7 @@
 # =============================================================================
 # Voraussetzung: Caddy Reverse Proxy mit externem Netzwerk "reverse_proxy"
 # Deployment: docker compose -f docker-compose.prod.yml --env-file .env.production up -d
-# Domain: finanzen.fes-credo.de
+# Domain: finance.fes-credo.de
 # =============================================================================
 
 services:
@@ -42,7 +42,7 @@ services:
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-CREDO Finanzportal}
       MAIL_FROM_EMAIL: ${MAIL_FROM_EMAIL}
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
-      APP_URL: ${APP_URL:-https://finanzen.fes-credo.de}
+      APP_URL: ${APP_URL:-https://finance.fes-credo.de}
       WEBHOOK_URL_REISEKOSTEN: ${WEBHOOK_URL_REISEKOSTEN:-}
       WEBHOOK_URL_ERSTATTUNG: ${WEBHOOK_URL_ERSTATTUNG:-}
       NODE_ENV: production
