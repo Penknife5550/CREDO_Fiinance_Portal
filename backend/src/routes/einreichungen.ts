@@ -166,12 +166,11 @@ einreichungenRouter.post('/', async (req, res) => {
       }
 
       // In DB speichern
-      const rkKostenstelleIdValue = parsed.persoenlich.kostenstelleId || undefined;
       const [einreichung] = await db.insert(schema.einreichungen).values({
         typ: 'REISEKOSTEN',
         belegNr,
         mandantId: parsed.persoenlich.mandantId,
-        ...(rkKostenstelleIdValue ? { kostenstelleId: rkKostenstelleIdValue } : {}),
+        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
         mitarbeiterVorname: parsed.persoenlich.vorname,
         mitarbeiterNachname: parsed.persoenlich.nachname,
         mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
@@ -376,12 +375,11 @@ einreichungenRouter.post('/', async (req, res) => {
       }
 
       // In DB speichern
-      const kostenstelleIdValue = parsed.persoenlich.kostenstelleId || undefined;
       const [einreichung] = await db.insert(schema.einreichungen).values({
         typ: 'ERSTATTUNG',
         belegNr,
         mandantId: parsed.persoenlich.mandantId,
-        ...(kostenstelleIdValue ? { kostenstelleId: kostenstelleIdValue } : {}),
+        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
         mitarbeiterVorname: parsed.persoenlich.vorname,
         mitarbeiterNachname: parsed.persoenlich.nachname,
         mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
