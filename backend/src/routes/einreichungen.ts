@@ -63,6 +63,7 @@ einreichungenRouter.post('/belege', upload.array('belege', 20), async (req, res)
     const belege = await Promise.all(files.map(async f => ({
       originalname: f.originalname,
       dateiId: path.basename(f.path),
+      dateipfad: path.basename(f.path),
       dateityp: path.extname(f.originalname).replace('.', '').toUpperCase(),
       dateigroesse: f.size,
       sha256: await berechneHash(f.path),
@@ -155,8 +156,12 @@ einreichungenRouter.post('/', async (req, res) => {
         ? await db.select().from(schema.kostenstellen).where(eq(schema.kostenstellen.id, parsed.persoenlich.kostenstelleId))
         : [undefined];
 
-      if (!mandant || !kostenstelle) {
-        res.status(400).json({ error: 'Mandant oder Kostenstelle nicht gefunden' });
+      if (!mandant) {
+        res.status(400).json({ error: 'Mandant nicht gefunden' });
+        return;
+      }
+      if (parsed.persoenlich.kostenstelleId && !kostenstelle) {
+        res.status(400).json({ error: 'Kostenstelle nicht gefunden' });
         return;
       }
 
@@ -165,7 +170,7 @@ einreichungenRouter.post('/', async (req, res) => {
         typ: 'REISEKOSTEN',
         belegNr,
         mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId,
+        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
         mitarbeiterVorname: parsed.persoenlich.vorname,
         mitarbeiterNachname: parsed.persoenlich.nachname,
         mitarbeiterPersonalNr: parsed.persoenlich.personalNr,
@@ -234,8 +239,8 @@ einreichungenRouter.post('/', async (req, res) => {
         typ: 'REISEKOSTEN',
         belegNr,
         mandantName: mandant.name,
-        kostenstelleNr: kostenstelle.nummer,
-        kostenstelleBezeichnung: kostenstelle.bezeichnung,
+        kostenstelleNr: kostenstelle?.nummer || '',
+        kostenstelleBezeichnung: kostenstelle?.bezeichnung || '',
         vorname: parsed.persoenlich.vorname,
         nachname: parsed.persoenlich.nachname,
         personalNr: parsed.persoenlich.personalNr,
@@ -277,7 +282,7 @@ einreichungenRouter.post('/', async (req, res) => {
         status: 'EINGEREICHT',
         mandant: mandant.name,
         mandantNr: mandant.mandantNr,
-        kostenstelle: kostenstelle.bezeichnung,
+        kostenstelle: kostenstelle?.bezeichnung || '',
         mitarbeiter: {
           vorname: parsed.persoenlich.vorname,
           nachname: parsed.persoenlich.nachname,
@@ -333,7 +338,7 @@ einreichungenRouter.post('/', async (req, res) => {
             status: 'FEHLER',
             mandant: mandant.name,
             mandantNr: mandant.mandantNr,
-            kostenstelle: kostenstelle.bezeichnung,
+            kostenstelle: kostenstelle?.bezeichnung || '',
             mitarbeiter: { vorname: parsed.persoenlich.vorname, nachname: parsed.persoenlich.nachname, personalNr: parsed.persoenlich.personalNr || '' },
             gesamtbetrag: String(parsed.gesamtbetrag),
             iban: parsed.persoenlich.iban,
@@ -360,8 +365,12 @@ einreichungenRouter.post('/', async (req, res) => {
         ? await db.select().from(schema.kostenstellen).where(eq(schema.kostenstellen.id, parsed.persoenlich.kostenstelleId))
         : [undefined];
 
-      if (!mandant || !kostenstelle) {
-        res.status(400).json({ error: 'Mandant oder Kostenstelle nicht gefunden' });
+      if (!mandant) {
+        res.status(400).json({ error: 'Mandant nicht gefunden' });
+        return;
+      }
+      if (parsed.persoenlich.kostenstelleId && !kostenstelle) {
+        res.status(400).json({ error: 'Kostenstelle nicht gefunden' });
         return;
       }
 
@@ -370,7 +379,7 @@ einreichungenRouter.post('/', async (req, res) => {
         typ: 'ERSTATTUNG',
         belegNr,
         mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId,
+        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
         mitarbeiterVorname: parsed.persoenlich.vorname,
         mitarbeiterNachname: parsed.persoenlich.nachname,
         mitarbeiterPersonalNr: parsed.persoenlich.personalNr,
@@ -411,8 +420,8 @@ einreichungenRouter.post('/', async (req, res) => {
         typ: 'ERSTATTUNG',
         belegNr,
         mandantName: mandant.name,
-        kostenstelleNr: kostenstelle.nummer,
-        kostenstelleBezeichnung: kostenstelle.bezeichnung,
+        kostenstelleNr: kostenstelle?.nummer || '',
+        kostenstelleBezeichnung: kostenstelle?.bezeichnung || '',
         vorname: parsed.persoenlich.vorname,
         nachname: parsed.persoenlich.nachname,
         personalNr: parsed.persoenlich.personalNr,
@@ -435,7 +444,7 @@ einreichungenRouter.post('/', async (req, res) => {
         status: 'EINGEREICHT',
         mandant: mandant.name,
         mandantNr: mandant.mandantNr,
-        kostenstelle: kostenstelle.bezeichnung,
+        kostenstelle: kostenstelle?.bezeichnung || '',
         mitarbeiter: {
           vorname: parsed.persoenlich.vorname,
           nachname: parsed.persoenlich.nachname,
@@ -482,7 +491,7 @@ einreichungenRouter.post('/', async (req, res) => {
             status: 'FEHLER',
             mandant: mandant.name,
             mandantNr: mandant.mandantNr,
-            kostenstelle: kostenstelle.bezeichnung,
+            kostenstelle: kostenstelle?.bezeichnung || '',
             mitarbeiter: { vorname: parsed.persoenlich.vorname, nachname: parsed.persoenlich.nachname, personalNr: parsed.persoenlich.personalNr || '' },
             gesamtbetrag: String(parsed.gesamtbetrag),
             iban: parsed.persoenlich.iban,

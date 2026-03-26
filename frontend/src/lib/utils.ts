@@ -29,7 +29,19 @@ export function formatDate(date: string | Date): string {
 
 export function validateIBAN(iban: string): boolean {
   const cleaned = iban.replace(/\s/g, '').toUpperCase();
-  return /^DE\d{20}$/.test(cleaned);
+  if (!/^DE\d{20}$/.test(cleaned)) return false;
+
+  // IBAN-Prüfsumme (ISO 13616 / mod-97)
+  // Ländercode + Prüfziffer ans Ende verschieben, Buchstaben in Zahlen umwandeln
+  const rearranged = cleaned.slice(4) + cleaned.slice(0, 4);
+  const numStr = rearranged.replace(/[A-Z]/g, ch => String(ch.charCodeAt(0) - 55));
+
+  // mod 97 auf großer Zahl (stückweise berechnen)
+  let remainder = 0;
+  for (const digit of numStr) {
+    remainder = (remainder * 10 + parseInt(digit, 10)) % 97;
+  }
+  return remainder === 1;
 }
 
 export function formatIBAN(iban: string): string {

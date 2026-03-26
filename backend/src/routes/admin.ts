@@ -114,6 +114,55 @@ adminRouter.post('/kostenstellen', async (req, res) => {
   }
 });
 
+// PUT /api/admin/kostenstellen/:id — Kostenstelle bearbeiten
+adminRouter.put('/kostenstellen/:id', async (req, res) => {
+  try {
+    const body = z.object({
+      bezeichnung: z.string().min(1).max(255).optional(),
+      nummer: z.string().min(1).max(20).optional(),
+      active: z.boolean().optional(),
+    }).parse(req.body);
+
+    const result = await db
+      .update(schema.kostenstellen)
+      .set(body)
+      .where(eq(schema.kostenstellen.id, req.params.id))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Kostenstelle nicht gefunden' });
+      return;
+    }
+    res.json(result[0]);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Kostenstelle konnte nicht aktualisiert werden' });
+    }
+  }
+});
+
+// DELETE /api/admin/kostenstellen/:id — Kostenstelle löschen
+adminRouter.delete('/kostenstellen/:id', async (req, res) => {
+  try {
+    const result = await db
+      .delete(schema.kostenstellen)
+      .where(eq(schema.kostenstellen.id, req.params.id))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Kostenstelle nicht gefunden' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Kostenstelle konnte nicht gelöscht werden' });
+  }
+});
+
 // ── E-Mail-Konfiguration ──────────────────────────────
 
 // GET /api/admin/email-config

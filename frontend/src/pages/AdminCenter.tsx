@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check } from 'lucide-react';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 
 const TABS = [
   { id: 'mandanten', label: 'Mandanten', icon: Building2 },
+  { id: 'kostenstellen', label: 'Kostenstellen', icon: Layers },
   { id: 'pauschalen', label: 'Pauschalen', icon: DollarSign },
   { id: 'versand', label: 'Versand & Integration', icon: Mail },
   { id: 'protokoll', label: 'Protokoll', icon: Activity },
@@ -76,6 +77,7 @@ export function AdminCenter() {
       </div>
 
       {activeTab === 'mandanten' && <MandantenTab />}
+      {activeTab === 'kostenstellen' && <KostenstellenTab />}
       {activeTab === 'pauschalen' && <PauschalenTab />}
       {activeTab === 'versand' && <VersandTab />}
       {activeTab === 'protokoll' && <ProtokollTab />}
@@ -506,6 +508,343 @@ function MandantenTab() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Kostenstellen Tab ─────────────────────────────────
+
+interface Kostenstelle {
+  id: string;
+  mandantId: string;
+  bezeichnung: string;
+  nummer: string;
+  active: boolean;
+}
+
+function KostenstellenTab() {
+  const [mandanten, setMandanten] = useState<Mandant[]>([]);
+  const [selectedMandantId, setSelectedMandantId] = useState('');
+  const [kostenstellen, setKostenstellen] = useState<Kostenstelle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [ksLoading, setKsLoading] = useState(false);
+  const [fehler, setFehler] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const [createForm, setCreateForm] = useState({ bezeichnung: '', nummer: '' });
+  const [createFehler, setCreateFehler] = useState('');
+  const [editForm, setEditForm] = useState({ bezeichnung: '', nummer: '', active: true });
+
+  // Mandanten laden
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await adminFetch('/api/admin/mandanten');
+        if (!res.ok) throw new Error('Fehler beim Laden');
+        const data: Mandant[] = await res.json();
+        setMandanten(data.filter(m => m.active));
+        if (data.length > 0) setSelectedMandantId(data.filter(m => m.active)[0]?.id || '');
+      } catch {
+        setFehler('Mandanten konnten nicht geladen werden.');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Kostenstellen laden wenn Mandant wechselt
+  const loadKostenstellen = async (mandantId: string) => {
+    if (!mandantId) { setKostenstellen([]); return; }
+    setKsLoading(true);
+    try {
+      const res = await adminFetch(`/api/admin/kostenstellen/${mandantId}`);
+      if (!res.ok) throw new Error('Fehler');
+      setKostenstellen(await res.json());
+    } catch {
+      setFehler('Kostenstellen konnten nicht geladen werden.');
+    } finally {
+      setKsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedMandantId) loadKostenstellen(selectedMandantId);
+  }, [selectedMandantId]);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateFehler('');
+    setSaving(true);
+    try {
+      const res = await adminFetch('/api/admin/kostenstellen', {
+        method: 'POST',
+        body: JSON.stringify({
+          mandantId: selectedMandantId,
+          bezeichnung: createForm.bezeichnung,
+          nummer: createForm.nummer,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Fehler beim Anlegen' }));
+        throw new Error(err.error || 'Fehler beim Anlegen');
+      }
+      setShowCreate(false);
+      setCreateForm({ bezeichnung: '', nummer: '' });
+      await loadKostenstellen(selectedMandantId);
+    } catch (err) {
+      setCreateFehler(err instanceof Error ? err.message : 'Fehler beim Anlegen');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (ks: Kostenstelle) => {
+    setEditingId(ks.id);
+    setEditForm({ bezeichnung: ks.bezeichnung, nummer: ks.nummer, active: ks.active });
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await adminFetch(`/api/admin/kostenstellen/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(editForm),
+      });
+      if (!res.ok) throw new Error('Fehler beim Speichern');
+      setEditingId(null);
+      await loadKostenstellen(selectedMandantId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Fehler beim Speichern');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleActive = async (ks: Kostenstelle) => {
+    try {
+      const res = await adminFetch(`/api/admin/kostenstellen/${ks.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ active: !ks.active }),
+      });
+      if (!res.ok) throw new Error('Fehler');
+      await loadKostenstellen(selectedMandantId);
+    } catch {
+      alert('Status konnte nicht geändert werden.');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      const res = await adminFetch(`/api/admin/kostenstellen/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Fehler');
+      setDeletingId(null);
+      await loadKostenstellen(selectedMandantId);
+    } catch {
+      alert('Kostenstelle konnte nicht gelöscht werden.');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12 text-credo-500">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+        Lade...
+      </div>
+    );
+  }
+
+  const selectedMandant = mandanten.find(m => m.id === selectedMandantId);
+
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-credo-900">Kostenstellen pro Mandant</h3>
+          <p className="text-sm text-credo-500 mt-0.5">Verwalten Sie Kostenstellen für jeden Mandanten</p>
+        </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          disabled={!selectedMandantId}
+          className="btn-primary text-sm py-2 disabled:opacity-50"
+        >
+          <Plus className="w-4 h-4 mr-1.5" />
+          Kostenstelle anlegen
+        </button>
+      </div>
+
+      {/* Mandant-Auswahl */}
+      <div className="mb-4">
+        <label className="label">Mandant auswählen</label>
+        <select
+          className="input-field max-w-md"
+          value={selectedMandantId}
+          onChange={e => setSelectedMandantId(e.target.value)}
+        >
+          {mandanten.map(m => (
+            <option key={m.id} value={m.id}>
+              {m.name} ({m.mandantNr})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {fehler && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 mb-4">{fehler}</div>
+      )}
+
+      {/* Create Dialog */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="card w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-credo-900">Neue Kostenstelle</h3>
+              <button onClick={() => setShowCreate(false)} className="text-credo-400 hover:text-credo-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-credo-500 mb-4">
+              Für: <span className="font-medium text-credo-700">{selectedMandant?.name}</span>
+            </p>
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div>
+                <label className="label">Nummer</label>
+                <input
+                  type="text"
+                  className="input-field font-mono"
+                  placeholder="z.B. 5000"
+                  value={createForm.nummer}
+                  onChange={e => setCreateForm({ ...createForm, nummer: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">Bezeichnung</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="z.B. Schulbetrieb"
+                  value={createForm.bezeichnung}
+                  onChange={e => setCreateForm({ ...createForm, bezeichnung: e.target.value })}
+                  required
+                />
+              </div>
+
+              {createFehler && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{createFehler}</div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Abbrechen</button>
+                <button type="submit" disabled={saving} className="btn-primary flex-1 disabled:opacity-50">
+                  {saving ? 'Anlegen...' : 'Anlegen'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {ksLoading ? (
+        <div className="text-center py-8 text-credo-500">
+          <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+          Kostenstellen werden geladen...
+        </div>
+      ) : (
+        <div className="card p-0 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-credo-50 border-b border-credo-200">
+              <tr>
+                <th className="text-left p-3 font-medium text-credo-700">Nummer</th>
+                <th className="text-left p-3 font-medium text-credo-700">Bezeichnung</th>
+                <th className="text-center p-3 font-medium text-credo-700">Aktiv</th>
+                <th className="text-right p-3 font-medium text-credo-700">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kostenstellen.map((ks, i) => (
+                <tr key={ks.id} className={`border-b border-credo-100 ${i % 2 === 0 ? '' : 'bg-credo-50/50'}`}>
+                  {editingId === ks.id ? (
+                    <>
+                      <td className="p-3">
+                        <input
+                          type="text"
+                          className="input-field py-1 px-2 text-sm font-mono"
+                          value={editForm.nummer}
+                          onChange={e => setEditForm({ ...editForm, nummer: e.target.value })}
+                        />
+                      </td>
+                      <td className="p-3">
+                        <input
+                          type="text"
+                          className="input-field py-1 px-2 text-sm"
+                          value={editForm.bezeichnung}
+                          onChange={e => setEditForm({ ...editForm, bezeichnung: e.target.value })}
+                        />
+                      </td>
+                      <td className="p-3 text-center">
+                        <button onClick={() => setEditForm({ ...editForm, active: !editForm.active })} className="p-1">
+                          {editForm.active
+                            ? <ToggleRight className="w-6 h-6 text-emerald-500" />
+                            : <ToggleLeft className="w-6 h-6 text-red-400" />
+                          }
+                        </button>
+                      </td>
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <button
+                          onClick={() => handleSaveEdit(ks.id)}
+                          disabled={saving}
+                          className="text-emerald-500 hover:text-emerald-700 p-1 disabled:opacity-50"
+                          title="Speichern"
+                        >
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => setEditingId(null)} className="text-credo-400 hover:text-credo-600 p-1 ml-1" title="Abbrechen">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="p-3 font-mono font-medium">{ks.nummer}</td>
+                      <td className="p-3 font-medium text-credo-900">{ks.bezeichnung}</td>
+                      <td className="p-3 text-center">
+                        <button onClick={() => handleToggleActive(ks)} title={ks.active ? 'Deaktivieren' : 'Aktivieren'}>
+                          <span className={`inline-block w-3 h-3 rounded-full ${ks.active ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                        </button>
+                      </td>
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <button onClick={() => startEdit(ks)} className="text-credo-400 hover:text-credo-600 p-1" title="Bearbeiten">
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        {deletingId === ks.id ? (
+                          <span className="inline-flex items-center gap-1 ml-1">
+                            <button onClick={() => handleDelete(ks.id)} className="text-xs text-red-600 font-medium px-2 py-1 bg-red-50 rounded hover:bg-red-100">Ja</button>
+                            <button onClick={() => setDeletingId(null)} className="text-xs text-credo-500 px-2 py-1">Nein</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setDeletingId(ks.id)} className="text-credo-400 hover:text-red-500 p-1" title="Löschen">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+              {kostenstellen.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-6 text-center text-credo-400">
+                    Keine Kostenstellen für diesen Mandanten. Legen Sie die erste Kostenstelle an.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
