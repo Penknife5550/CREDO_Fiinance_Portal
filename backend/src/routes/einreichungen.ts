@@ -166,14 +166,15 @@ einreichungenRouter.post('/', async (req, res) => {
       }
 
       // In DB speichern
+      const rkKostenstelleIdValue = parsed.persoenlich.kostenstelleId || undefined;
       const [einreichung] = await db.insert(schema.einreichungen).values({
         typ: 'REISEKOSTEN',
         belegNr,
         mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
+        ...(rkKostenstelleIdValue ? { kostenstelleId: rkKostenstelleIdValue } : {}),
         mitarbeiterVorname: parsed.persoenlich.vorname,
         mitarbeiterNachname: parsed.persoenlich.nachname,
-        mitarbeiterPersonalNr: parsed.persoenlich.personalNr,
+        mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
         bankIban: parsed.persoenlich.iban,
         bankKontoinhaber: parsed.persoenlich.kontoinhaber,
         reiseanlass: parsed.reiseanlass,
@@ -375,18 +376,19 @@ einreichungenRouter.post('/', async (req, res) => {
       }
 
       // In DB speichern
+      const kostenstelleIdValue = parsed.persoenlich.kostenstelleId || undefined;
       const [einreichung] = await db.insert(schema.einreichungen).values({
         typ: 'ERSTATTUNG',
         belegNr,
         mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
+        ...(kostenstelleIdValue ? { kostenstelleId: kostenstelleIdValue } : {}),
         mitarbeiterVorname: parsed.persoenlich.vorname,
         mitarbeiterNachname: parsed.persoenlich.nachname,
-        mitarbeiterPersonalNr: parsed.persoenlich.personalNr,
+        mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
         bankIban: parsed.persoenlich.iban,
         bankKontoinhaber: parsed.persoenlich.kontoinhaber,
         gesamtbetrag: String(parsed.gesamtbetrag),
-        unterschriftBild: parsed.unterschriftBild,
+        unterschriftBild: parsed.unterschriftBild || null,
         status: 'EINGEREICHT',
       }).returning();
 
@@ -512,8 +514,13 @@ einreichungenRouter.post('/', async (req, res) => {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
     } else {
-      console.error('Fehler bei Einreichung:', error);
-      res.status(500).json({ error: 'Einreichung konnte nicht verarbeitet werden' });
+      const errMsg = error instanceof Error ? error.message : String(error);
+      const errStack = error instanceof Error ? error.stack : undefined;
+      console.error('Fehler bei Einreichung:', errMsg, errStack);
+      res.status(500).json({
+        error: 'Einreichung konnte nicht verarbeitet werden',
+        detail: errMsg,
+      });
     }
   }
 });

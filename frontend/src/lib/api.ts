@@ -92,7 +92,8 @@ export async function einreichenReisekosten(payload: ReisekostenPayload): Promis
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
-    throw new Error(err.error || `Fehler ${res.status}`);
+    const msg = err.detail ? `${err.error}: ${err.detail}` : (err.error || `Fehler ${res.status}`);
+    throw new Error(msg);
   }
 
   const data = await res.json();
@@ -135,7 +136,8 @@ export async function einreichenErstattung(payload: ErstattungPayload): Promise<
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
-    throw new Error(err.error || `Fehler ${res.status}`);
+    const msg = err.detail ? `${err.error}: ${err.detail}` : (err.error || `Fehler ${res.status}`);
+    throw new Error(msg);
   }
 
   const data = await res.json();

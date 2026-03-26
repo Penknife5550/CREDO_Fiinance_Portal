@@ -73,14 +73,24 @@ export function PersoenlicheDatenStep({ data, onChange, errors }: Props) {
           <label className="label">IBAN *</label>
           <input
             type="text"
-            className={`input-field font-mono ${errors.iban ? 'border-red-400 focus:ring-red-400' : ''} ${
-              data.iban.length === 22 && validateIBAN(data.iban) ? 'border-emerald-400' : ''
+            className={`input-field font-mono ${
+              errors.iban || (data.iban.length === 22 && !validateIBAN(data.iban))
+                ? 'border-red-400 focus:ring-red-400'
+                : data.iban.length === 22 && validateIBAN(data.iban)
+                  ? 'border-emerald-400 focus:ring-emerald-400'
+                  : ''
             }`}
             placeholder="DE89 3704 0044 0532 0130 00"
             value={formatIBAN(data.iban)}
             onChange={e => handleIbanInput(e.target.value)}
           />
           {errors.iban && <p className="text-xs text-red-500 mt-1">{errors.iban}</p>}
+          {!errors.iban && data.iban.length === 22 && !validateIBAN(data.iban) && (
+            <p className="text-xs text-red-500 mt-1">IBAN-Prüfsumme ungültig — bitte überprüfen</p>
+          )}
+          {!errors.iban && data.iban.length > 0 && data.iban.length < 22 && (
+            <p className="text-xs text-credo-400 mt-1">{data.iban.length}/22 Zeichen</p>
+          )}
           {data.iban.length === 22 && validateIBAN(data.iban) && (
             <p className="text-xs text-emerald-600 mt-1">IBAN gültig</p>
           )}
