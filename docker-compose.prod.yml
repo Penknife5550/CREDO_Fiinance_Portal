@@ -1,6 +1,7 @@
 # =============================================================================
 # CREDO Finanzportal - Produktions-Konfiguration
 # =============================================================================
+# Voraussetzung: Caddy Reverse Proxy mit externem Netzwerk "reverse_proxy"
 # Deployment: docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 # Domain: finanzen.fes-credo.de
 # =============================================================================
@@ -45,8 +46,6 @@ services:
       WEBHOOK_URL_REISEKOSTEN: ${WEBHOOK_URL_REISEKOSTEN:-}
       WEBHOOK_URL_ERSTATTUNG: ${WEBHOOK_URL_ERSTATTUNG:-}
       NODE_ENV: production
-    ports:
-      - "192.168.12.163:3333:3000"
     volumes:
       - uploads_data:/app/uploads
     depends_on:
@@ -59,6 +58,7 @@ services:
       retries: 5
       start_period: 30s
     networks:
+      - reverse_proxy
       - internal
 
 volumes:
@@ -68,5 +68,7 @@ volumes:
     driver: local
 
 networks:
+  reverse_proxy:
+    external: true
   internal:
     internal: true

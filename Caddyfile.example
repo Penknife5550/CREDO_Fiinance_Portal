@@ -3,8 +3,25 @@
 # =============================================================================
 # Diesen Block in die bestehende Caddyfile einfügen (neben hr.fes-credo.de).
 # SSL/TLS wird automatisch von Caddy verwaltet.
+# Caddy muss im selben Docker-Netzwerk "reverse_proxy" sein.
 # =============================================================================
 
 finanzen.fes-credo.de {
 	reverse_proxy credo-finanz-app:3000
+
+	# Security Headers
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+
+	# Gzip-Komprimierung
+	encode gzip
+
+	# Logs
+	log {
+		output stdout
+		format console
+	}
 }
