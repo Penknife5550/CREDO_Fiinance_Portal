@@ -174,7 +174,12 @@ export const webhookConfig = pgTable('webhook_config', {
   id: uuid('id').defaultRandom().primaryKey(),
   aktiv: boolean('aktiv').notNull().default(false),
   url: varchar('url', { length: 500 }),
-  secret: varchar('secret', { length: 255 }),
+  secret: varchar('secret', { length: 255 }), // Legacy — kept for backward compat
+  authType: varchar('auth_type', { length: 20 }).notNull().default('NONE'), // NONE | BASIC | HEADER
+  authUser: varchar('auth_user', { length: 255 }),
+  authPass: varchar('auth_pass', { length: 255 }),
+  authHeaderName: varchar('auth_header_name', { length: 255 }),
+  authHeaderValue: varchar('auth_header_value', { length: 500 }),
   eventEingereicht: boolean('event_eingereicht').notNull().default(true),
   eventStatusGeaendert: boolean('event_status_geaendert').notNull().default(true),
   eventFehler: boolean('event_fehler').notNull().default(true),

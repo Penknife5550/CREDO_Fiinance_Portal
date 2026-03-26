@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send } from 'lucide-react';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 
 const TABS = [
@@ -9,15 +9,18 @@ const TABS = [
   { id: 'protokoll', label: 'Protokoll', icon: Activity },
 ];
 
-const DEMO_MANDANTEN = [
-  { nr: 10, name: 'Grundschule Haddenhausen', kategorie: 'Grundschulen', dmsEmail: 'fibu-gs-haddenhausen@docubit.credo.de', farbe: '#2563EB', aktiv: true },
-  { nr: 11, name: 'Grundschule Stemwede', kategorie: 'Grundschulen', dmsEmail: 'fibu-gs-stemwede@docubit.credo.de', farbe: '#2563EB', aktiv: true },
-  { nr: 12, name: 'Grundschule Minderheide', kategorie: 'Grundschulen', dmsEmail: 'fibu-gs-minderheide@docubit.credo.de', farbe: '#2563EB', aktiv: true },
-  { nr: 30, name: 'Gesamtschule', kategorie: 'Weiterführende Schulen', dmsEmail: 'fibu-gesamtschule@docubit.credo.de', farbe: '#059669', aktiv: true },
-  { nr: 31, name: 'Gymnasium', kategorie: 'Weiterführende Schulen', dmsEmail: 'fibu-gymnasium@docubit.credo.de', farbe: '#DC2626', aktiv: true },
-  { nr: 32, name: 'Berufskolleg', kategorie: 'Weiterführende Schulen', dmsEmail: 'fibu-berufskolleg@docubit.credo.de', farbe: '#7C3AED', aktiv: true },
-  { nr: 40, name: 'CREDO Verwaltung', kategorie: 'Verwaltung', dmsEmail: 'fibu-verwaltung@docubit.credo.de', farbe: '#6B7280', aktiv: true },
-];
+interface Mandant {
+  id: string;
+  mandantNr: number;
+  name: string;
+  kategorie: string;
+  dmsEmail: string;
+  primaerfarbe: string;
+  logo: string | null;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export function AdminCenter() {
   const [authenticated, setAuthenticated] = useState(false);
@@ -161,15 +164,244 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
 // ── Mandanten Tab ──────────────────────────────────────
 
 function MandantenTab() {
+  const [mandanten, setMandanten] = useState<Mandant[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fehler, setFehler] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Create form state
+  const [createForm, setCreateForm] = useState({
+    mandantNr: '',
+    name: '',
+    kategorie: '',
+    dmsEmail: '',
+    primaerfarbe: '#6B7280',
+  });
+  const [createFehler, setCreateFehler] = useState('');
+
+  // Edit form state
+  const [editForm, setEditForm] = useState({
+    name: '',
+    kategorie: '',
+    dmsEmail: '',
+    primaerfarbe: '#6B7280',
+    active: true,
+  });
+
+  const loadMandanten = async () => {
+    try {
+      setFehler('');
+      const res = await adminFetch('/api/admin/mandanten');
+      if (!res.ok) throw new Error('Fehler beim Laden');
+      const data = await res.json();
+      setMandanten(data);
+    } catch {
+      setFehler('Mandanten konnten nicht geladen werden.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadMandanten(); }, []);
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateFehler('');
+    setSaving(true);
+    try {
+      const res = await adminFetch('/api/admin/mandanten', {
+        method: 'POST',
+        body: JSON.stringify({
+          mandantNr: parseInt(createForm.mandantNr, 10),
+          name: createForm.name,
+          kategorie: createForm.kategorie,
+          dmsEmail: createForm.dmsEmail,
+          primaerfarbe: createForm.primaerfarbe,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Fehler beim Anlegen' }));
+        throw new Error(err.error || 'Fehler beim Anlegen');
+      }
+      setShowCreate(false);
+      setCreateForm({ mandantNr: '', name: '', kategorie: '', dmsEmail: '', primaerfarbe: '#6B7280' });
+      await loadMandanten();
+    } catch (err) {
+      setCreateFehler(err instanceof Error ? err.message : 'Fehler beim Anlegen');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (m: Mandant) => {
+    setEditingId(m.id);
+    setEditForm({
+      name: m.name,
+      kategorie: m.kategorie,
+      dmsEmail: m.dmsEmail,
+      primaerfarbe: m.primaerfarbe,
+      active: m.active,
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+  };
+
+  const handleSaveEdit = async (id: string) => {
+    setSaving(true);
+    try {
+      const res = await adminFetch(`/api/admin/mandanten/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(editForm),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Fehler beim Speichern' }));
+        throw new Error(err.error || 'Fehler beim Speichern');
+      }
+      setEditingId(null);
+      await loadMandanten();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Fehler beim Speichern');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggleActive = async (m: Mandant) => {
+    try {
+      const res = await adminFetch(`/api/admin/mandanten/${m.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ active: !m.active }),
+      });
+      if (!res.ok) throw new Error('Fehler');
+      await loadMandanten();
+    } catch {
+      alert('Status konnte nicht geändert werden.');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12 text-credo-500">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+        Mandanten werden geladen...
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold text-credo-900">Mandanten & DMS-E-Mail</h3>
-        <button className="btn-primary text-sm py-2">
+        <button onClick={() => setShowCreate(true)} className="btn-primary text-sm py-2">
           <Plus className="w-4 h-4 mr-1.5" />
           Mandant anlegen
         </button>
       </div>
+
+      {fehler && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 mb-4">
+          {fehler}
+        </div>
+      )}
+
+      {/* Create Dialog */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="card w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-credo-900">Neuen Mandanten anlegen</h3>
+              <button onClick={() => setShowCreate(false)} className="text-credo-400 hover:text-credo-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCreate} className="space-y-4">
+              <div>
+                <label className="label">Mandant-Nr.</label>
+                <input
+                  type="number"
+                  className="input-field"
+                  placeholder="z.B. 50"
+                  value={createForm.mandantNr}
+                  onChange={e => setCreateForm({ ...createForm, mandantNr: e.target.value })}
+                  required
+                  min={1}
+                />
+              </div>
+              <div>
+                <label className="label">Name</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="z.B. Grundschule Musterstadt"
+                  value={createForm.name}
+                  onChange={e => setCreateForm({ ...createForm, name: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">Kategorie</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="z.B. Grundschulen"
+                  value={createForm.kategorie}
+                  onChange={e => setCreateForm({ ...createForm, kategorie: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">DMS-E-Mail</label>
+                <input
+                  type="email"
+                  className="input-field"
+                  placeholder="z.B. fibu-schule@docubit.credo.de"
+                  value={createForm.dmsEmail}
+                  onChange={e => setCreateForm({ ...createForm, dmsEmail: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">Primärfarbe</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    className="w-10 h-10 rounded cursor-pointer border border-credo-200"
+                    value={createForm.primaerfarbe}
+                    onChange={e => setCreateForm({ ...createForm, primaerfarbe: e.target.value })}
+                  />
+                  <input
+                    type="text"
+                    className="input-field flex-1 font-mono"
+                    value={createForm.primaerfarbe}
+                    onChange={e => setCreateForm({ ...createForm, primaerfarbe: e.target.value })}
+                    pattern="^#[0-9A-Fa-f]{6}$"
+                    required
+                  />
+                </div>
+              </div>
+
+              {createFehler && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  {createFehler}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary flex-1">
+                  Abbrechen
+                </button>
+                <button type="submit" disabled={saving} className="btn-primary flex-1 disabled:opacity-50">
+                  {saving ? 'Anlegen...' : 'Anlegen'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <div className="card p-0 overflow-hidden">
         <table className="w-full text-sm">
@@ -185,21 +417,92 @@ function MandantenTab() {
             </tr>
           </thead>
           <tbody>
-            {DEMO_MANDANTEN.map((m, i) => (
-              <tr key={m.nr} className={`border-b border-credo-100 ${i % 2 === 0 ? '' : 'bg-credo-50/50'}`}>
-                <td className="p-3 font-mono font-medium">{m.nr}</td>
-                <td className="p-3"><div className="w-6 h-6 rounded-full" style={{ backgroundColor: m.farbe }} /></td>
-                <td className="p-3 font-medium text-credo-900">{m.name}</td>
-                <td className="p-3 text-credo-500">{m.kategorie}</td>
-                <td className="p-3 font-mono text-xs text-credo-600">{m.dmsEmail}</td>
-                <td className="p-3 text-center">
-                  <span className={`inline-block w-3 h-3 rounded-full ${m.aktiv ? 'bg-emerald-500' : 'bg-red-400'}`} />
-                </td>
-                <td className="p-3 text-right">
-                  <button className="text-credo-400 hover:text-credo-600 p-1"><Edit className="w-4 h-4" /></button>
-                </td>
+            {mandanten.map((m, i) => (
+              <tr key={m.id} className={`border-b border-credo-100 ${i % 2 === 0 ? '' : 'bg-credo-50/50'}`}>
+                {editingId === m.id ? (
+                  <>
+                    <td className="p-3 font-mono font-medium">{m.mandantNr}</td>
+                    <td className="p-3">
+                      <input
+                        type="color"
+                        className="w-6 h-6 rounded cursor-pointer border border-credo-200"
+                        value={editForm.primaerfarbe}
+                        onChange={e => setEditForm({ ...editForm, primaerfarbe: e.target.value })}
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="text"
+                        className="input-field py-1 px-2 text-sm"
+                        value={editForm.name}
+                        onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="text"
+                        className="input-field py-1 px-2 text-sm"
+                        value={editForm.kategorie}
+                        onChange={e => setEditForm({ ...editForm, kategorie: e.target.value })}
+                      />
+                    </td>
+                    <td className="p-3">
+                      <input
+                        type="email"
+                        className="input-field py-1 px-2 text-sm font-mono text-xs"
+                        value={editForm.dmsEmail}
+                        onChange={e => setEditForm({ ...editForm, dmsEmail: e.target.value })}
+                      />
+                    </td>
+                    <td className="p-3 text-center">
+                      <button onClick={() => setEditForm({ ...editForm, active: !editForm.active })} className="p-1">
+                        {editForm.active ? (
+                          <ToggleRight className="w-6 h-6 text-emerald-500" />
+                        ) : (
+                          <ToggleLeft className="w-6 h-6 text-red-400" />
+                        )}
+                      </button>
+                    </td>
+                    <td className="p-3 text-right whitespace-nowrap">
+                      <button
+                        onClick={() => handleSaveEdit(m.id)}
+                        disabled={saving}
+                        className="text-emerald-500 hover:text-emerald-700 p-1 disabled:opacity-50"
+                        title="Speichern"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button onClick={cancelEdit} className="text-credo-400 hover:text-credo-600 p-1 ml-1" title="Abbrechen">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="p-3 font-mono font-medium">{m.mandantNr}</td>
+                    <td className="p-3"><div className="w-6 h-6 rounded-full" style={{ backgroundColor: m.primaerfarbe }} /></td>
+                    <td className="p-3 font-medium text-credo-900">{m.name}</td>
+                    <td className="p-3 text-credo-500">{m.kategorie}</td>
+                    <td className="p-3 font-mono text-xs text-credo-600">{m.dmsEmail}</td>
+                    <td className="p-3 text-center">
+                      <button onClick={() => handleToggleActive(m)} title={m.active ? 'Deaktivieren' : 'Aktivieren'}>
+                        <span className={`inline-block w-3 h-3 rounded-full ${m.active ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                      </button>
+                    </td>
+                    <td className="p-3 text-right">
+                      <button onClick={() => startEdit(m)} className="text-credo-400 hover:text-credo-600 p-1"><Edit className="w-4 h-4" /></button>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
+            {mandanten.length === 0 && !fehler && (
+              <tr>
+                <td colSpan={7} className="p-6 text-center text-credo-400">
+                  Keine Mandanten vorhanden. Legen Sie den ersten Mandanten an.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -208,6 +511,14 @@ function MandantenTab() {
 }
 
 // ── Pauschalen Tab (editierbar) ────────────────────────
+
+interface AuslandRow {
+  id: number;
+  land: string;
+  t8h: string;
+  t24h: string;
+  ueb: string;
+}
 
 function PauschalenTab() {
   const [editing, setEditing] = useState(false);
@@ -222,6 +533,20 @@ function PauschalenTab() {
     kuerzungAbend: '40',
   });
 
+  // Auslandspauschalen state
+  const [ausland, setAusland] = useState<AuslandRow[]>([
+    { id: 1, land: 'Österreich', t8h: '27,00', t24h: '40,00', ueb: '105,00' },
+    { id: 2, land: 'Schweiz', t8h: '43,00', t24h: '64,00', ueb: '180,00' },
+    { id: 3, land: 'Niederlande', t8h: '32,00', t24h: '47,00', ueb: '125,00' },
+    { id: 4, land: 'Frankreich', t8h: '39,00', t24h: '58,00', ueb: '148,00' },
+  ]);
+  const [nextId, setNextId] = useState(5);
+  const [editingRowId, setEditingRowId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState<AuslandRow | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newRow, setNewRow] = useState<Omit<AuslandRow, 'id'>>({ land: '', t8h: '', t24h: '', ueb: '' });
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
   const updatePauschale = (key: keyof typeof pauschalen, value: string) => {
     setPauschalen({ ...pauschalen, [key]: value });
   };
@@ -230,6 +555,36 @@ function PauschalenTab() {
     // TODO: API-Call PUT /api/admin/pauschalen
     setEditing(false);
     alert('Pauschalen gespeichert');
+  };
+
+  const startEditRow = (row: AuslandRow) => {
+    setEditingRowId(row.id);
+    setEditDraft({ ...row });
+  };
+
+  const cancelEditRow = () => {
+    setEditingRowId(null);
+    setEditDraft(null);
+  };
+
+  const saveEditRow = () => {
+    if (!editDraft) return;
+    setAusland(prev => prev.map(r => r.id === editDraft.id ? editDraft : r));
+    setEditingRowId(null);
+    setEditDraft(null);
+  };
+
+  const handleAddRow = () => {
+    if (!newRow.land.trim()) return;
+    setAusland(prev => [...prev, { id: nextId, ...newRow }]);
+    setNextId(n => n + 1);
+    setNewRow({ land: '', t8h: '', t24h: '', ueb: '' });
+    setShowAddForm(false);
+  };
+
+  const handleDeleteRow = (id: number) => {
+    setAusland(prev => prev.filter(r => r.id !== id));
+    setDeletingId(null);
   };
 
   return (
@@ -267,11 +622,70 @@ function PauschalenTab() {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-credo-900">Auslandspauschalen (BMF)</h3>
-          <button className="btn-secondary text-sm py-2">
+          <button onClick={() => { setShowAddForm(true); setNewRow({ land: '', t8h: '', t24h: '', ueb: '' }); }} className="btn-secondary text-sm py-2">
             <Plus className="w-4 h-4 mr-1.5" />
             Land hinzufügen
           </button>
         </div>
+
+        {/* Add new country form */}
+        {showAddForm && (
+          <div className="border border-blue-200 bg-blue-50/30 rounded-lg p-4 mb-4 space-y-3">
+            <h4 className="font-semibold text-credo-900 text-sm">Neues Land hinzufügen</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div>
+                <label className="label">Land</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  placeholder="z.B. Belgien"
+                  value={newRow.land}
+                  onChange={e => setNewRow({ ...newRow, land: e.target.value })}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="label">Tagessatz &gt;8h (EUR)</label>
+                <input
+                  type="text"
+                  className="input-field font-mono"
+                  placeholder="0,00"
+                  value={newRow.t8h}
+                  onChange={e => setNewRow({ ...newRow, t8h: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">Tagessatz 24h (EUR)</label>
+                <input
+                  type="text"
+                  className="input-field font-mono"
+                  placeholder="0,00"
+                  value={newRow.t24h}
+                  onChange={e => setNewRow({ ...newRow, t24h: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">Übernachtung (EUR)</label>
+                <input
+                  type="text"
+                  className="input-field font-mono"
+                  placeholder="0,00"
+                  value={newRow.ueb}
+                  onChange={e => setNewRow({ ...newRow, ueb: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={handleAddRow} disabled={!newRow.land.trim()} className="btn-primary text-sm py-2 disabled:opacity-50">
+                <Check className="w-4 h-4 mr-1.5" />
+                Hinzufügen
+              </button>
+              <button onClick={() => setShowAddForm(false)} className="btn-secondary text-sm py-2">
+                Abbrechen
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="border border-credo-200 rounded-lg overflow-hidden">
           <table className="w-full text-sm">
@@ -285,22 +699,83 @@ function PauschalenTab() {
               </tr>
             </thead>
             <tbody>
-              {[
-                { land: 'Österreich', t8h: '27,00', t24h: '40,00', ueb: '105,00' },
-                { land: 'Schweiz', t8h: '43,00', t24h: '64,00', ueb: '180,00' },
-                { land: 'Niederlande', t8h: '32,00', t24h: '47,00', ueb: '125,00' },
-                { land: 'Frankreich', t8h: '39,00', t24h: '58,00', ueb: '148,00' },
-              ].map((row, i) => (
-                <tr key={row.land} className={`border-t border-credo-100 ${i % 2 ? 'bg-credo-50/30' : ''}`}>
-                  <td className="p-3 font-medium text-credo-900">{row.land}</td>
-                  <td className="p-3 text-right font-mono">{row.t8h} EUR</td>
-                  <td className="p-3 text-right font-mono">{row.t24h} EUR</td>
-                  <td className="p-3 text-right font-mono">{row.ueb} EUR</td>
-                  <td className="p-3 text-right">
-                    <button className="text-credo-400 hover:text-credo-600 p-1"><Edit className="w-4 h-4" /></button>
-                  </td>
+              {ausland.map((row, i) => (
+                <tr key={row.id} className={`border-t border-credo-100 ${i % 2 ? 'bg-credo-50/30' : ''}`}>
+                  {editingRowId === row.id && editDraft ? (
+                    <>
+                      <td className="p-2">
+                        <input
+                          type="text"
+                          className="input-field py-1.5 px-2 text-sm"
+                          value={editDraft.land}
+                          onChange={e => setEditDraft({ ...editDraft, land: e.target.value })}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="text"
+                          className="input-field py-1.5 px-2 text-right font-mono text-sm w-24 ml-auto"
+                          value={editDraft.t8h}
+                          onChange={e => setEditDraft({ ...editDraft, t8h: e.target.value })}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="text"
+                          className="input-field py-1.5 px-2 text-right font-mono text-sm w-24 ml-auto"
+                          value={editDraft.t24h}
+                          onChange={e => setEditDraft({ ...editDraft, t24h: e.target.value })}
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="text"
+                          className="input-field py-1.5 px-2 text-right font-mono text-sm w-24 ml-auto"
+                          value={editDraft.ueb}
+                          onChange={e => setEditDraft({ ...editDraft, ueb: e.target.value })}
+                        />
+                      </td>
+                      <td className="p-2 text-right whitespace-nowrap">
+                        <button onClick={saveEditRow} className="text-emerald-600 hover:text-emerald-700 p-1" title="Speichern">
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button onClick={cancelEditRow} className="text-credo-400 hover:text-credo-600 p-1" title="Abbrechen">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="p-3 font-medium text-credo-900">{row.land}</td>
+                      <td className="p-3 text-right font-mono">{row.t8h} EUR</td>
+                      <td className="p-3 text-right font-mono">{row.t24h} EUR</td>
+                      <td className="p-3 text-right font-mono">{row.ueb} EUR</td>
+                      <td className="p-3 text-right whitespace-nowrap">
+                        <button onClick={() => startEditRow(row)} className="text-credo-400 hover:text-credo-600 p-1" title="Bearbeiten">
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        {deletingId === row.id ? (
+                          <span className="inline-flex items-center gap-1 ml-1">
+                            <button onClick={() => handleDeleteRow(row.id)} className="text-xs text-red-600 font-medium px-2 py-1 bg-red-50 rounded hover:bg-red-100">Ja</button>
+                            <button onClick={() => setDeletingId(null)} className="text-xs text-credo-500 px-2 py-1">Nein</button>
+                          </span>
+                        ) : (
+                          <button onClick={() => setDeletingId(row.id)} className="text-credo-400 hover:text-red-500 p-1" title="Löschen">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
+              {ausland.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-6 text-center text-credo-400 text-sm">
+                    Keine Auslandspauschalen vorhanden. Klicken Sie auf &quot;Land hinzufügen&quot;.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -342,11 +817,22 @@ interface WebhookConfig {
   aktiv: boolean;
   url: string | null;
   secret: string | null;
+  authType: 'NONE' | 'BASIC' | 'HEADER';
+  authUser: string | null;
+  authPass: string | null;
+  authHeaderName: string | null;
+  authHeaderValue: string | null;
   eventEingereicht: boolean;
   eventStatusGeaendert: boolean;
   eventFehler: boolean;
   updatedAt: string;
 }
+
+const AUTH_TYPE_LABELS: Record<string, string> = {
+  NONE: 'Keine',
+  BASIC: 'Basic Auth',
+  HEADER: 'Header Auth',
+};
 
 function VersandTab() {
   return (
@@ -548,7 +1034,9 @@ function WebhookCard({ webhook, onUpdate }: { webhook: WebhookConfig; onUpdate: 
             {webhook.eventEingereicht && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Eingereicht</span>}
             {webhook.eventStatusGeaendert && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Status</span>}
             {webhook.eventFehler && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Fehler</span>}
-            {webhook.secret && <span className="bg-credo-100 text-credo-600 px-1.5 py-0.5 rounded">Secret</span>}
+            {webhook.authType && webhook.authType !== 'NONE' && (
+              <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">{AUTH_TYPE_LABELS[webhook.authType] || webhook.authType}</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -598,7 +1086,11 @@ function WebhookForm({ initial, onSave, onCancel }: {
   onCancel: () => void;
 }) {
   const [url, setUrl] = useState(initial?.url || 'https://n8n.fes-minden.de/webhook/');
-  const [secret, setSecret] = useState('');
+  const [authType, setAuthType] = useState<'NONE' | 'BASIC' | 'HEADER'>(initial?.authType || 'NONE');
+  const [authUser, setAuthUser] = useState(initial?.authUser || '');
+  const [authPass, setAuthPass] = useState('');
+  const [authHeaderName, setAuthHeaderName] = useState(initial?.authHeaderName || '');
+  const [authHeaderValue, setAuthHeaderValue] = useState('');
   const [aktiv, setAktiv] = useState(initial?.aktiv ?? true);
   const [eventEingereicht, setEventEingereicht] = useState(initial?.eventEingereicht ?? true);
   const [eventStatusGeaendert, setEventStatusGeaendert] = useState(initial?.eventStatusGeaendert ?? true);
@@ -613,7 +1105,14 @@ function WebhookForm({ initial, onSave, onCancel }: {
     try {
       const res = await adminFetch('/api/admin/webhooks/test-url', {
         method: 'POST',
-        body: JSON.stringify({ url, secret: secret || undefined }),
+        body: JSON.stringify({
+          url,
+          authType,
+          authUser: authType === 'BASIC' ? authUser : null,
+          authPass: authType === 'BASIC' ? (authPass || null) : null,
+          authHeaderName: authType === 'HEADER' ? authHeaderName : null,
+          authHeaderValue: authType === 'HEADER' ? (authHeaderValue || null) : null,
+        }),
       });
       const data = await res.json();
       setTestResult(data);
@@ -628,7 +1127,11 @@ function WebhookForm({ initial, onSave, onCancel }: {
     setSaving(true);
     await onSave({
       url,
-      secret: secret || (initial?.secret === '***' ? '***' : ''),
+      authType,
+      authUser: authType === 'BASIC' ? authUser : null,
+      authPass: authType === 'BASIC' ? (authPass || (initial?.authPass === '***' ? '***' : '')) : null,
+      authHeaderName: authType === 'HEADER' ? authHeaderName : null,
+      authHeaderValue: authType === 'HEADER' ? (authHeaderValue || (initial?.authHeaderValue === '***' ? '***' : '')) : null,
       aktiv,
       eventEingereicht,
       eventStatusGeaendert,
@@ -675,15 +1178,69 @@ function WebhookForm({ initial, onSave, onCancel }: {
       )}
 
       <div>
-        <label className="label">Secret (optional, für HMAC-Signatur)</label>
-        <input
-          type="text"
-          className="input-field font-mono"
-          placeholder={initial?.secret ? '••• gesetzt — leer lassen um beizubehalten' : 'Optionaler Secret-Key'}
-          value={secret}
-          onChange={e => setSecret(e.target.value)}
-        />
+        <label className="label">Authentifizierung</label>
+        <select
+          className="input-field"
+          value={authType}
+          onChange={e => setAuthType(e.target.value as 'NONE' | 'BASIC' | 'HEADER')}
+        >
+          <option value="NONE">Keine</option>
+          <option value="BASIC">Basic Auth</option>
+          <option value="HEADER">Header Auth</option>
+        </select>
       </div>
+
+      {authType === 'BASIC' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Benutzername</label>
+            <input
+              type="text"
+              className="input-field"
+              placeholder="Benutzername"
+              value={authUser}
+              onChange={e => setAuthUser(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">Passwort</label>
+            <input
+              type="password"
+              className="input-field"
+              placeholder={initial?.authPass ? '••• gesetzt — leer lassen um beizubehalten' : 'Passwort'}
+              value={authPass}
+              onChange={e => setAuthPass(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {authType === 'HEADER' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="label">Header-Name</label>
+            <input
+              type="text"
+              className="input-field font-mono"
+              placeholder="z.B. X-Api-Key"
+              value={authHeaderName}
+              onChange={e => setAuthHeaderName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className="label">Header-Wert</label>
+            <input
+              type="password"
+              className="input-field font-mono"
+              placeholder={initial?.authHeaderValue ? '••• gesetzt — leer lassen um beizubehalten' : 'Wert'}
+              value={authHeaderValue}
+              onChange={e => setAuthHeaderValue(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="label mb-2">Events</label>

@@ -1,5 +1,4 @@
 import { db, schema } from '../db/index.js';
-import crypto from 'crypto';
 
 interface WebhookPayload {
   event: 'eingereicht' | 'status_geaendert' | 'fehler';
@@ -31,8 +30,36 @@ interface WebhookPayload {
   };
 }
 
-function signPayload(payload: string, secret: string): string {
-  return crypto.createHmac('sha256', secret).update(payload).digest('hex');
+interface WebhookAuthConfig {
+  authType: string;
+  authUser: string | null;
+  authPass: string | null;
+  authHeaderName: string | null;
+  authHeaderValue: string | null;
+}
+
+/** Erzeugt Auth-Header basierend auf der Konfiguration */
+function buildAuthHeaders(config: WebhookAuthConfig): Record<string, string> {
+  const headers: Record<string, string> = {};
+
+  switch (config.authType) {
+    case 'BASIC': {
+      if (config.authUser && config.authPass) {
+        const credentials = Buffer.from(`${config.authUser}:${config.authPass}`).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
+      }
+      break;
+    }
+    case 'HEADER': {
+      if (config.authHeaderName && config.authHeaderValue) {
+        headers[config.authHeaderName] = config.authHeaderValue;
+      }
+      break;
+    }
+    // NONE: keine Auth-Header
+  }
+
+  return headers;
 }
 
 /** Sendet Webhook an alle aktiven Konfigurationen */
@@ -57,11 +84,8 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-Webhook-Event': event,
+      ...buildAuthHeaders(config),
     };
-
-    if (config.secret) {
-      headers['X-Webhook-Signature'] = signPayload(body, config.secret);
-    }
 
     try {
       const res = await fetch(config.url, {
@@ -83,7 +107,10 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
 }
 
 /** Sendet einen Test-Webhook an eine spezifische URL */
-export async function sendeTestWebhook(url: string, secret?: string | null): Promise<{ erfolg: boolean; status?: number; antwort?: string; fehler?: string }> {
+export async function sendeTestWebhook(
+  url: string,
+  authConfig: WebhookAuthConfig,
+): Promise<{ erfolg: boolean; status?: number; antwort?: string; fehler?: string }> {
   const payload: WebhookPayload = {
     event: 'eingereicht',
     timestamp: new Date().toISOString(),
@@ -115,11 +142,8 @@ export async function sendeTestWebhook(url: string, secret?: string | null): Pro
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Webhook-Event': 'test',
+    ...buildAuthHeaders(authConfig),
   };
-
-  if (secret) {
-    headers['X-Webhook-Signature'] = signPayload(body, secret);
-  }
 
   try {
     const res = await fetch(url, {
