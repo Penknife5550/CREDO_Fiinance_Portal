@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, LogOut, Lock, Save } from 'lucide-react';
-import { adminLogin, adminLogout, checkSession } from '@/lib/adminAuth';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send } from 'lucide-react';
+import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 
 const TABS = [
   { id: 'mandanten', label: 'Mandanten', icon: Building2 },
@@ -337,6 +337,17 @@ function PauschaleRow({ label, value, suffix, editing, onChange }: {
 
 // ── Versand Tab ────────────────────────────────────────
 
+interface WebhookConfig {
+  id: string;
+  aktiv: boolean;
+  url: string | null;
+  secret: string | null;
+  eventEingereicht: boolean;
+  eventStatusGeaendert: boolean;
+  eventFehler: boolean;
+  updatedAt: string;
+}
+
 function VersandTab() {
   return (
     <div className="space-y-6">
@@ -398,22 +409,315 @@ function VersandTab() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-credo-900">Webhook (optional)</h3>
-          <button className="flex items-center gap-2 text-sm text-credo-500">
-            <ToggleLeft className="w-5 h-5" />
-            Deaktiviert
-          </button>
+      <WebhookSection />
+    </div>
+  );
+}
+
+// ── Webhook-Verwaltung ─────────────────────────────────
+
+function WebhookSection() {
+  const [webhooks, setWebhooks] = useState<WebhookConfig[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNew, setShowNew] = useState(false);
+
+  const laden = async () => {
+    try {
+      const res = await adminFetch('/api/admin/webhooks');
+      if (res.ok) setWebhooks(await res.json());
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { laden(); }, []);
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-credo-900">n8n Webhooks</h3>
+          <p className="text-sm text-credo-500 mt-0.5">Benachrichtigungen an n8n bei neuen Einreichungen</p>
         </div>
-        <div className="space-y-4 opacity-50">
-          <div>
-            <label className="label">Webhook-URL</label>
-            <input type="url" className="input-field" placeholder="https://n8n.credo.de/webhook/..." disabled />
-          </div>
+        <button onClick={() => setShowNew(true)} className="btn-primary text-sm py-2">
+          <Plus className="w-4 h-4 mr-1.5" />
+          Webhook anlegen
+        </button>
+      </div>
+
+      {loading && <p className="text-credo-500 text-sm">Lade...</p>}
+
+      {!loading && webhooks.length === 0 && !showNew && (
+        <div className="text-center py-8 border-2 border-dashed border-credo-200 rounded-lg">
+          <Zap className="w-8 h-8 text-credo-300 mx-auto mb-2" />
+          <p className="text-credo-500 text-sm">Noch keine Webhooks konfiguriert</p>
+          <p className="text-credo-400 text-xs mt-1">Verbinde das Finanzportal mit deinen n8n-Workflows</p>
         </div>
+      )}
+
+      {showNew && (
+        <WebhookForm
+          onSave={async (data) => {
+            const res = await adminFetch('/api/admin/webhooks', {
+              method: 'POST',
+              body: JSON.stringify(data),
+            });
+            if (res.ok) {
+              setShowNew(false);
+              laden();
+            }
+          }}
+          onCancel={() => setShowNew(false)}
+        />
+      )}
+
+      <div className="space-y-3 mt-4">
+        {webhooks.map(wh => (
+          <WebhookCard key={wh.id} webhook={wh} onUpdate={laden} />
+        ))}
       </div>
     </div>
+  );
+}
+
+function WebhookCard({ webhook, onUpdate }: { webhook: WebhookConfig; onUpdate: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ erfolg: boolean; status?: number; fehler?: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const toggleAktiv = async () => {
+    await adminFetch(`/api/admin/webhooks/${webhook.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ aktiv: !webhook.aktiv }),
+    });
+    onUpdate();
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await adminFetch(`/api/admin/webhooks/${webhook.id}/test`, { method: 'POST' });
+      const data = await res.json();
+      setTestResult(data);
+    } catch {
+      setTestResult({ erfolg: false, fehler: 'Netzwerkfehler' });
+    }
+    setTesting(false);
+  };
+
+  const handleDelete = async () => {
+    await adminFetch(`/api/admin/webhooks/${webhook.id}`, { method: 'DELETE' });
+    onUpdate();
+  };
+
+  if (editing) {
+    return (
+      <WebhookForm
+        initial={webhook}
+        onSave={async (data) => {
+          await adminFetch(`/api/admin/webhooks/${webhook.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+          });
+          setEditing(false);
+          onUpdate();
+        }}
+        onCancel={() => setEditing(false)}
+      />
+    );
+  }
+
+  return (
+    <div className={`border rounded-lg p-4 ${webhook.aktiv ? 'border-emerald-200 bg-emerald-50/30' : 'border-credo-200 bg-credo-50/30'}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <button onClick={toggleAktiv} title={webhook.aktiv ? 'Deaktivieren' : 'Aktivieren'}>
+              {webhook.aktiv
+                ? <ToggleRight className="w-6 h-6 text-emerald-600" />
+                : <ToggleLeft className="w-6 h-6 text-credo-400" />
+              }
+            </button>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${webhook.aktiv ? 'bg-emerald-100 text-emerald-700' : 'bg-credo-200 text-credo-500'}`}>
+              {webhook.aktiv ? 'Aktiv' : 'Inaktiv'}
+            </span>
+          </div>
+          <p className="font-mono text-sm text-credo-700 truncate mt-2">{webhook.url || '—'}</p>
+          <div className="flex gap-3 mt-2 text-xs text-credo-500">
+            {webhook.eventEingereicht && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">Eingereicht</span>}
+            {webhook.eventStatusGeaendert && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">Status</span>}
+            {webhook.eventFehler && <span className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Fehler</span>}
+            {webhook.secret && <span className="bg-credo-100 text-credo-600 px-1.5 py-0.5 rounded">Secret</span>}
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleTest}
+            disabled={testing || !webhook.url}
+            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition-colors"
+            title="Test-Webhook senden"
+          >
+            {testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Test
+          </button>
+          <button onClick={() => setEditing(true)} className="p-1.5 text-credo-400 hover:text-credo-600 rounded" title="Bearbeiten">
+            <Edit className="w-4 h-4" />
+          </button>
+          {deleting ? (
+            <div className="flex items-center gap-1">
+              <button onClick={handleDelete} className="text-xs text-red-600 font-medium px-2 py-1 bg-red-50 rounded hover:bg-red-100">Ja</button>
+              <button onClick={() => setDeleting(false)} className="text-xs text-credo-500 px-2 py-1">Nein</button>
+            </div>
+          ) : (
+            <button onClick={() => setDeleting(true)} className="p-1.5 text-credo-400 hover:text-red-500 rounded" title="Löschen">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {testResult && (
+        <div className={`mt-3 p-2 rounded text-xs flex items-center gap-2 ${testResult.erfolg ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {testResult.erfolg ? <CheckCircle className="w-4 h-4 flex-shrink-0" /> : <XCircle className="w-4 h-4 flex-shrink-0" />}
+          <span>
+            {testResult.erfolg
+              ? `Erfolgreich (HTTP ${testResult.status})`
+              : `Fehlgeschlagen: ${testResult.fehler || `HTTP ${testResult.status}`}`
+            }
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WebhookForm({ initial, onSave, onCancel }: {
+  initial?: WebhookConfig;
+  onSave: (data: Record<string, unknown>) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [url, setUrl] = useState(initial?.url || 'https://n8n.fes-minden.de/webhook/');
+  const [secret, setSecret] = useState('');
+  const [aktiv, setAktiv] = useState(initial?.aktiv ?? true);
+  const [eventEingereicht, setEventEingereicht] = useState(initial?.eventEingereicht ?? true);
+  const [eventStatusGeaendert, setEventStatusGeaendert] = useState(initial?.eventStatusGeaendert ?? true);
+  const [eventFehler, setEventFehler] = useState(initial?.eventFehler ?? true);
+  const [saving, setSaving] = useState(false);
+  const [testingUrl, setTestingUrl] = useState(false);
+  const [testResult, setTestResult] = useState<{ erfolg: boolean; status?: number; fehler?: string } | null>(null);
+
+  const handleTestUrl = async () => {
+    setTestingUrl(true);
+    setTestResult(null);
+    try {
+      const res = await adminFetch('/api/admin/webhooks/test-url', {
+        method: 'POST',
+        body: JSON.stringify({ url, secret: secret || undefined }),
+      });
+      const data = await res.json();
+      setTestResult(data);
+    } catch {
+      setTestResult({ erfolg: false, fehler: 'Netzwerkfehler' });
+    }
+    setTestingUrl(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    await onSave({
+      url,
+      secret: secret || (initial?.secret === '***' ? '***' : ''),
+      aktiv,
+      eventEingereicht,
+      eventStatusGeaendert,
+      eventFehler,
+    });
+    setSaving(false);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="border border-blue-200 bg-blue-50/30 rounded-lg p-4 space-y-4">
+      <h4 className="font-semibold text-credo-900">{initial ? 'Webhook bearbeiten' : 'Neuer Webhook'}</h4>
+
+      <div>
+        <label className="label">Webhook-URL (n8n)</label>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            className="input-field flex-1"
+            placeholder="https://n8n.fes-minden.de/webhook/..."
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            required
+          />
+          <button
+            type="button"
+            onClick={handleTestUrl}
+            disabled={testingUrl || !url}
+            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-md bg-blue-100 text-blue-700 hover:bg-blue-200 disabled:opacity-50 whitespace-nowrap"
+          >
+            {testingUrl ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+            Testen
+          </button>
+        </div>
+      </div>
+
+      {testResult && (
+        <div className={`p-2 rounded text-xs flex items-center gap-2 ${testResult.erfolg ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          {testResult.erfolg ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+          {testResult.erfolg
+            ? `Erfolgreich (HTTP ${testResult.status})`
+            : `Fehlgeschlagen: ${testResult.fehler || `HTTP ${testResult.status}`}`
+          }
+        </div>
+      )}
+
+      <div>
+        <label className="label">Secret (optional, für HMAC-Signatur)</label>
+        <input
+          type="text"
+          className="input-field font-mono"
+          placeholder={initial?.secret ? '••• gesetzt — leer lassen um beizubehalten' : 'Optionaler Secret-Key'}
+          value={secret}
+          onChange={e => setSecret(e.target.value)}
+        />
+      </div>
+
+      <div>
+        <label className="label mb-2">Events</label>
+        <div className="flex flex-wrap gap-3">
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" className="rounded border-credo-300" checked={eventEingereicht} onChange={e => setEventEingereicht(e.target.checked)} />
+            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-medium">Neue Einreichung</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" className="rounded border-credo-300" checked={eventStatusGeaendert} onChange={e => setEventStatusGeaendert(e.target.checked)} />
+            <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-xs font-medium">Statusänderung</span>
+          </label>
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" className="rounded border-credo-300" checked={eventFehler} onChange={e => setEventFehler(e.target.checked)} />
+            <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-medium">Fehler</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" className="rounded border-credo-300" checked={aktiv} onChange={e => setAktiv(e.target.checked)} />
+          Sofort aktivieren
+        </label>
+      </div>
+
+      <div className="flex gap-2 pt-2">
+        <button type="submit" disabled={saving} className="btn-primary text-sm py-2 disabled:opacity-50">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Save className="w-4 h-4 mr-1.5" />}
+          {initial ? 'Speichern' : 'Webhook anlegen'}
+        </button>
+        <button type="button" onClick={onCancel} className="btn-secondary text-sm py-2">Abbrechen</button>
+      </div>
+    </form>
   );
 }
 

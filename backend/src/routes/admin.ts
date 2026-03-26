@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { sendeTestWebhook } from '../services/webhook.js';
 
 export const adminRouter = Router();
 
@@ -133,5 +134,141 @@ adminRouter.get('/email-config', async (_req, res) => {
   } catch (error) {
     console.error('Fehler:', error);
     res.status(500).json({ error: 'Fehler beim Laden der E-Mail-Konfiguration' });
+  }
+});
+
+// ── Webhook-Konfiguration ─────────────────────────────
+
+// GET /api/admin/webhooks — Alle Webhook-Konfigurationen laden
+adminRouter.get('/webhooks', async (_req, res) => {
+  try {
+    const result = await db.select().from(schema.webhookConfig);
+    // Secret maskieren
+    res.json(result.map(w => ({
+      ...w,
+      secret: w.secret ? '***' : null,
+    })));
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Fehler beim Laden der Webhooks' });
+  }
+});
+
+// POST /api/admin/webhooks — Neuen Webhook anlegen
+adminRouter.post('/webhooks', async (req, res) => {
+  try {
+    const body = z.object({
+      url: z.string().url().min(1),
+      secret: z.string().optional().default(''),
+      aktiv: z.boolean().optional().default(true),
+      eventEingereicht: z.boolean().optional().default(true),
+      eventStatusGeaendert: z.boolean().optional().default(true),
+      eventFehler: z.boolean().optional().default(true),
+    }).parse(req.body);
+
+    const result = await db.insert(schema.webhookConfig).values(body).returning();
+    res.status(201).json(result[0]);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Webhook konnte nicht angelegt werden' });
+    }
+  }
+});
+
+// PUT /api/admin/webhooks/:id — Webhook bearbeiten
+adminRouter.put('/webhooks/:id', async (req, res) => {
+  try {
+    const body = z.object({
+      url: z.string().url().optional(),
+      secret: z.string().optional(),
+      aktiv: z.boolean().optional(),
+      eventEingereicht: z.boolean().optional(),
+      eventStatusGeaendert: z.boolean().optional(),
+      eventFehler: z.boolean().optional(),
+    }).parse(req.body);
+
+    // Wenn secret '***' ist, nicht überschreiben
+    const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
+    if (body.secret === '***' || body.secret === undefined) {
+      delete updateData.secret;
+    }
+
+    const result = await db
+      .update(schema.webhookConfig)
+      .set(updateData)
+      .where(eq(schema.webhookConfig.id, req.params.id))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Webhook nicht gefunden' });
+      return;
+    }
+    res.json({ ...result[0], secret: result[0].secret ? '***' : null });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Webhook konnte nicht aktualisiert werden' });
+    }
+  }
+});
+
+// DELETE /api/admin/webhooks/:id — Webhook löschen
+adminRouter.delete('/webhooks/:id', async (req, res) => {
+  try {
+    const result = await db
+      .delete(schema.webhookConfig)
+      .where(eq(schema.webhookConfig.id, req.params.id))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Webhook nicht gefunden' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Webhook konnte nicht gelöscht werden' });
+  }
+});
+
+// POST /api/admin/webhooks/:id/test — Test-Webhook senden
+adminRouter.post('/webhooks/:id/test', async (req, res) => {
+  try {
+    const [config] = await db.select().from(schema.webhookConfig).where(eq(schema.webhookConfig.id, req.params.id));
+    if (!config || !config.url) {
+      res.status(404).json({ error: 'Webhook nicht gefunden oder URL fehlt' });
+      return;
+    }
+
+    const result = await sendeTestWebhook(config.url, config.secret);
+    res.json(result);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Test konnte nicht durchgeführt werden' });
+  }
+});
+
+// POST /api/admin/webhooks/test-url — Test an beliebige URL (zum Testen vor Speichern)
+adminRouter.post('/webhooks/test-url', async (req, res) => {
+  try {
+    const body = z.object({
+      url: z.string().url(),
+      secret: z.string().optional().default(''),
+    }).parse(req.body);
+
+    const result = await sendeTestWebhook(body.url, body.secret || null);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Ungültige URL' });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Test konnte nicht durchgeführt werden' });
+    }
   }
 });
