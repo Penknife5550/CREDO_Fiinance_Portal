@@ -1,0 +1,23 @@
+# Lokale Entwicklung — nur DB, App läuft direkt via npm run dev
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: credo-finanz-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: credo
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-credo_dev_2026}
+      POSTGRES_DB: finanzportal
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U credo -d finanzportal"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local

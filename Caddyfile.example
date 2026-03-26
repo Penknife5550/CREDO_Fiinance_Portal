@@ -1,0 +1,10 @@
+# =============================================================================
+# Caddy-Konfiguration für CREDO Finanzportal
+# =============================================================================
+# Diesen Block in die bestehende Caddyfile einfügen (neben hr.fes-credo.de).
+# SSL/TLS wird automatisch von Caddy verwaltet.
+# =============================================================================
+
+finanzen.fes-credo.de {
+	reverse_proxy credo-finanz-app:3000
+}

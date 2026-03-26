@@ -1,0 +1,24 @@
+{
+  "name": "credo-finanzportal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CREDO Finanzportal — Reisekosten & Kostenerstattungen",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "PORT=3001 npm run dev --workspace=backend",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspaces",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "db:migrate": "npm run migrate --workspace=backend",
+    "db:seed": "npm run seed --workspace=backend"
+  },
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

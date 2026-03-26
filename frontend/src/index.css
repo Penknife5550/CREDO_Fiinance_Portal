@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --credo-primary: #6B7280;
+  }
+
+  body {
+    @apply min-h-screen bg-credo-50;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-lg shadow-sm border border-credo-200 p-6;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-md hover:border-credo-300 hover:-translate-y-0.5 cursor-pointer;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center px-6 py-3 rounded-lg font-semibold text-white transition-all duration-200;
+    background-color: var(--credo-primary);
+  }
+
+  .btn-primary:hover {
+    filter: brightness(0.9);
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center px-6 py-3 rounded-lg font-semibold text-credo-700 bg-credo-100 hover:bg-credo-200 transition-all duration-200;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-3 rounded-lg border border-credo-300 bg-white text-credo-900 placeholder-credo-400 focus:outline-none focus:ring-2 focus:ring-offset-1 transition-all duration-200;
+    --tw-ring-color: var(--credo-primary);
+  }
+
+  .label {
+    @apply block text-sm font-medium text-credo-700 mb-1.5;
+  }
+}

@@ -1,0 +1,1172 @@
+{
+  "id": "e2a2c91d-4cd1-4b98-872c-3dcf55aef202",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.admins": {
+      "name": "admins",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "passwort_hash": {
+          "name": "passwort_hash",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "admins_email_unique": {
+          "name": "admins_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.audit_log": {
+      "name": "audit_log",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "aktion": {
+          "name": "aktion",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entitaet": {
+          "name": "entitaet",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entitaet_id": {
+          "name": "entitaet_id",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "alte_werte": {
+          "name": "alte_werte",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "neue_werte": {
+          "name": "neue_werte",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "zeitstempel": {
+          "name": "zeitstempel",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "ip_adresse": {
+          "name": "ip_adresse",
+          "type": "varchar(45)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.belege": {
+      "name": "belege",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "einreichung_id": {
+          "name": "einreichung_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dateiname": {
+          "name": "dateiname",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dateityp": {
+          "name": "dateityp",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dateigroesse": {
+          "name": "dateigroesse",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dateipfad": {
+          "name": "dateipfad",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sha256_hash": {
+          "name": "sha256_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "upload_zeit": {
+          "name": "upload_zeit",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "beschreibung": {
+          "name": "beschreibung",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "betrag": {
+          "name": "betrag",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "belege_einreichung_id_einreichungen_id_fk": {
+          "name": "belege_einreichung_id_einreichungen_id_fk",
+          "tableFrom": "belege",
+          "tableTo": "einreichungen",
+          "columnsFrom": [
+            "einreichung_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.einreichungen": {
+      "name": "einreichungen",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "typ": {
+          "name": "typ",
+          "type": "einreichung_typ",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "beleg_nr": {
+          "name": "beleg_nr",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mandant_id": {
+          "name": "mandant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kostenstelle_id": {
+          "name": "kostenstelle_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "einreichung_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'EINGEREICHT'"
+        },
+        "mitarbeiter_vorname": {
+          "name": "mitarbeiter_vorname",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mitarbeiter_nachname": {
+          "name": "mitarbeiter_nachname",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mitarbeiter_personal_nr": {
+          "name": "mitarbeiter_personal_nr",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bank_iban": {
+          "name": "bank_iban",
+          "type": "varchar(34)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bank_kontoinhaber": {
+          "name": "bank_kontoinhaber",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reiseanlass": {
+          "name": "reiseanlass",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reiseziel": {
+          "name": "reiseziel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "abfahrt_ort": {
+          "name": "abfahrt_ort",
+          "type": "abfahrt_ort",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "abfahrt_zeit": {
+          "name": "abfahrt_zeit",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rueckkehr_zeit": {
+          "name": "rueckkehr_zeit",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "land": {
+          "name": "land",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verkehrsmittel": {
+          "name": "verkehrsmittel",
+          "type": "verkehrsmittel",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "km_gefahren": {
+          "name": "km_gefahren",
+          "type": "numeric(8, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "km_berechnet": {
+          "name": "km_berechnet",
+          "type": "numeric(8, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "km_pauschale_satz": {
+          "name": "km_pauschale_satz",
+          "type": "numeric(4, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "km_betrag": {
+          "name": "km_betrag",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vma_brutto": {
+          "name": "vma_brutto",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vma_kuerzung": {
+          "name": "vma_kuerzung",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "vma_netto": {
+          "name": "vma_netto",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "weitere_kosten_summe": {
+          "name": "weitere_kosten_summe",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gesamtbetrag": {
+          "name": "gesamtbetrag",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "unterschrift_bild": {
+          "name": "unterschrift_bild",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unterschrift_zeit": {
+          "name": "unterschrift_zeit",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pdf_dateipfad": {
+          "name": "pdf_dateipfad",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email_status": {
+          "name": "email_status",
+          "type": "email_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'AUSSTEHEND'"
+        },
+        "email_versuche": {
+          "name": "email_versuche",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "email_letzter_fehler": {
+          "name": "email_letzter_fehler",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "einreichungen_mandant_id_mandanten_id_fk": {
+          "name": "einreichungen_mandant_id_mandanten_id_fk",
+          "tableFrom": "einreichungen",
+          "tableTo": "mandanten",
+          "columnsFrom": [
+            "mandant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "einreichungen_kostenstelle_id_kostenstellen_id_fk": {
+          "name": "einreichungen_kostenstelle_id_kostenstellen_id_fk",
+          "tableFrom": "einreichungen",
+          "tableTo": "kostenstellen",
+          "columnsFrom": [
+            "kostenstelle_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "einreichungen_beleg_nr_unique": {
+          "name": "einreichungen_beleg_nr_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "beleg_nr"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.email_config": {
+      "name": "email_config",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "versand_methode": {
+          "name": "versand_methode",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'SMTP'"
+        },
+        "smtp_server": {
+          "name": "smtp_server",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "smtp_port": {
+          "name": "smtp_port",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "smtp_user": {
+          "name": "smtp_user",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "smtp_passwort_encrypted": {
+          "name": "smtp_passwort_encrypted",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ms365_tenant_id": {
+          "name": "ms365_tenant_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ms365_client_id": {
+          "name": "ms365_client_id",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ms365_client_secret_encrypted": {
+          "name": "ms365_client_secret_encrypted",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "absender_name": {
+          "name": "absender_name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'CREDO Finanzportal'"
+        },
+        "absender_email": {
+          "name": "absender_email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_versuche": {
+          "name": "max_versuche",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 3
+        },
+        "fehler_email": {
+          "name": "fehler_email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.kostenstellen": {
+      "name": "kostenstellen",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "mandant_id": {
+          "name": "mandant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bezeichnung": {
+          "name": "bezeichnung",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nummer": {
+          "name": "nummer",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "kostenstellen_mandant_id_mandanten_id_fk": {
+          "name": "kostenstellen_mandant_id_mandanten_id_fk",
+          "tableFrom": "kostenstellen",
+          "tableTo": "mandanten",
+          "columnsFrom": [
+            "mandant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.mandanten": {
+      "name": "mandanten",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "mandant_nr": {
+          "name": "mandant_nr",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kategorie": {
+          "name": "kategorie",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dms_email": {
+          "name": "dms_email",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "primaerfarbe": {
+          "name": "primaerfarbe",
+          "type": "varchar(7)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'#6B7280'"
+        },
+        "logo": {
+          "name": "logo",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "mandanten_mandant_nr_unique": {
+          "name": "mandanten_mandant_nr_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "mandant_nr"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pauschalen": {
+      "name": "pauschalen",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "typ": {
+          "name": "typ",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "land": {
+          "name": "land",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ort": {
+          "name": "ort",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "betrag": {
+          "name": "betrag",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gueltig_von": {
+          "name": "gueltig_von",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "gueltig_bis": {
+          "name": "gueltig_bis",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.positionen": {
+      "name": "positionen",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "einreichung_id": {
+          "name": "einreichung_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "beschreibung": {
+          "name": "beschreibung",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kategorie": {
+          "name": "kategorie",
+          "type": "erstattung_kategorie",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "datum": {
+          "name": "datum",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "betrag": {
+          "name": "betrag",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "beleg_id": {
+          "name": "beleg_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "positionen_einreichung_id_einreichungen_id_fk": {
+          "name": "positionen_einreichung_id_einreichungen_id_fk",
+          "tableFrom": "positionen",
+          "tableTo": "einreichungen",
+          "columnsFrom": [
+            "einreichung_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.reisetage": {
+      "name": "reisetage",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "einreichung_id": {
+          "name": "einreichung_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "datum": {
+          "name": "datum",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "typ": {
+          "name": "typ",
+          "type": "reisetag_typ",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fruehstueck_gestellt": {
+          "name": "fruehstueck_gestellt",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "mittag_gestellt": {
+          "name": "mittag_gestellt",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "abend_gestellt": {
+          "name": "abend_gestellt",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "vma_brutto": {
+          "name": "vma_brutto",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vma_kuerzung": {
+          "name": "vma_kuerzung",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "vma_netto": {
+          "name": "vma_netto",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "reisetage_einreichung_id_einreichungen_id_fk": {
+          "name": "reisetage_einreichung_id_einreichungen_id_fk",
+          "tableFrom": "reisetage",
+          "tableTo": "einreichungen",
+          "columnsFrom": [
+            "einreichung_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.webhook_config": {
+      "name": "webhook_config",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "aktiv": {
+          "name": "aktiv",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "url": {
+          "name": "url",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "secret": {
+          "name": "secret",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_eingereicht": {
+          "name": "event_eingereicht",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "event_status_geaendert": {
+          "name": "event_status_geaendert",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "event_fehler": {
+          "name": "event_fehler",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.weitere_kosten": {
+      "name": "weitere_kosten",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "einreichung_id": {
+          "name": "einreichung_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "typ": {
+          "name": "typ",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "beschreibung": {
+          "name": "beschreibung",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "betrag": {
+          "name": "betrag",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "beleg_id": {
+          "name": "beleg_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "weitere_kosten_einreichung_id_einreichungen_id_fk": {
+          "name": "weitere_kosten_einreichung_id_einreichungen_id_fk",
+          "tableFrom": "weitere_kosten",
+          "tableTo": "einreichungen",
+          "columnsFrom": [
+            "einreichung_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "weitere_kosten_beleg_id_belege_id_fk": {
+          "name": "weitere_kosten_beleg_id_belege_id_fk",
+          "tableFrom": "weitere_kosten",
+          "tableTo": "belege",
+          "columnsFrom": [
+            "beleg_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.abfahrt_ort": {
+      "name": "abfahrt_ort",
+      "schema": "public",
+      "values": [
+        "WOHNUNG",
+        "TAETIGKEIT"
+      ]
+    },
+    "public.einreichung_status": {
+      "name": "einreichung_status",
+      "schema": "public",
+      "values": [
+        "EINGEREICHT",
+        "GESENDET",
+        "FEHLER"
+      ]
+    },
+    "public.einreichung_typ": {
+      "name": "einreichung_typ",
+      "schema": "public",
+      "values": [
+        "REISEKOSTEN",
+        "ERSTATTUNG"
+      ]
+    },
+    "public.email_status": {
+      "name": "email_status",
+      "schema": "public",
+      "values": [
+        "AUSSTEHEND",
+        "GESENDET",
+        "FEHLER"
+      ]
+    },
+    "public.erstattung_kategorie": {
+      "name": "erstattung_kategorie",
+      "schema": "public",
+      "values": [
+        "BUEROMATERIAL",
+        "FACHLITERATUR",
+        "LEBENSMITTEL",
+        "ARBEITSMITTEL",
+        "FORTBILDUNG",
+        "SONSTIGES"
+      ]
+    },
+    "public.reisetag_typ": {
+      "name": "reisetag_typ",
+      "schema": "public",
+      "values": [
+        "ANREISE",
+        "GANZTAG",
+        "ABREISE",
+        "EINTAEGIG"
+      ]
+    },
+    "public.verkehrsmittel": {
+      "name": "verkehrsmittel",
+      "schema": "public",
+      "values": [
+        "PKW",
+        "MOTORRAD",
+        "OEPNV",
+        "BAHN",
+        "FLUG",
+        "SONSTIGE"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -1,0 +1,682 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2868
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 # Reisekostenabrechnung in der Finanzbuchhaltung \'e2\'80\'93 Vollst\'c3\'a4ndiger Leitfaden (SKR03)\
+\
+> **Zielgruppe:** Buchhalter, Azubis, Softwareentwickler im Bereich Finanzbuchhaltung  \
+> **Stand:** M\'c3\'a4rz 2026 | **Rechtsrahmen:** EStG, LStR, BMF-Schreiben, GoBD\
+\
+---\
+\
+## 1. Rechtsgrundlagen\
+\
+Die steuerliche Behandlung von Reisekosten basiert auf folgenden zentralen Vorschriften:\
+\
+| Quelle | Inhalt |\
+|--------|--------|\
+| \'c2\'a7 3 Nr. 16 EStG | Steuerfreiheit der vom Arbeitgeber erstatteten Reisekosten |\
+| \'c2\'a7 9 Abs. 4a EStG | Definition und Berechnung der Verpflegungsmehraufwendungen |\
+| \'c2\'a7 9 Abs. 4 EStG | Definition \'e2\'80\'9eerste T\'c3\'a4tigkeitsst\'c3\'a4tte" |\
+| \'c2\'a7 4 Abs. 5 EStG | Verpflegungskosten als Betriebsausgabe (Unternehmer) |\
+| \'c2\'a7 15 UStG | Vorsteuerabzug aus Reisekostenbelegen |\
+| BMF-Schreiben 25.11.2020 | Hauptverwaltungsanweisung zu Reisekosten (BStBl I 2020, 1228) |\
+| BMF-Schreiben 05.12.2025 | Aktuelle Pauschalen f\'c3\'bcr 2026 |\
+| GoBD | Aufbewahrungs- und Belegpflichten |\
+\
+---\
+\
+## 2. Kernbegriffe und Definitionen\
+\
+### 2.1 Ausw\'c3\'a4rtst\'c3\'a4tigkeit\
+\
+Eine beruflich veranlasste **Ausw\'c3\'a4rtst\'c3\'a4tigkeit** liegt vor, wenn der Arbeitnehmer vor\'c3\'bcbergehend au\'c3\'9ferhalb seiner Wohnung **und** au\'c3\'9ferhalb seiner ersten T\'c3\'a4tigkeitsst\'c3\'a4tte beruflich t\'c3\'a4tig wird. Nur dann entstehen steuerlich anerkannte Reisekosten.\
+\
+**Typische F\'c3\'a4lle:**\
+- Kundenbesuche au\'c3\'9ferhalb des B\'c3\'bcros\
+- Messen, Kongresse, Schulungen\
+- T\'c3\'a4tigkeit in einer anderen Niederlassung des Arbeitgebers\
+- Fahrt zur Berufsschule (wenn Ausfluss des Arbeitsverh\'c3\'a4ltnisses)\
+\
+### 2.2 Erste T\'c3\'a4tigkeitsst\'c3\'a4tte\
+\
+Gesetzlich definiert als **\'e2\'80\'9edie ortsfeste betriebliche Einrichtung des Arbeitgebers, der der Arbeitnehmer dauerhaft zugeordnet ist"** (\'c2\'a7 9 Abs. 4 EStG).\
+\
+**Zuordnungsregeln:**\
+1. Vorrangig: arbeitgeberseitige dienst- oder arbeitsrechtliche Festlegung\
+2. Hilfsweise (wenn keine Festlegung): quantitative Kriterien (arbeitst\'c3\'a4glich, 2 volle Tage/Woche oder \'e2\'89\'a5 1/3 der Arbeitszeit)\
+3. Bei Gleichstand: die zur Wohnung n\'c3\'a4chstgelegene Einrichtung\
+\
+**Dauerhaftigkeit** ist gegeben bei: unbefristeter Zuordnung, Zuordnung f\'c3\'bcr die Dauer des Dienstverh\'c3\'a4ltnisses oder \'c3\'bcber 48 Monate hinaus.\
+\
+**Ein Arbeitnehmer hat grunds\'c3\'a4tzlich nur eine erste T\'c3\'a4tigkeitsst\'c3\'a4tte je Arbeitsverh\'c3\'a4ltnis.**\
+\
+> \'e2\'9a \'ef\'b8\uc0\u143  **Wichtig f\'c3\'bcr Software:** Das Homeoffice ist **keine** erste T\'c3\'a4tigkeitsst\'c3\'a4tte, da der betriebliche Bezug fehlt. Fahrten vom Homeoffice zum Kunden k\'c3\'b6nnen daher als Reisekosten gelten.\
+\
+### 2.3 Sammelpunkt und weitr\'c3\'a4umiges Arbeitsgebiet\
+\
+Kein voller Reisekostensatz, nur Entfernungspauschale gilt f\'c3\'bcr:\
+- **Sammelpunkt:** Depot, Bauhof, Startpunkt (z.B. Busfahrer, Handwerker)\
+- **Weitr\'c3\'a4umiges Arbeitsgebiet:** Hafen-, Wald-, Zustellgebiete \'e2\'80\'93 nur bis zum Eintritt ins Gebiet Entfernungspauschale\
+\
+Verpflegungspauschale ist bei Sammelpunkt/weitr\'c3\'a4umigem Arbeitsgebiet dennoch m\'c3\'b6glich.\
+\
+---\
+\
+## 3. Die vier Reisekostenarten\
+\
+### 3.1 Fahrtkosten\
+\
+Fahrtkosten sind die **tats\'c3\'a4chlichen Aufwendungen** f\'c3\'bcr Bef\'c3\'b6rderungsmittel:\
+\
+| Bef\'c3\'b6rderungsmittel | Ansatz |\
+|---|---|\
+| Bahn, Bus, Flugzeug, Taxi | Tats\'c3\'a4chliche Kosten gegen Beleg |\
+| Eigener PKW \'e2\'80\'93 mit Einzelnachweis | Anteilige Jahresgesamtkosten (Nutzungsdauer 6 Jahre f\'c3\'bcr AfA) |\
+| Eigener PKW \'e2\'80\'93 ohne Einzelnachweis | Pauschale **0,30 EUR/km** |\
+| Motorrad, Mofa etc. | Pauschale **0,20 EUR/km** |\
+\
+**Au\'c3\'9fergew\'c3\'b6hnliche Kosten** (z.B. Unfallsch\'c3\'a4den, Diebstahl auf Dienstreise) k\'c3\'b6nnen zus\'c3\'a4tzlich zur Kilometerpauschale erstattet werden.\
+\
+**Vorsteuerabzug bei Fahrtkosten:**\
+- Belege mit ausgewiesener USt (z.B. Bahnticket 19% USt, Taxi 7% USt) \'e2\'86\'92 Vorsteuer abziehbar\
+- Kilometerpauschale \'e2\'86\'92 **kein** Vorsteuerabzug m\'c3\'b6glich\
+\
+### 3.2 Verpflegungsmehraufwand (Inland)\
+\
+Der Verpflegungsmehraufwand ist eine **Pauschale** \'e2\'80\'93 keine echte Kostenerstattung. Es werden nicht die tats\'c3\'a4chlichen Restaurantkosten erstattet, sondern ein typisierter Mehraufwand.\
+\
+#### Aktuelle Pauschalen Inland (2026)\
+\
+| Abwesenheitsdauer | Pauschale |\
+|---|---|\
+| Eint\'c3\'a4gige Abwesenheit > 8 Stunden | **14,00 EUR** |\
+| An- und Abreisetag bei mehrt\'c3\'a4giger Reise (unabh\'c3\'a4ngig von der Dauer) | **14,00 EUR** |\
+| Voller Reisetag (24 Stunden Abwesenheit, kein An-/Abreisetag) | **28,00 EUR** |\
+| Abwesenheit \'e2\'89\'a4 8 Stunden | **0,00 EUR** |\
+\
+> \'e2\'9a \'ef\'b8\uc0\u143  **Bemessungsgrundlage:** Abwesenheit von **Wohnung UND erster T\'c3\'a4tigkeitsst\'c3\'a4tte** (nicht nur Wohnung).\
+\
+**Mehrere Reisen an einem Tag:** Abwesenheitszeiten werden addiert und gemeinsam ausgewertet.\
+\
+#### 3-Monats-Frist (\'c2\'a7 4 Abs. 5 Satz 1 Nr. 5 Satz 5 EStG)\
+\
+Bei **derselben** ausw\'c3\'a4rtigen T\'c3\'a4tigkeitsst\'c3\'a4tte sind Verpflegungspauschalen nur in den **ersten 3 Monaten** steuerlich anerkannt.\
+\
+**Ausnahmen und Besonderheiten:**\
+- Wird die T\'c3\'a4tigkeitsst\'c3\'a4tte **h\'c3\'b6chstens 1\'e2\'80\'932 Tage/Woche** aufgesucht \'e2\'86\'92 keine laufende Frist, immer neue Einzelreisen\
+- Unterbrechung von **mindestens 4 Wochen** \'e2\'86\'92 Frist beginnt neu (Grund irrelevant: Urlaub, Krankheit, Fortbildung)\
+- Doppelte Haushaltsf\'c3\'bchrung: gleiche Dreimonatsfrist gilt ebenfalls\
+\
+### 3.3 \'c3\'9cbernachtungskosten (Inland)\
+\
+| Variante | Ansatz | Limit |\
+|---|---|---|\
+| Tats\'c3\'a4chliche Kosten | Nachgewiesene Aufwendungen gegen Hotelrechnung | Unbegrenzt |\
+| Ohne Einzelnachweis | Pauschale | **20,00 EUR/Nacht** |\
+| Fahrt\'c3\'a4tiger (LKW-Fahrer) im Fahrzeug | Besondere Pauschale seit 2020 | **8,00 EUR/Tag** |\
+| L\'c3\'a4ngerfristige Ausw\'c3\'a4rtst\'c3\'a4tigkeit > 48 Monate | Nur noch pauschal | **1.000 EUR/Monat** |\
+\
+> \'e2\'9a \'ef\'b8\uc0\u143  **Wichtig:** \'c3\'9cbernachtungspauschalen kann **nur der Arbeitgeber** steuerfrei zahlen. Der Arbeitnehmer kann sie **nicht** als Werbungskosten selbst ansetzen \'e2\'80\'93 nur tats\'c3\'a4chliche Kosten.\
+\
+**USt-Trennung bei Hotelrechnungen:**\
+- \'c3\'9cbernachtung (Beherbergung): **7% USt** \'e2\'86\'92 Vorsteuerabzug m\'c3\'b6glich\
+- Fr\'c3\'bchst\'c3\'bcck / Halbpension / Verpflegung: **19% USt** \'e2\'86\'92 Vorsteuerabzug m\'c3\'b6glich, aber Verpflegungspauschale ist zu k\'c3\'bcrzen\
+- Getr\'c3\'a4nke aus Minibar, Pay-TV, Telefon: **19% USt**\
+\
+**Praxis-Regel:** Wenn die Hotelrechnung nur einen Gesamtpreis ausweist (ohne Aufteilung), muss trotzdem eine K\'c3\'bcrzung der Verpflegungspauschale erfolgen.\
+\
+### 3.4 Reisenebenkosten\
+\
+Erstattung in **tats\'c3\'a4chlicher H\'c3\'b6he** gegen Beleg:\
+\
+**Anerkannte Reisenebenkosten:**\
+- Parkgeb\'c3\'bchren, Maut\
+- Gep\'c3\'a4ckaufbewahrung, Gep\'c3\'a4ckversicherung (nur Dienstreisen)\
+- Berufliche Telefonkosten / Schriftverkehr mit Arbeitgeber oder Gesch\'c3\'a4ftspartnern\
+- Schadensersatz nach Verkehrsunfall auf Dienstreise\
+- Unfallversicherung (nur Berufsunf\'c3\'a4lle au\'c3\'9ferhalb erster T\'c3\'a4tigkeitsst\'c3\'a4tte)\
+- Wertverlust durch Sch\'c3\'a4den an mitgef\'c3\'bchrten, dienstlich ben\'c3\'b6tigten Gegenst\'c3\'a4nden\
+\
+**Nicht anerkannte Kosten:**\
+- Bekleidung, Koffer, Reiseausr\'c3\'bcstung\
+- Private Ausgaben auf Dienstreise\
+- Verlust einer Geldb\'c3\'b6rse\
+\
+---\
+\
+## 4. K\'c3\'bcrzungsregeln Verpflegungspauschale\
+\
+### 4.1 Grundprinzip\
+\
+Werden w\'c3\'a4hrend der Dienstreise Mahlzeiten **unentgeltlich oder verbilligt gestellt** (durch Arbeitgeber, Arbeitgeber-Dritter, Hotel, Veranstaltungscatering), ist die Verpflegungspauschale zu k\'c3\'bcrzen.\
+\
+**Bezugsgr\'c3\'b6\'c3\'9fe f\'c3\'bcr die K\'c3\'bcrzung ist immer der volle Tagessatz von 28,00 EUR \'e2\'80\'93 unabh\'c3\'a4ngig davon, ob der tats\'c3\'a4chliche Pauschalsatz 14 EUR oder 28 EUR betr\'c3\'a4gt.**\
+\
+### 4.2 K\'c3\'bcrzungsbetr\'c3\'a4ge Inland 2026\
+\
+| Mahlzeit | K\'c3\'bcrzung % | K\'c3\'bcrzung EUR (fest) |\
+|---|---|---|\
+| Fr\'c3\'bchst\'c3\'bcck | 20% \'c3\'97 28 EUR | **5,60 EUR** |\
+| Mittagessen | 40% \'c3\'97 28 EUR | **11,20 EUR** |\
+| Abendessen | 40% \'c3\'97 28 EUR | **11,20 EUR** |\
+| Alle drei Mahlzeiten | 100% | **28,00 EUR = 0 EUR verbleibend** |\
+\
+> **Maximalk\'c3\'bcrzung:** Die Verpflegungspauschale kann maximal bis auf **0 EUR** gek\'c3\'bcrzt werden \'e2\'80\'93 niemals in den negativen Bereich.\
+\
+### 4.3 Sonderf\'c3\'a4lle K\'c3\'bcrzung\
+\
+**Mahlzeit durch Veranstalter (Seminar, Konferenz):**\
+Gilt ebenfalls als Mahlzeitengestellung \'e2\'86\'92 Verpflegungspauschale k\'c3\'bcrzen, wenn Verkehrswert der Mahlzeit \'e2\'89\'a4 60 EUR inkl. USt.\
+\
+**Bewirtung durch Kunden oder Gesch\'c3\'a4ftspartner:**\
+Auch hier K\'c3\'bcrzung der Verpflegungspauschale.\
+\
+**Mahlzeit im Zug, Flugzeug oder Schiff:**\
+F\'c3\'bchrt zur K\'c3\'bcrzung. Ausnahme: Knabbereien (Chips, Salzgeb\'c3\'a4ck etc.) sind keine Mahlzeit.\
+\
+**Voraussetzungen f\'c3\'bcr Mahlzeitengestellung durch Arbeitgeber (\'c2\'a7 8 Abs. 2 Satz 8 EStG):**\
+1. Arbeitnehmer verrichtet Ausw\'c3\'a4rtst\'c3\'a4tigkeit (oder doppelte Haushaltsf\'c3\'bchrung)\
+2. Mahlzeit hat einen Verkehrswert von max. **60 EUR inkl. USt**\
+3. Abgabe ist dienstlich veranlasst (Arbeitgeber bestimmt Tag und Ort)\
+\
+**Gro\'c3\'9fbuchstabe \'e2\'80\'9eM":**\
+Hat der Arbeitgeber dem Arbeitnehmer au\'c3\'9ferhalb seiner Wohnung und erster T\'c3\'a4tigkeitsst\'c3\'a4tte eine mit Sachbezugswert zu bewertende Mahlzeit gestellt, muss der Gro\'c3\'9fbuchstabe **\'e2\'80\'9eM"** im Lohnkonto und in der elektronischen Lohnsteuerbescheinigung eingetragen werden.\
+\
+---\
+\
+## 5. Auslandsreisen\
+\
+### 5.1 Verpflegungspauschalen Ausland\
+\
+F\'c3\'bcr Auslandsreisen gelten l\'c3\'a4nderspezifische Pauschalen, die das BMF j\'c3\'a4hrlich bekannt gibt.  \
+Nicht erfasste L\'c3\'a4nder \'e2\'86\'92 Pauschale **Luxemburg**  \
+Nicht erfasste \'c3\'9cbersee-/Au\'c3\'9fengebiete \'e2\'86\'92 Pauschale des **Mutterlandes**\
+\
+**Prozents\'c3\'a4tze:**\
+- 24 Stunden Abwesenheit: **120%** des H\'c3\'b6chstsatzes nach Bundesreisekostengesetz\
+- An-/Abreisetag oder \'e2\'89\'a5 8 Stunden: **80%** des H\'c3\'b6chstsatzes\
+\
+**Beispiel Mailand (3 Tage):**\
+\
+| Tag | Situation | Pauschale |\
+|---|---|---|\
+| Montag (Anreise) | Ankunft Mailand 22:00 Uhr | 80% des Mailand-Satzes |\
+| Dienstag | Voller Tag Aufenthalt | 120% des Mailand-Satzes |\
+| Mittwoch (R\'c3\'bcckreise) | R\'c3\'bcckreise \'c3\'bcber \'c3\'96sterreich, Ankunft Karlsruhe 20:00 | 80% Mailand-Satz (letzter T\'c3\'a4tigkeitsort) |\
+\
+> **Regel:** Der R\'c3\'bcckreisetag vom Ausland ins Inland bestimmt sich nach dem **letzten T\'c3\'a4tigkeitsort im Ausland** (\'c2\'a7 9 Abs. 4a S. 5 EStG).\
+\
+### 5.2 \'c3\'9cbernachtungskosten Ausland\
+\
+- Tats\'c3\'a4chliche Kosten: steuerfrei erstattbar\
+- Ohne Beleg: l\'c3\'a4nderspezifische BMF-Pauschale\
+- \'c3\'9cbernachtungspauschalen nur f\'c3\'bcr Arbeitgebererstattung (nicht als Werbungskosten)\
+- Hotelrechnung ohne Trennung: Verpflegungsanteil entsprechend k\'c3\'bcrzen (20%/40%/40% vom landesspezifischen 24h-Satz)\
+- Nach 48 Monaten: Obergrenze **2.000 EUR/Monat** f\'c3\'bcr Auslandsunterkunft\
+\
+---\
+\
+## 6. Steuerfreie vs. steuerpflichtige Erstattung\
+\
+| Kostenart | Steuerfrei bis | \'c3\'9cberschreitung |\
+|---|---|---|\
+| Fahrtkosten (tats\'c3\'a4chliche Kosten) | Volle Kosten | Keine Pauschale \'c3\'bcblich |\
+| Fahrtkosten (PKW-Pauschale) | 0,30 EUR/km | Mehrbetr\'c3\'a4ge \'e2\'86\'92 steuerpflichtiger Lohn |\
+| Verpflegungsmehraufwand | 14 EUR / 28 EUR (Inland) | Mehrbetrag \'e2\'86\'92 steuerpflichtiger Lohn oder Pauschalversteuerung 25% (\'c2\'a7 40 Abs. 2 Nr. 4 EStG, max. +100%) |\
+| \'c3\'9cbernachtungskosten | Tats\'c3\'a4chliche Kosten oder 20 EUR Pauschale | Mehrbetr\'c3\'a4ge \'e2\'86\'92 Lohnsteuer |\
+| Reisenebenkosten | Tats\'c3\'a4chliche Kosten | \'e2\'80\'94 |\
+\
+**M\'c3\'b6glichkeiten bei \'c3\'9cberschreitung:**\
+1. Individuell als steuerpflichtiger Arbeitslohn zum Lohn hinzurechnen\
+2. **Pauschalversteuerung 25%** f\'c3\'bcr Verpflegung (max. +100% \'c3\'bcber den Pauschalen) nach \'c2\'a7 40 Abs. 2 Satz 1 Nr. 4 EStG\
+3. Verrechnung: Fahrt + Verpflegung + \'c3\'9cbernachtung k\'c3\'b6nnen summiert werden; nur die **Gesamtsumme** \'c3\'bcber der Summe der steuerfreien Einzelbetr\'c3\'a4ge ist steuerpflichtig\
+\
+---\
+\
+## 7. SKR03 Kontenplan \'e2\'80\'93 Reisekosten\
+\
+### 7.1 Aufwandskonten Arbeitnehmer\
+\
+| Kontonummer SKR03 | Bezeichnung | Anmerkung |\
+|---|---|---|\
+| **4660** | Reisekosten Arbeitnehmer (allgemein) | Sammelkonto, ggf. f\'c3\'bcr Einzelbuchungen |\
+| **4663** | Reisekosten Arbeitnehmer \'e2\'80\'93 Fahrtkosten | Bahn, Taxi, Flug, Buspauschalen |\
+| **4664** | Reisekosten Arbeitnehmer \'e2\'80\'93 Verpflegungsmehraufwand | Nur Pauschalen, kein Vorsteuerabzug |\
+| **4666** | Reisekosten Arbeitnehmer \'e2\'80\'93 \'c3\'9cbernachtungsaufwand | Hotelrechnung netto (ohne Fr\'c3\'bchst\'c3\'bcck) |\
+| **4668** | Kilometergelderstattung Arbeitnehmer | PKW-Pauschale 0,30 EUR/km |\
+\
+### 7.2 Aufwandskonten Unternehmer\
+\
+| Kontonummer SKR03 | Bezeichnung | Anmerkung |\
+|---|---|---|\
+| **4670** | Reisekosten Unternehmer (allgemein) | Sammelkonto |\
+| **4672** | Reisekosten Unternehmer \'e2\'80\'93 nicht abziehbarer Anteil | z.B. tats\'c3\'a4chliche Verpflegungskosten \'c3\'bcber Pauschale |\
+| **4673** | Reisekosten Unternehmer \'e2\'80\'93 Fahrtkosten | Bahn, Taxi, Flug |\
+| **4674** | Reisekosten Unternehmer \'e2\'80\'93 Verpflegungsmehraufwand | Pauschalen, kein Vorsteuerabzug |\
+| **4676** | Reisekosten Unternehmer \'e2\'80\'93 \'c3\'9cbernachtungsaufwand + Reisenebenkosten | Hotel netto + Parkgeb\'c3\'bchren, Maut |\
+| **4678** | Fahrten Wohnung\'e2\'80\'93Betriebsst\'c3\'a4tte (abziehbarer Anteil) | Entfernungspauschale abziehbar |\
+| **4679** | Fahrten Wohnung\'e2\'80\'93Betriebsst\'c3\'a4tte (nicht abziehbarer Anteil) | Differenz zur echten Entfernungspauschale |\
+\
+### 7.3 Vorsteuerkonten\
+\
+| Kontonummer SKR03 | Bezeichnung | Verwendung bei Reisekosten |\
+|---|---|---|\
+| **1576** | Abziehbare Vorsteuer 19% | Fr\'c3\'bchst\'c3\'bcck, Taxi (mit USt-Ausweis), Bahn (19%) |\
+| **1571** | Abziehbare Vorsteuer 7% | Hotel\'c3\'bcbernachtung, Bahn (7% auf Strecke) |\
+\
+> **Hinweis:** Aus **Verpflegungspauschalen** erfolgt kein Vorsteuerabzug, da keine Eingangsrechnung vorliegt.\
+\
+### 7.4 Passivkonten (Verbindlichkeiten / Durchlauf)\
+\
+| Kontonummer SKR03 | Bezeichnung | Verwendung |\
+|---|---|---|\
+| **1740** | Verbindlichkeiten aus Lohn und Gehalt | Mitarbeiter hat Reisekosten vorgestreckt \'e2\'86\'92 Erstattungsanspruch |\
+| **1748** | Verbindlichkeiten f\'c3\'bcr Einbehaltungen von Arbeitnehmern | Ggf. bei Vorschussverrechnung |\
+| **2650** | Forderungen an Mitarbeiter | Reisekostenvorschuss wurde gew\'c3\'a4hrt |\
+\
+---\
+\
+## 8. Buchungss\'c3\'a4tze je Kostenart\
+\
+### Buchung 1: Fahrtkosten Bahn (mit Beleg, 19% USt)\
+\
+Arbeitnehmer f\'c3\'a4hrt mit der Bahn. Ticket kostet 59,50 EUR brutto (inkl. 19% USt = 9,50 EUR).  \
+Netto: 50,00 EUR.\
+\
+```\
+4663 Reisekosten Arbeitnehmer Fahrtkosten   50,00 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%                9,50 EUR  (Soll)\
+      1200 Bank                              59,50 EUR  (Haben)\
+```\
+\
+---\
+\
+### Buchung 2: PKW-Kilometergeld (keine Vorsteuer)\
+\
+Arbeitnehmer f\'c3\'a4hrt 200 km mit Privat-PKW \'c3\'97 0,30 EUR = 60,00 EUR.\
+\
+```\
+4668 Kilometergelderstattung Arbeitnehmer   60,00 EUR  (Soll)\
+      1200 Bank                             60,00 EUR  (Haben)\
+```\
+\
+> **Kein Vorsteuerabzug**, da keine USt-Rechnung vorliegt.\
+\
+---\
+\
+### Buchung 3: Hotel\'c3\'bcbernachtung ohne Fr\'c3\'bchst\'c3\'bcck (7% USt)\
+\
+Hotelrechnung: 107,00 EUR brutto (100,00 EUR netto + 7,00 EUR USt @ 7%).\
+\
+```\
+4666 Reisekosten Arbeitnehmer \'c3\'9cbernachtungsaufwand   100,00 EUR  (Soll)\
+1571 Abziehbare Vorsteuer 7%                           7,00 EUR  (Soll)\
+      1200 Bank                                       107,00 EUR  (Haben)\
+```\
+\
+---\
+\
+### Buchung 4: Hotelrechnung mit Fr\'c3\'bchst\'c3\'bcck (gemischte USt)\
+\
+Hotelrechnung enth\'c3\'a4lt:  \
+- \'c3\'9cbernachtung: 100,00 EUR netto + 7,00 EUR USt (7%)  \
+- Fr\'c3\'bchst\'c3\'bcck: 10,00 EUR netto + 1,90 EUR USt (19%)  \
+- Brutto gesamt: 118,90 EUR\
+\
+```\
+4666 Reisekosten Arbeitnehmer \'c3\'9cbernachtungsaufwand   100,00 EUR  (Soll)\
+4664 Reisekosten Arbeitnehmer Verpflegung (Fr\'c3\'bchst\'c3\'bcck) 10,00 EUR  (Soll)\
+1571 Abziehbare Vorsteuer 7%                            7,00 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%                           1,90 EUR  (Soll)\
+      1200 Bank                                        118,90 EUR  (Haben)\
+```\
+\
+> **Gleichzeitig:** Die Verpflegungspauschale f\'c3\'bcr diesen Tag wird um **5,60 EUR** (Fr\'c3\'bchst\'c3\'bcck) gek\'c3\'bcrzt.\
+\
+---\
+\
+### Buchung 5: Verpflegungspauschale (Auszahlung, keine USt)\
+\
+Arbeitnehmer erh\'c3\'a4lt 28,00 EUR Verpflegungspauschale f\'c3\'bcr einen vollen Reisetag bar ausgezahlt.\
+\
+```\
+4664 Reisekosten Arbeitnehmer Verpflegungsmehraufwand   28,00 EUR  (Soll)\
+      1000 Kasse                                         28,00 EUR  (Haben)\
+```\
+\
+> Kein Vorsteuerabzug. Kein Beleg n\'c3\'b6tig, nur Nachweis der Reisedauer.\
+\
+---\
+\
+### Buchung 6: Reisenebenkosten (Parkgeb\'c3\'bchren, Maut)\
+\
+Parkgeb\'c3\'bchren 10,00 EUR (Quittung ohne USt-Ausweis).\
+\
+```\
+4676 Reisekosten Unternehmer \'c3\'9cbernachtungsaufwand/Nebenkosten   10,00 EUR  (Soll)\
+      1000 Kasse                                                 10,00 EUR  (Haben)\
+```\
+\
+---\
+\
+### Buchung 7: Reisekostenvorschuss und sp\'c3\'a4tere Abrechnung\
+\
+**Schritt 1 \'e2\'80\'93 Vorschuss auszahlen:**\
+```\
+2650 Forderungen an Mitarbeiter   100,00 EUR  (Soll)\
+      1200 Bank                   100,00 EUR  (Haben)\
+```\
+\
+**Schritt 2 \'e2\'80\'93 Abrechnung einreichen (tats\'c3\'a4chliche Kosten 150,00 EUR brutto, inkl. 19% USt):**\
+```\
+4663 Reisekosten Arbeitnehmer Fahrtkosten   126,05 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%               23,95 EUR  (Soll)\
+      2650 Forderungen an Mitarbeiter       100,00 EUR  (Haben)   \'e2\'86\uc0\u144  Vorschuss verrechnen\
+      1200 Bank                              50,00 EUR  (Haben)   \'e2\'86\uc0\u144  Restbetrag auszahlen\
+```\
+\
+---\
+\
+### Buchung 8: Verbindlichkeit gegen\'c3\'bcber Arbeitnehmer (Monatszyklus)\
+\
+Arbeitnehmer streckt Kosten vor, Erstattung erfolgt mit dem Gehaltsabschluss:\
+\
+**Reise buchen (Aufwand + Verbindlichkeit):**\
+```\
+4663 Reisekosten Arbeitnehmer Fahrtkosten     50,00 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%                  9,50 EUR  (Soll)\
+      1740 Verbindlichkeiten Lohn/Gehalt       59,50 EUR  (Haben)\
+```\
+\
+**Auszahlung mit Lohn:**\
+```\
+1740 Verbindlichkeiten aus Lohn und Gehalt   59,50 EUR  (Soll)\
+      1200 Bank                              59,50 EUR  (Haben)\
+```\
+\
+---\
+\
+## 9. Vollst\'c3\'a4ndige Musterrechnung \'e2\'80\'93 Dreit\'c3\'a4gige Inlandsreise\
+\
+### Ausgangssituation\
+\
+**Mitarbeiter:** Max M\'c3\'bcller  \
+**Reisezeitraum:** Montag bis Mittwoch  \
+**Ziel:** Kundenbesuch Frankfurt  \
+**Besonderheit:** Hotel hat Fr\'c3\'bchst\'c3\'bcck inkl. (Tage Dienstag + Mittwoch)\
+\
+| Kostenposition | Brutto | Netto | USt % | USt-Betrag | Bemerkung |\
+|---|---|---|---|---|---|\
+| Bahnfahrt Hin/R\'c3\'bcck | 119,00 EUR | 100,00 EUR | 19% | 19,00 EUR | Beleg vorhanden |\
+| Hotel Montag (ohne Fr\'c3\'bchst\'c3\'bcck) | 107,00 EUR | 100,00 EUR | 7% | 7,00 EUR | |\
+| Hotel Dienstag (mit Fr\'c3\'bchst\'c3\'bcck) | 118,90 EUR | 110,00 EUR | gem. | 8,90 EUR | \'c3\'9cbernachtung 7%, Fr\'c3\'bchst\'c3\'bcck 19% |\
+| Taxi am Dienstag | 23,80 EUR | 20,00 EUR | 19% | 3,80 EUR | Beleg |\
+| Parkgeb\'c3\'bchren | 5,00 EUR | 5,00 EUR | 0% | 0,00 EUR | Quittung |\
+\
+### Verpflegungspauschalen-Berechnung\
+\
+| Tag | Dauer | Brutto-Pauschale | K\'c3\'bcrzung | Ergebnis |\
+|---|---|---|---|---|\
+| Montag (Anreisetag) | An- und Abreisetag | 14,00 EUR | Keine Mahlzeit gestellt | **14,00 EUR** |\
+| Dienstag (voller Tag) | 24 Std. | 28,00 EUR | Fr\'c3\'bchst\'c3\'bcck: \'e2\'88\'925,60 EUR | **22,40 EUR** |\
+| Mittwoch (Abreisetag) | An- und Abreisetag | 14,00 EUR | Fr\'c3\'bchst\'c3\'bcck: \'e2\'88\'925,60 EUR | **8,40 EUR** |\
+| **Gesamt** | | **56,00 EUR** | \'e2\'88\'9211,20 EUR | **44,80 EUR** |\
+\
+### Buchungss\'c3\'a4tze zur Musterrechnung\
+\
+**Buchung A \'e2\'80\'93 Bahnticket (Firmenkarte / Bankzahlung):**\
+```\
+4663 Reisekosten Arbeitnehmer Fahrtkosten   100,00 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%               19,00 EUR  (Soll)\
+      1200 Bank                            119,00 EUR  (Haben)\
+```\
+\
+**Buchung B \'e2\'80\'93 Hotel Montag ohne Fr\'c3\'bchst\'c3\'bcck:**\
+```\
+4666 Reisekosten Arbeitnehmer \'c3\'9cbernachtung   100,00 EUR  (Soll)\
+1571 Abziehbare Vorsteuer 7%                   7,00 EUR  (Soll)\
+      1200 Bank                              107,00 EUR  (Haben)\
+```\
+\
+**Buchung C \'e2\'80\'93 Hotel Dienstag mit Fr\'c3\'bchst\'c3\'bcck (Split):**\
+```\
+4666 Reisekosten Arbeitnehmer \'c3\'9cbernachtung   100,00 EUR  (Soll)\
+4664 Reisekosten Verpflegung (Fr\'c3\'bchst\'c3\'bcck)      10,00 EUR  (Soll)\
+1571 Abziehbare Vorsteuer 7%                   7,00 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%                  1,90 EUR  (Soll)\
+      1200 Bank                               118,90 EUR  (Haben)\
+```\
+\
+**Buchung D \'e2\'80\'93 Taxi:**\
+```\
+4663 Reisekosten Arbeitnehmer Fahrtkosten   20,00 EUR  (Soll)\
+1576 Abziehbare Vorsteuer 19%                3,80 EUR  (Soll)\
+      1200 Bank                             23,80 EUR  (Haben)\
+```\
+\
+**Buchung E \'e2\'80\'93 Parkgeb\'c3\'bchren:**\
+```\
+4676 Reisekosten Unternehmer Nebenkosten    5,00 EUR  (Soll)\
+      1000 Kasse                            5,00 EUR  (Haben)\
+```\
+\
+**Buchung F \'e2\'80\'93 Verpflegungspauschalen (Barauszahlung 44,80 EUR):**\
+```\
+4664 Reisekosten Arbeitnehmer Verpflegung   44,80 EUR  (Soll)\
+      1000 Kasse                            44,80 EUR  (Haben)\
+```\
+\
+### Gesamt\'c3\'bcbersicht Musterrechnung\
+\
+| Position | Netto/Pauschale | Vorsteuer | Brutto |\
+|---|---|---|---|\
+| Bahn | 100,00 EUR | 19,00 EUR (19%) | 119,00 EUR |\
+| Hotel Mo (ohne Fr\'c3\'bchst\'c3\'bcck) | 100,00 EUR | 7,00 EUR (7%) | 107,00 EUR |\
+| Hotel Di (\'c3\'9cbernachtung) | 100,00 EUR | 7,00 EUR (7%) | 107,00 EUR |\
+| Hotel Di (Fr\'c3\'bchst\'c3\'bcck) | 10,00 EUR | 1,90 EUR (19%) | 11,90 EUR |\
+| Taxi | 20,00 EUR | 3,80 EUR (19%) | 23,80 EUR |\
+| Parkgeb\'c3\'bchren | 5,00 EUR | 0,00 EUR | 5,00 EUR |\
+| Verpflegungspauschale | 44,80 EUR | 0,00 EUR (Pauschale) | 44,80 EUR |\
+| **Summe** | **379,80 EUR** | **38,70 EUR** | **418,50 EUR** |\
+\
+**Gesamt Erstattung an Mitarbeiter (Mitarbeiter hat alles vorgestreckt):** 418,50 EUR\
+\
+---\
+\
+## 10. Sonderf\'c3\'a4lle\
+\
+### 10.1 Doppelte Haushaltsf\'c3\'bchrung\
+\
+| Kriterium | Regelung |\
+|---|---|\
+| Voraussetzung | Arbeitnehmer hat eigenen Hausstand am Erstwohnsitz, begr\'c3\'bcndet aus beruflichen Gr\'c3\'bcnden einen zweiten Haushalt am Besch\'c3\'a4ftigungsort |\
+| \'c3\'9cbernachtungskosten Inland | Tats\'c3\'a4chliche Kosten, max. **1.000 EUR/Monat** |\
+| \'c3\'9cbernachtungskosten Ausland | Tats\'c3\'a4chliche Kosten, max. **2.000 EUR/Monat** |\
+| Verpflegungspauschale | Wie Ausw\'c3\'a4rtst\'c3\'a4tigkeit, aber **nur in den ersten 3 Monaten** |\
+| Abgrenzung zu Ausw\'c3\'a4rtst\'c3\'a4tigkeit | Immer pr\'c3\'bcfen: erste T\'c3\'a4tigkeitsst\'c3\'a4tte am Ort der doppelten Haushaltsf\'c3\'bchrung? Dann keine Reisekosten mehr |\
+\
+### 10.2 Fahrt\'c3\'a4tige Arbeitnehmer (LKW-Fahrer)\
+\
+F\'c3\'bcr Arbeitnehmer, die typischerweise im Fahrzeug \'c3\'bcbernachten, gilt eine besondere \'c3\'9cbernachtungspauschale von **8,00 EUR/Tag** (\'c2\'a7 9 Abs. 1 EStG seit 2020) f\'c3\'bcr Kosten auf Rastst\'c3\'a4tten (Dusche, Parken etc.).  \
+Verpflegungspauschale kann daneben zus\'c3\'a4tzlich gezahlt werden.\
+\
+### 10.3 Ausw\'c3\'a4rtst\'c3\'a4tigkeit an wechselnden T\'c3\'a4tigkeitsst\'c3\'a4tten\
+\
+Keine feste erste T\'c3\'a4tigkeitsst\'c3\'a4tte, z.B. Monteur auf verschiedenen Baustellen \'e2\'86\'92 vollst\'c3\'a4ndige Reisekosten f\'c3\'bcr jede Baustelle, keine 3-Monats-Frist, da immer neue Einsatzorte.\
+\
+### 10.4 Reisekosten f\'c3\'bcr Azubi/Berufssch\'c3\'bcler\
+\
+Fahrten zur Berufsschule, Berufsakademie und Kammerkurse sind nach Reisekostengrunds\'c3\'a4tzen zu ber\'c3\'bccksichtigen, wenn die Bildungsma\'c3\'9fnahme Ausfluss des Ausbildungsverh\'c3\'a4ltnisses ist.  \
+**Ausnahme:** Verpflegungsmehraufwand gilt hier ebenfalls mit 3-Monats-Frist.\
+\
+### 10.5 Gemischt beruflich-private Reisen\
+\
+Das Finanzamt pr\'c3\'bcft bei Auslandsreisen besonders kritisch, ob eine Dienstreise auch privaten Anteil hatte. Eine strikte Aufteilung in beruflichen und privaten Teil ist dann zwingend.\
+\
+---\
+\
+## 11. Pflichtangaben und GoBD-Anforderungen\
+\
+### 11.1 Pflichtangaben einer Reisekostenabrechnung\
+\
+Jede Reisekostenabrechnung muss mindestens enthalten:\
+\
+1. **Name** des Reisenden\
+2. **Datum und Uhrzeit** von Abreise und R\'c3\'bcckkehr (Abwesenheitsdauer exakt!)\
+3. **Reiseroute:** Ausgangs- und Zielort jedes Reisetages\
+4. **Reisezweck** (berufliche Veranlassung)\
+5. **Gefahrene Kilometer** (bei PKW-Nutzung)\
+6. Auflistung aller **Einzelkosten** nach Kostenart\
+7. **Mahlzeiten-Angabe** (wer hat Mahlzeit gestellt? Fr\'c3\'bchst\'c3\'bcck, Mittag, Abend?)\
+8. Bemessungsgrundlage f\'c3\'bcr den **Vorsteuerabzug**\
+9. Unterschrift des Mitarbeiters und des **Vorgesetzten/Genehmigenden**\
+\
+### 11.2 Belegpflichten\
+\
+| Kostenart | Erforderlicher Beleg |\
+|---|---|\
+| Bahn, Flug, Bus | Fahrkarte oder Buchungsbest\'c3\'a4tigung |\
+| Taxi | Quittung mit USt-Ausweis |\
+| PKW-Pauschale | Fahrtenbucheintrag oder Eigenbeleg mit Streckennachweis |\
+| Hotel | Originalrechnung (Hotel-/Bewirtungsbeleg) |\
+| Parkgeb\'c3\'bchren, Maut | Parkticket, Quittung |\
+| Verpflegungspauschale | Kein Beleg erforderlich \'e2\'80\'93 nur Nachweis der Reisedauer |\
+| Trinkgeld | Eigenbeleg zul\'c3\'a4ssig |\
+\
+**Aufbewahrungsfrist:** 10 Jahre gem\'c3\'a4\'c3\'9f GoBD.\
+\
+### 11.3 GoBD-Anforderungen\
+\
+- Belege m\'c3\'bcssen **zeitnah** erfasst werden (keine lange Zeitverz\'c3\'b6gerung)\
+- **Unver\'c3\'a4nderlichkeit** digitaler Belege (kein nachtr\'c3\'a4gliches \'c3\'9cberschreiben)\
+- **Lesbarkeit** \'c3\'bcber die gesamte Aufbewahrungsfrist sichergestellt\
+- **Vollst\'c3\'a4ndigkeit:** Alle Belege m\'c3\'bcssen dem Lohnkonto beigef\'c3\'bcgt werden\
+- Digitale Belege ersetzen Papierbelege nur bei Einhaltung der GoBD-Anforderungen\
+\
+---\
+\
+## 12. Hinweise f\'c3\'bcr die Softwareentwicklung\
+\
+### 12.1 Empfohlenes Datenmodell\
+\
+```sql\
+-- Tabelle: Dienstreisen\
+CREATE TABLE dienstreisen (\
+  id              INT PRIMARY KEY,\
+  mitarbeiter_id  INT NOT NULL,          -- FK \'e2\'86\'92 Mitarbeiterstamm\
+  datum_von       DATETIME NOT NULL,\
+  datum_bis       DATETIME NOT NULL,\
+  zielort         VARCHAR(255) NOT NULL,\
+  abwesenheit_std DECIMAL(5,2),          -- berechnet\
+  reisezweck      TEXT NOT NULL,\
+  status          ENUM('EINGEREICHT','GEPR\'c3\'9cFT','FREIGEGEBEN','ABGELEHNT','AUSBEZAHLT')\
+);\
+\
+-- Tabelle: Reisekostenpositionen\
+CREATE TABLE reisekostenpositionen (\
+  id                    INT PRIMARY KEY,\
+  dienstreise_id        INT NOT NULL,     -- FK \'e2\'86\'92 dienstreisen\
+  kostenart             ENUM('FAHRT','VERPFLEGUNG','UEBERNACHTUNG','NEBENKOST'),\
+  betrag_brutto         DECIMAL(10,2),\
+  betrag_netto          DECIMAL(10,2),    -- berechnet\
+  ust_satz              TINYINT,          -- 0, 7 oder 19\
+  ust_betrag            DECIMAL(10,2),    -- berechnet\
+  beleg_nummer          VARCHAR(50),\
+  konto_soll_skr03      SMALLINT,         -- z.B. 4663, 4664, 4666, 4668\
+  mahlzeit_typ          ENUM('KEINE','FRUEHSTUECK','MITTAGESSEN','ABENDESSEN','ALLE'),\
+  km_strecke            DECIMAL(8,2),     -- bei PKW-Reise Pflichtfeld\
+  buchungssatz_erstellt BOOLEAN DEFAULT FALSE\
+);\
+\
+-- Tabelle: Buchungssaetze\
+CREATE TABLE buchungssaetze (\
+  id            INT PRIMARY KEY,\
+  position_id   INT NOT NULL,\
+  konto_soll    SMALLINT NOT NULL,\
+  konto_haben   SMALLINT NOT NULL,\
+  betrag        DECIMAL(10,2) NOT NULL,\
+  buchungstext  VARCHAR(255),\
+  buchungsdatum DATE NOT NULL,\
+  exportiert    BOOLEAN DEFAULT FALSE    -- f\'c3\'bcr DATEV-Export\
+);\
+```\
+\
+### 12.2 Kernlogik: Verpflegungspauschale berechnen\
+\
+```python\
+def berechne_verpflegung(abwesenheit_std: float, mahlzeiten: list[str], reisetag_typ: str) -> float:\
+    """\
+    reisetag_typ: 'AN_ABREISETAG' | 'VOLLER_TAG' | 'EINZEL_TAG'\
+    mahlzeiten:   Liste aus ['FRUEHSTUECK', 'MITTAGESSEN', 'ABENDESSEN']\
+    """\
+\
+    # Schritt 1: Basispauschale ermitteln\
+    if reisetag_typ in ('AN_ABREISETAG', 'EINZEL_TAG') and abwesenheit_std > 8:\
+        basispauschale = 14.00\
+    elif reisetag_typ == 'VOLLER_TAG':\
+        basispauschale = 28.00\
+    else:\
+        return 0.00  # Keine Pauschale unter 8h\
+\
+    # Schritt 2: K\'c3\'bcrzungen berechnen (Bezug IMMER auf 28 EUR!)\
+    kuerzung = 0.00\
+    if 'FRUEHSTUECK'  in mahlzeiten: kuerzung += 5.60\
+    if 'MITTAGESSEN'  in mahlzeiten: kuerzung += 11.20\
+    if 'ABENDESSEN'   in mahlzeiten: kuerzung += 11.20\
+\
+    # Schritt 3: Ergebnis \'e2\'80\'93 niemals negativ\
+    return max(0.00, basispauschale - kuerzung)\
+```\
+\
+### 12.3 Pflichtfelder f\'c3\'bcr Validierung\
+\
+| Feld | Validierungsregel |\
+|---|---|\
+| Reisezweck | Pflichtfeld, nicht leer |\
+| Datum/Uhrzeit Abfahrt | ISO 8601, vor Datum R\'c3\'bcckkehr |\
+| Datum/Uhrzeit R\'c3\'bcckkehr | ISO 8601, nach Datum Abfahrt |\
+| Abwesenheitsstunden | Berechnet aus Timestamps, kein manueller Eingriff |\
+| Kostenart | Enum-Wert, kein freies Feld |\
+| Betrag | Positiv, max. 2 Dezimalstellen |\
+| USt-Satz | Nur 0, 7 oder 19 (f\'c3\'bcr Deutschland) |\
+| Mahlzeiten-Kennzeichen | F\'c3\'bcr jede \'c3\'9cbernachtung explizit gesetzt |\
+| km bei PKW-Reise | Pflichtfeld, wenn Kostenart = FAHRT + Fahrzeugtyp = PRIVAT_PKW |\
+\
+### 12.4 Exportschnittstellen\
+\
+- **DATEV-Format:** Buchungss\'c3\'a4tze als CSV exportieren (DATEV-Schnittstelle)\
+- **Felder je Buchung:** Konto Soll, Konto Haben, Betrag, Gegenkonto, Buchungstext, Belegdatum, Belegnummer\
+- **Lohnsteuerbescheinigung:** Gro\'c3\'9fbuchstabe \'e2\'80\'9eM" automatisch setzen wenn Mahlzeit gestellt wurde\
+- **Vorsteuerabzug-Report:** Auflistung aller Vorsteuerpositionen je USt-Satz f\'c3\'bcr die UVA\
+\
+### 12.5 Wichtige Gesch\'c3\'a4ftslogik-Regeln\
+\
+1. **3-Monats-Frist:** Selbe T\'c3\'a4tigkeitsst\'c3\'a4tte \'e2\'86\'92 nach 90 Tagen automatisch Verpflegungspauschale sperren\
+2. **Mahlzeitenk\'c3\'bcrzung nie negativ** \'e2\'86\'92 `max(0, basispauschale - k\'c3\'bcrzung)`\
+3. Verpflegungspauschale = **keine Vorsteuer** (kein Konto 1576/1571)\
+4. Hotelrechnung: **Pflicht-Split** \'c3\'9cbernachtung (7%) und Fr\'c3\'bchst\'c3\'bcck (19%) \'e2\'80\'93 wenn nicht getrennt: Programm muss warnen\
+5. **Auslandsreisen:** L\'c3\'a4ndertabelle (BMF-Pauschalen) aktuell halten (j\'c3\'a4hrlich aktualisieren)\
+6. **Erste T\'c3\'a4tigkeitsst\'c3\'a4tte** im Mitarbeiterstamm pflegen \'e2\'86\'92 automatische Pr\'c3\'bcfung ob Reisekostenfall vorliegt\
+7. Beleggrenzen beachten: Rechnungen unter 250 EUR Brutto \'e2\'86\'92 kein Pflichtausweis des Leistungsempf\'c3\'a4ngers f\'c3\'bcr VSt\
+8. **Genehmigungsworkflow** ist zwingend (Vorgesetzter best\'c3\'a4tigt Reisezweck vor Auszahlung)\
+\
+---\
+\
+## 13. H\'c3\'a4ufige Fehler \'e2\'80\'93 Checkliste f\'c3\'bcr Pr\'c3\'bcfung\
+\
+| # | Fehler | Richtig |\
+|---|---|---|\
+| 1 | Fr\'c3\'bchst\'c3\'bcck in Hotelrechnung nicht aus Verpflegungspauschale herausgek\'c3\'bcrzt | K\'c3\'bcrzung 5,60 EUR je Fr\'c3\'bchst\'c3\'bcck immer vornehmen |\
+| 2 | \'c3\'9cbernachtungsrechnung inkl. Fr\'c3\'bchst\'c3\'bcck komplett mit 7% USt gebucht | Fr\'c3\'bchst\'c3\'bcck separat mit 19% USt buchen |\
+| 3 | Verpflegungspauschale nach 3 Monaten weitergew\'c3\'a4hrt | Sperre nach Monat 3 implementieren |\
+| 4 | PKW-Pauschale mit Vorsteuer gebucht | Keine Vorsteuer bei Pauschalen |\
+| 5 | Reisekostenabrechnung ohne Reisezweck | Pflichtfeld Reisezweck |\
+| 6 | Privatreise als Dienstreise abgerechnet | Nachweis der beruflichen Veranlassung |\
+| 7 | Verpflegungskosten tats\'c3\'a4chlich statt pauschal gebucht | Immer Pauschalen f\'c3\'bcr Eigenverpflegung |\
+| 8 | Mahlzeitengestellung durch Kunden nicht gemeldet | Pflichtangabe im Abrechnungsformular |\
+| 9 | Gro\'c3\'9fbuchstabe \'e2\'80\'9eM" nicht eingetragen | Lohnkontof\'c3\'bchrung kontrollieren |\
+| 10 | Auslandspauschalen nicht aktualisiert | J\'c3\'a4hrliches BMF-Schreiben einspielen |}

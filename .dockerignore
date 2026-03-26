@@ -1,0 +1,15 @@
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.env
+.env.*
+.DS_Store
+dist
+*.md
+Steuern
+CI
+.claude
+frontend/node_modules
+backend/node_modules
+backend/uploads
