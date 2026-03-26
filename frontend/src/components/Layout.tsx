@@ -24,19 +24,17 @@ export function Layout() {
               </div>
             </Link>
 
-            {getToken() && (
-              <Link
-                to="/admin"
-                className={`p-2 rounded-lg transition-colors ${
-                  isAdmin
-                    ? 'bg-credo-100 text-credo-700'
-                    : 'text-credo-400 hover:text-credo-600 hover:bg-credo-50'
-                }`}
-                title="AdminCenter"
-              >
-                <Settings className="w-5 h-5" />
-              </Link>
-            )}
+            <Link
+              to="/admin"
+              className={`p-2 rounded-lg transition-colors ${
+                isAdmin
+                  ? 'bg-credo-100 text-credo-700'
+                  : 'text-credo-400 hover:text-credo-600 hover:bg-credo-50'
+              }`}
+              title="AdminCenter"
+            >
+              <Settings className="w-5 h-5" />
+            </Link>
           </div>
         </div>
       </header>
