@@ -239,6 +239,7 @@ einreichungenRouter.post('/', async (req, res) => {
         typ: 'REISEKOSTEN',
         belegNr,
         mandantName: mandant.name,
+        mandantNr: mandant.mandantNr,
         kostenstelleNr: kostenstelle?.nummer || '',
         kostenstelleBezeichnung: kostenstelle?.bezeichnung || '',
         vorname: parsed.persoenlich.vorname,
@@ -274,7 +275,7 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Webhook an n8n senden (fire-and-forget)
+      // Webhook an n8n senden (fire-and-forget) — inkl. PDF als Base64
       sendeWebhook('eingereicht', {
         id: einreichung.id,
         belegNr,
@@ -296,7 +297,7 @@ einreichungenRouter.post('/', async (req, res) => {
         verkehrsmittel: parsed.verkehrsmittel,
         kmGefahren: String(parsed.kmGefahren),
         vmaNetto: String(parsed.vmaNetto),
-      }, mandant.dmsEmail).catch(console.error);
+      }, mandant.dmsEmail, pdfPfad).catch(console.error);
 
       // E-Mail an DMS senden (fire-and-forget — blockiert nicht den Response)
       sendeAnDmsMitRetry({
@@ -420,6 +421,7 @@ einreichungenRouter.post('/', async (req, res) => {
         typ: 'ERSTATTUNG',
         belegNr,
         mandantName: mandant.name,
+        mandantNr: mandant.mandantNr,
         kostenstelleNr: kostenstelle?.nummer || '',
         kostenstelleBezeichnung: kostenstelle?.bezeichnung || '',
         vorname: parsed.persoenlich.vorname,
@@ -436,7 +438,7 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Webhook an n8n senden (fire-and-forget)
+      // Webhook an n8n senden (fire-and-forget) — inkl. PDF als Base64
       sendeWebhook('eingereicht', {
         id: einreichung.id,
         belegNr,
@@ -454,7 +456,7 @@ einreichungenRouter.post('/', async (req, res) => {
         iban: parsed.persoenlich.iban,
         kontoinhaber: parsed.persoenlich.kontoinhaber,
         anzahlPositionen: parsed.positionen.length,
-      }, mandant.dmsEmail).catch(console.error);
+      }, mandant.dmsEmail, pdfPfad).catch(console.error);
 
       // E-Mail an DMS (fire-and-forget — blockiert nicht den Response)
       sendeAnDmsMitRetry({

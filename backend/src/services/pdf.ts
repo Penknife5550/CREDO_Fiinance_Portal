@@ -2,11 +2,13 @@ import { PDFDocument, PDFPage, PDFFont, rgb, StandardFonts } from 'pdf-lib';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
+import QRCode from 'qrcode';
 
 interface ReisekostenPdfData {
   typ: 'REISEKOSTEN';
   belegNr: string;
   mandantName: string;
+  mandantNr: number;
   kostenstelleNr: string;
   kostenstelleBezeichnung: string;
   vorname: string;
@@ -34,6 +36,7 @@ interface ErstattungPdfData {
   typ: 'ERSTATTUNG';
   belegNr: string;
   mandantName: string;
+  mandantNr: number;
   kostenstelleNr: string;
   kostenstelleBezeichnung: string;
   vorname: string;
@@ -100,6 +103,29 @@ export async function erstelleGesamtPdf(
     ctx.page.drawLine({ start: { x: 50, y: ctx.y }, end: { x: width - 50, y: ctx.y }, thickness: 0.5, color: rgb(0.7, 0.7, 0.7) });
   };
 
+  // ── Swiss QR Code generieren (wird oben rechts platziert) ──
+  const qrDatum = new Date().toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const qrPayload = [
+    'SPC', '0200', '1', '', 'K',
+    data.mandantName, '', '', '', '', 'CH',
+    '', '', '', '', '', '',
+    data.gesamtbetrag.toFixed(2), 'CHF',
+    '', '', '', '', '', '',
+    'NON', '',
+    `MNR:${data.mandantNr}|BNR:${data.belegNr}|DAT:${qrDatum}|BET:${formatEur(data.gesamtbetrag)}`,
+    'EPD',
+  ].join('\n');
+
+  let qrImage: Awaited<ReturnType<typeof doc.embedPng>> | null = null;
+  try {
+    const qrPng = await QRCode.toBuffer(qrPayload, {
+      type: 'png', width: 260, margin: 0, errorCorrectionLevel: 'M',
+    });
+    qrImage = await doc.embedPng(qrPng);
+  } catch (qrErr) {
+    console.error('QR-Code konnte nicht erstellt werden:', qrErr);
+  }
+
   // Header
   const titel = data.typ === 'REISEKOSTEN' ? 'REISEKOSTENABRECHNUNG' : 'KOSTENERSTATTUNG';
   drawText('CREDO', 50, 14, true);
@@ -108,16 +134,54 @@ export async function erstelleGesamtPdf(
   drawLine();
   ctx.y -= 20;
 
-  // Meta-Daten
+  // Meta-Daten (links) + QR-Code (rechts)
+  const qrSize = 110;
+  const qrX = width - 50 - qrSize;            // rechtsbündig am Rand
+  const qrY = ctx.y - qrSize + 10;            // Oberkante auf Höhe der Meta-Daten
+  const metaRightEdge = qrX - 15;             // Text endet vor dem QR-Code
+
+  /** Zeichnet Text, kürzt ihn aber mit „…" falls er über maxX hinausragen würde */
+  const drawTextClipped = (text: string, x: number, yPos: number, maxX: number, size = 10, bold = false) => {
+    const f = bold ? fontBold : font;
+    let display = text;
+    while (f.widthOfTextAtSize(display, size) > maxX - x && display.length > 1) {
+      display = display.slice(0, -2) + '…';
+    }
+    ctx.page.drawText(display, { x, y: yPos, size, font: f, color: rgb(0.1, 0.1, 0.1) });
+  };
+
+  const textMaxX = qrX - 15; // Texte dürfen nicht in den QR-Code hineinragen
+
   drawText(`Beleg-Nr: ${data.belegNr}`, 50, 10, true);
-  drawTextAt(`Datum: ${new Date().toLocaleDateString('de-DE')}`, 350, ctx.y);
+  drawTextClipped(`Datum: ${new Date().toLocaleDateString('de-DE')}`, 250, ctx.y, textMaxX);
   ctx.y -= 15;
-  drawText(`Mandant: ${data.mandantName}`, 50);
-  drawTextAt(`Kostenstelle: ${data.kostenstelleNr} (${data.kostenstelleBezeichnung})`, 350, ctx.y);
+  drawTextClipped(`Mandant: ${data.mandantName}`, 50, ctx.y, textMaxX);
   ctx.y -= 15;
-  drawText(`Mitarbeiter: ${data.vorname} ${data.nachname}`, 50);
-  drawTextAt(`Personal-Nr: ${data.personalNr}`, 350, ctx.y);
-  ctx.y -= 25;
+  drawText(`Mandanten-Nr: ${data.mandantNr}`, 50);
+  ctx.y -= 15;
+  drawTextClipped(`KST: ${data.kostenstelleNr} (${data.kostenstelleBezeichnung})`, 50, ctx.y, textMaxX);
+  ctx.y -= 15;
+  drawTextClipped(`Mitarbeiter: ${data.vorname} ${data.nachname}`, 50, ctx.y, textMaxX);
+  drawTextClipped(`PNr: ${data.personalNr}`, 250, ctx.y, textMaxX);
+  ctx.y -= 15;
+  drawText(`Betrag: ${formatEur(data.gesamtbetrag)}`, 50, 10, true);
+
+  // QR-Code rechts neben die Meta-Daten zeichnen
+  if (qrImage) {
+    // Leichter Rahmen um den QR-Code
+    ctx.page.drawRectangle({
+      x: qrX - 5, y: qrY - 5,
+      width: qrSize + 10, height: qrSize + 10,
+      borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 0.5,
+      color: rgb(1, 1, 1),
+    });
+    ctx.page.drawImage(qrImage, { x: qrX, y: qrY, width: qrSize, height: qrSize });
+    // Kleine Beschriftung unter dem QR-Code
+    drawTextAt('Swiss QR Code', qrX + qrSize / 2 - fontBold.widthOfTextAtSize('Swiss QR Code', 7) / 2, qrY - 12, 7, true);
+  }
+
+  // y-Position auf das Ende des QR-Blocks setzen (falls QR tiefer reicht als Meta-Text)
+  ctx.y = Math.min(ctx.y, qrY - 18) - 10;
   drawLine();
   ctx.y -= 20;
 

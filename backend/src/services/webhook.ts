@@ -1,9 +1,12 @@
 import { db, schema } from '../db/index.js';
+import fs from 'fs';
 
 interface WebhookPayload {
   event: 'eingereicht' | 'status_geaendert' | 'fehler';
   timestamp: string;
   an: string;
+  pdfBase64?: string;
+  pdfDateiname?: string;
   einreichung: {
     id: string;
     belegNr: string;
@@ -64,8 +67,16 @@ function buildAuthHeaders(config: WebhookAuthConfig): Record<string, string> {
 }
 
 /** Sendet Webhook an alle aktiven Konfigurationen */
-export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookPayload['einreichung'], an: string) {
+export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookPayload['einreichung'], an: string, pdfDateipfad?: string) {
   const configs = await db.select().from(schema.webhookConfig);
+
+  // PDF als Base64 lesen (einmal für alle Webhooks)
+  let pdfBase64: string | undefined;
+  let pdfDateiname: string | undefined;
+  if (pdfDateipfad && fs.existsSync(pdfDateipfad)) {
+    pdfBase64 = fs.readFileSync(pdfDateipfad).toString('base64');
+    pdfDateiname = pdfDateipfad.split('/').pop();
+  }
 
   for (const config of configs) {
     if (!config.aktiv || !config.url) continue;
@@ -82,6 +93,8 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
       event,
       timestamp: new Date().toISOString(),
       an,
+      pdfBase64,
+      pdfDateiname,
       einreichung: data,
     };
 
@@ -120,6 +133,8 @@ export async function sendeTestWebhook(
     event: 'eingereicht',
     timestamp: new Date().toISOString(),
     an: 'test@example.com',
+    pdfBase64: undefined,
+    pdfDateiname: undefined,
     einreichung: {
       id: '00000000-0000-0000-0000-000000000000',
       belegNr: 'TEST-RK-2026-001',
