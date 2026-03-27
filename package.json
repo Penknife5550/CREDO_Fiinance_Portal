@@ -12,13 +12,27 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "db:migrate": "npm run migrate --workspace=backend",
-    "db:seed": "npm run seed --workspace=backend"
+    "db:seed": "npm run seed --workspace=backend",
+    "lint": "eslint . --ext .ts,.tsx",
+    "lint:fix": "eslint . --ext .ts,.tsx --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,json,css,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,css,md}\"",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "workspaces": [
     "backend",
     "frontend"
   ],
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "@typescript-eslint/eslint-plugin": "^8.57.2",
+    "@typescript-eslint/parser": "^8.57.2",
+    "concurrently": "^9.1.0",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "prettier": "^3.8.1",
+    "vitest": "^4.1.2"
   }
 }

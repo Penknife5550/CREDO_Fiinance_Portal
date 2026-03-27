@@ -44,26 +44,26 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
           <strong>Kein Verpflegungsmehraufwand.</strong> Bei einer Abwesenheit unter 8 Stunden besteht kein Anspruch auf Verpflegungspauschale.
         </div>
       ) : (
-        <div className="border border-credo-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="border border-credo-200 rounded-lg overflow-x-auto">
+          <table className="w-full text-sm min-w-[600px]">
             <thead className="bg-credo-50">
               <tr>
-                <th className="text-left p-3 font-medium text-credo-700">Tag</th>
-                <th className="text-left p-3 font-medium text-credo-700">Typ</th>
-                <th className="text-center p-3 font-medium text-credo-700">
+                <th scope="col" className="text-left p-3 font-medium text-credo-700">Tag</th>
+                <th scope="col" className="text-left p-3 font-medium text-credo-700">Typ</th>
+                <th scope="col" className="text-center p-3 font-medium text-credo-700">
                   <span className="hidden sm:inline">Frühstück gestellt?</span>
                   <span className="sm:hidden">Fr. gestellt?</span>
                 </th>
-                <th className="text-center p-3 font-medium text-credo-700">
+                <th scope="col" className="text-center p-3 font-medium text-credo-700">
                   <span className="hidden sm:inline">Mittag gestellt?</span>
                   <span className="sm:hidden">Mi. gestellt?</span>
                 </th>
-                <th className="text-center p-3 font-medium text-credo-700">
+                <th scope="col" className="text-center p-3 font-medium text-credo-700">
                   <span className="hidden sm:inline">Abend gestellt?</span>
                   <span className="sm:hidden">Ab. gestellt?</span>
                 </th>
-                <th className="text-right p-3 font-medium text-credo-700">Kürzung</th>
-                <th className="text-right p-3 font-medium text-credo-700">Betrag</th>
+                <th scope="col" className="text-right p-3 font-medium text-credo-700">Kürzung</th>
+                <th scope="col" className="text-right p-3 font-medium text-credo-700">Betrag</th>
               </tr>
             </thead>
             <tbody>
@@ -77,6 +77,7 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
                       className="w-4 h-4 rounded border-credo-300 text-credo-600 focus:ring-credo-500"
                       checked={tag.fruehstueckGestellt}
                       onChange={() => handleMahlzeitToggle(index, 'fruehstueckGestellt')}
+                      aria-label={`Frühstück gestellt am ${formatDatumKurz(tag.datum)}`}
                     />
                   </td>
                   <td className="p-3 text-center">
@@ -85,6 +86,7 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
                       className="w-4 h-4 rounded border-credo-300 text-credo-600 focus:ring-credo-500"
                       checked={tag.mittagGestellt}
                       onChange={() => handleMahlzeitToggle(index, 'mittagGestellt')}
+                      aria-label={`Mittagessen gestellt am ${formatDatumKurz(tag.datum)}`}
                     />
                   </td>
                   <td className="p-3 text-center">
@@ -93,6 +95,7 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
                       className="w-4 h-4 rounded border-credo-300 text-credo-600 focus:ring-credo-500"
                       checked={tag.abendGestellt}
                       onChange={() => handleMahlzeitToggle(index, 'abendGestellt')}
+                      aria-label={`Abendessen gestellt am ${formatDatumKurz(tag.datum)}`}
                     />
                   </td>
                   <td className="p-3 text-right text-red-500 text-xs">

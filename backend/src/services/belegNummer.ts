@@ -19,7 +19,7 @@ export async function generateBelegNr(typ: 'REISEKOSTEN' | 'ERSTATTUNG'): Promis
 
     let nextNum = 1;
     if (result.rows.length > 0) {
-      const lastNr = (result.rows[0] as any).beleg_nr as string;
+      const lastNr = (result.rows[0] as Record<string, string>).beleg_nr;
       const lastNum = parseInt(lastNr.split('-')[2], 10);
       nextNum = lastNum + 1;
     }

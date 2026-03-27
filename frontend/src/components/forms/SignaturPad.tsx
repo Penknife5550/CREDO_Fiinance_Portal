@@ -127,6 +127,8 @@ export function SignaturPad({ onSignature, value }: Props) {
           ref={canvasRef}
           className="w-full cursor-crosshair touch-none"
           style={{ height: 150 }}
+          role="img"
+          aria-label="Unterschrift zeichnen — mit Maus oder Finger auf dieser Fläche unterschreiben"
           onMouseDown={startDrawing}
           onMouseMove={draw}
           onMouseUp={stopDrawing}

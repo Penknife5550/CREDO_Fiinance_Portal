@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useToast } from '@/components/Toast';
 import { PersoenlicheDatenStep } from '@/components/forms/PersoenlicheDatenStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
@@ -23,6 +24,7 @@ const EMPTY_POSITION: ErstattungPosition = {
 
 export function ErstattungFormular() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [currentStep, setCurrentStep] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -33,6 +35,19 @@ export function ErstattungFormular() {
   const [unterschrift, setUnterschrift] = useState<string | undefined>();
 
   const gesamt = positionen.reduce((sum, p) => sum + (p.betrag || 0), 0);
+
+  // ── Warnung bei Datenverlust ──────────────────────
+  const hasData = persoenlich.vorname || persoenlich.nachname || positionen.some(p => p.beschreibung);
+  const handleBeforeUnload = useCallback((e: BeforeUnloadEvent) => {
+    if (hasData) {
+      e.preventDefault();
+    }
+  }, [hasData]);
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [handleBeforeUnload]);
 
   // ── Positionen-Verwaltung ──────────────────────────
   const addPosition = () => setPositionen([...positionen, { ...EMPTY_POSITION }]);
@@ -88,7 +103,7 @@ export function ErstattungFormular() {
       });
       navigate(`/erfolg/${result.belegNr}`);
     } catch (err) {
-      alert(`Fehler: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+      showToast(err instanceof Error ? err.message : 'Ein unbekannter Fehler ist aufgetreten', 'error');
       setSubmitting(false);
     }
   };

@@ -68,10 +68,38 @@
 | D.9 | Docker-Build erfolgreich getestet | ✅ | 2026-03-21 |
 | D.10 | TypeScript Build-Fehler gefixt (kostenstelleId, tsconfig) | ✅ | 2026-03-21 |
 
-### Phase 5: Erweiterung
+### Phase 5: Qualitätssicherung (QA-Review 27.03.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 5.1 | ESLint + Prettier eingerichtet (eslint.config.js, .prettierrc) | ✅ | 2026-03-27 |
+| 5.2 | Vitest Test-Framework + vitest.config.ts | ✅ | 2026-03-27 |
+| 5.3 | 37 Unit-Tests (IBAN, VMA, Formatierung, Reisetage, km) | ✅ | 2026-03-27 |
+| 5.4 | Accessibility: Skip-Link, aria-labels, scope auf Tabellen | ✅ | 2026-03-27 |
+| 5.5 | Toast-Benachrichtigungen statt browser alert() | ✅ | 2026-03-27 |
+| 5.6 | Datenverlust-Warnung (beforeunload) in beiden Formularen | ✅ | 2026-03-27 |
+| 5.7 | Verpflegungstabelle responsiv (overflow-x-auto) | ✅ | 2026-03-27 |
+| 5.8 | 404-Seite (NotFound.tsx + Catch-All Route) | ✅ | 2026-03-27 |
+| 5.9 | Backend: Error-Details nicht mehr im Response exponiert | ✅ | 2026-03-27 |
+| 5.10 | Backend: `as any` Casts entfernt (belegNummer, einreichungen, upload) | ✅ | 2026-03-27 |
+| 5.11 | npm Scripts: lint, format, test | ✅ | 2026-03-27 |
+
+#### Bekannte offene Punkte aus QA-Review (nicht kritisch für internes Netz):
+- [ ] CI/CD-Pipeline (CI/ Ordner ist leer — GitHub Actions Workflow fehlt)
+- [ ] PostgreSQL-Backups automatisieren
+- [ ] Redis für Session-Persistenz (aktuell nur RAM — bei Restart weg)
+- [ ] Admin-Route-Protection (PrivateRoute)
+- [ ] E2E-Tests (Playwright/Cypress)
+- [ ] Pauschalen aus DB laden statt hardcodiert im Frontend (vma.ts)
+- [ ] Admin-Tab-State mit URL synchronisieren (/admin?tab=...)
+- [ ] Weitere Accessibility: fieldset/legend bei Radio-Gruppen, aria-describedby bei Fehlern
+- [ ] React Query/SWR für API-Caching
+- [ ] Log-Rotation + Monitoring für Production
+
+### Phase 6: Erweiterung
 _Noch nicht gestartet_
 
-### Phase 6: Testing & Go-Live
+### Phase 7: Testing & Go-Live
 _Noch nicht gestartet_
 
 ---
@@ -91,6 +119,10 @@ _Noch nicht gestartet_
 | 2026-03-21 | Deployment-Setup analog HR-Portal | Gleiche Docker/Caddy-Struktur |
 | 2026-03-21 | Auto-Migration via docker-entrypoint.sh | Keine manuelle DB-Setup nötig |
 | 2026-03-21 | GitHub: Penknife5550/CREDO_Fiinance_Portal | Zentrale Code-Verwaltung |
+| 2026-03-27 | QA-Review: Sicherheitsfixes zurückgestellt | App nur intern erreichbar (Firewall) |
+| 2026-03-27 | ESLint Flat Config (v9) statt .eslintrc | Zukunftssicher, empfohlen ab ESLint 9 |
+| 2026-03-27 | Vitest statt Jest | Schneller, native ESM/Vite-Unterstützung |
+| 2026-03-27 | Eigene Toast-Komponente statt Radix Toast | Leichtgewichtiger, keine Extra-Dependency |
 
 ---
 
@@ -109,6 +141,9 @@ Finance_Portal/
 ├── .env.example                  # Umgebungsvariablen-Template
 ├── .env.production               # Produktions-Geheimnisse (nicht committed)
 ├── package.json                  # Monorepo root (npm Workspaces)
+├── eslint.config.js              # ESLint Flat Config (TS + React)
+├── .prettierrc                   # Prettier Formatierung
+├── vitest.config.ts              # Vitest Test-Konfiguration
 ├── PLAN.md                       # Implementierungsplan v1.1
 ├── PROGRESS.md                   # Diese Datei
 │
@@ -136,13 +171,17 @@ Finance_Portal/
 │   │   ├── main.tsx              # React Router
 │   │   ├── index.css             # Tailwind + CREDO CI
 │   │   ├── lib/
-│   │   │   ├── utils.ts          # Hilfsfunktionen
+│   │   │   ├── utils.ts          # Hilfsfunktionen (IBAN, Format)
 │   │   │   ├── types.ts          # TypeScript-Typen
+│   │   │   ├── __tests__/
+│   │   │   │   ├── utils.test.ts # Tests: IBAN, Formatierung (14 Tests)
+│   │   │   │   └── vma.test.ts   # Tests: VMA, Reisetage, km (23 Tests)
 │   │   │   ├── hooks.ts          # useMandanten, useKostenstellen
 │   │   │   ├── vma.ts            # VMA-Berechnungslogik
 │   │   │   └── api.ts            # API-Calls (Upload + Submit)
 │   │   ├── components/
-│   │   │   ├── Layout.tsx        # Header + Footer
+│   │   │   ├── Layout.tsx        # Header + Footer + Skip-Link
+│   │   │   ├── Toast.tsx         # Toast-Benachrichtigungen (Context + Provider)
 │   │   │   └── forms/
 │   │   │       ├── PersoenlicheDatenStep.tsx
 │   │   │       ├── VerpflegungStep.tsx
@@ -152,5 +191,6 @@ Finance_Portal/
 │   │       ├── ReisekostenFormular.tsx  # 6-Step Wizard
 │   │       ├── ErstattungFormular.tsx   # 3-Step Wizard
 │   │       ├── Erfolg.tsx        # Belegnummer-Anzeige
+│   │       ├── NotFound.tsx      # 404-Seite
 │   │       └── AdminCenter.tsx   # 4-Tab Admin
 ```

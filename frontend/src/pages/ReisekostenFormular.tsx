@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useToast } from '@/components/Toast';
 import { PersoenlicheDatenStep } from '@/components/forms/PersoenlicheDatenStep';
 import { VerpflegungStep } from '@/components/forms/VerpflegungStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
@@ -29,6 +30,7 @@ const INITIAL_PERSOENLICH: PersoenlicheDaten = {
 
 export function ReisekostenFormular() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [currentStep, setCurrentStep] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -48,6 +50,19 @@ export function ReisekostenFormular() {
   const [weitereKosten, setWeitereKosten] = useState<WeitereKostenPosition[]>([]);
   const [belege, setBelege] = useState<File[]>([]);
   const [unterschrift, setUnterschrift] = useState<string | undefined>();
+
+  // ── Warnung bei Datenverlust ──────────────────────
+  const hasData = persoenlich.vorname || persoenlich.nachname || reiseanlass || reiseziel;
+  const handleBeforeUnload = useCallback((e: BeforeUnloadEvent) => {
+    if (hasData) {
+      e.preventDefault();
+    }
+  }, [hasData]);
+
+  useEffect(() => {
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [handleBeforeUnload]);
 
   // ── 3-Monats-Frist prüfen ─────────────────────────
   const dreiMonatsFrist = pruefeDreiMonatsFrist(reiseziel);
@@ -139,7 +154,7 @@ export function ReisekostenFormular() {
       });
       navigate(`/erfolg/${result.belegNr}`);
     } catch (err) {
-      alert(`Fehler: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+      showToast(err instanceof Error ? err.message : 'Ein unbekannter Fehler ist aufgetreten', 'error');
       setSubmitting(false);
     }
   };
