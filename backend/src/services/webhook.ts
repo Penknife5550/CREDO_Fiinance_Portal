@@ -3,6 +3,7 @@ import { db, schema } from '../db/index.js';
 interface WebhookPayload {
   event: 'eingereicht' | 'status_geaendert' | 'fehler';
   timestamp: string;
+  an: string;
   einreichung: {
     id: string;
     belegNr: string;
@@ -63,7 +64,7 @@ function buildAuthHeaders(config: WebhookAuthConfig): Record<string, string> {
 }
 
 /** Sendet Webhook an alle aktiven Konfigurationen */
-export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookPayload['einreichung']) {
+export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookPayload['einreichung'], an: string) {
   const configs = await db.select().from(schema.webhookConfig);
 
   for (const config of configs) {
@@ -80,6 +81,7 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
     const payload: WebhookPayload = {
       event,
       timestamp: new Date().toISOString(),
+      an,
       einreichung: data,
     };
 
@@ -117,6 +119,7 @@ export async function sendeTestWebhook(
   const payload: WebhookPayload = {
     event: 'eingereicht',
     timestamp: new Date().toISOString(),
+    an: 'test@example.com',
     einreichung: {
       id: '00000000-0000-0000-0000-000000000000',
       belegNr: 'TEST-RK-2026-001',

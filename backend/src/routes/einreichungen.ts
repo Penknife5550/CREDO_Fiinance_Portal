@@ -296,7 +296,7 @@ einreichungenRouter.post('/', async (req, res) => {
         verkehrsmittel: parsed.verkehrsmittel,
         kmGefahren: String(parsed.kmGefahren),
         vmaNetto: String(parsed.vmaNetto),
-      }).catch(console.error);
+      }, mandant.dmsEmail).catch(console.error);
 
       // E-Mail an DMS senden (fire-and-forget — blockiert nicht den Response)
       sendeAnDmsMitRetry({
@@ -343,7 +343,7 @@ einreichungenRouter.post('/', async (req, res) => {
             gesamtbetrag: String(parsed.gesamtbetrag),
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }).catch(console.error);
+          }, mandant.dmsEmail).catch(console.error);
         }
       }).catch(console.error);
 
@@ -454,7 +454,7 @@ einreichungenRouter.post('/', async (req, res) => {
         iban: parsed.persoenlich.iban,
         kontoinhaber: parsed.persoenlich.kontoinhaber,
         anzahlPositionen: parsed.positionen.length,
-      }).catch(console.error);
+      }, mandant.dmsEmail).catch(console.error);
 
       // E-Mail an DMS (fire-and-forget — blockiert nicht den Response)
       sendeAnDmsMitRetry({
@@ -496,7 +496,7 @@ einreichungenRouter.post('/', async (req, res) => {
             gesamtbetrag: String(parsed.gesamtbetrag),
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }).catch(console.error);
+          }, mandant.dmsEmail).catch(console.error);
         }
       }).catch(console.error);
 
