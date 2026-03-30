@@ -73,29 +73,54 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
   // PDF als Base64 lesen (einmal für alle Webhooks)
   let pdfBase64: string | undefined;
   let pdfDateiname: string | undefined;
-  if (pdfDateipfad && fs.existsSync(pdfDateipfad)) {
-    pdfBase64 = fs.readFileSync(pdfDateipfad).toString('base64');
-    pdfDateiname = pdfDateipfad.split('/').pop();
+  if (pdfDateipfad) {
+    try {
+      const pdfBuffer = fs.readFileSync(pdfDateipfad);
+      pdfBase64 = pdfBuffer.toString('base64');
+      pdfDateiname = pdfDateipfad.split(/[/\\]/).pop();
+      console.log(`  PDF gelesen: ${pdfDateiname} (${Math.round(pdfBuffer.length / 1024)} KB, Base64: ${Math.round((pdfBase64?.length || 0) / 1024)} KB)`);
+    } catch (err) {
+      console.error(`  PDF konnte nicht gelesen werden (${pdfDateipfad}):`, err);
+    }
+  }
+
+  if (configs.length === 0) {
+    console.warn('  Keine Webhook-Konfigurationen in DB gefunden!');
   }
 
   for (const config of configs) {
-    if (!config.aktiv || !config.url) continue;
+    if (!config.aktiv || !config.url) {
+      console.log(`  Webhook übersprungen: aktiv=${config.aktiv}, url=${config.url}`);
+      continue;
+    }
 
     // Typ-Filter prüfen (ALLE, REISEKOSTEN, ERSTATTUNG)
-    if (config.typFilter && config.typFilter !== 'ALLE' && config.typFilter !== data.typ) continue;
+    if (config.typFilter && config.typFilter !== 'ALLE' && config.typFilter !== data.typ) {
+      console.log(`  Webhook übersprungen: typFilter=${config.typFilter}, typ=${data.typ}`);
+      continue;
+    }
 
     // Event-Filter prüfen
-    if (event === 'eingereicht' && !config.eventEingereicht) continue;
+    if (event === 'eingereicht' && !config.eventEingereicht) {
+      console.log(`  Webhook übersprungen: eventEingereicht ist deaktiviert`);
+      continue;
+    }
     if (event === 'status_geaendert' && !config.eventStatusGeaendert) continue;
-    if (event === 'fehler' && !config.eventFehler) continue;
+    if (event === 'fehler' && !config.eventFehler) {
+      console.log(`  Webhook übersprungen: eventFehler ist deaktiviert`);
+      continue;
+    }
 
-    const payload: WebhookPayload = {
+    // PDF sowohl auf Top-Level als auch in einreichung (Kompatibilität)
+    const payloadData = pdfBase64 ? { ...data, pdfBase64, pdfDateiname } : data;
+
+    const payload = {
       event,
       timestamp: new Date().toISOString(),
       an,
       pdfBase64,
       pdfDateiname,
-      einreichung: data,
+      einreichung: payloadData,
     };
 
     const body = JSON.stringify(payload);
@@ -105,21 +130,23 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
       ...buildAuthHeaders(config),
     };
 
+    console.log(`  Webhook senden → ${config.url} [${event}] (${Math.round(body.length / 1024)} KB, hasPdf=${!!pdfBase64})`);
+
     try {
       const res = await fetch(config.url, {
         method: 'POST',
         headers,
         body,
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!res.ok) {
-        console.error(`Webhook fehlgeschlagen (${config.url}): HTTP ${res.status}`);
+        console.error(`  Webhook fehlgeschlagen (${config.url}): HTTP ${res.status} ${await res.text().catch(() => '')}`);
       } else {
-        console.log(`  Webhook gesendet → ${config.url} [${event}]`);
+        console.log(`  Webhook erfolgreich → ${config.url} [${event}]`);
       }
     } catch (err) {
-      console.error(`Webhook-Fehler (${config.url}):`, err);
+      console.error(`  Webhook-Fehler (${config.url}):`, err);
     }
   }
 }

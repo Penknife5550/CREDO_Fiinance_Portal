@@ -278,6 +278,7 @@ einreichungenRouter.post('/', async (req, res) => {
       // Versandmethode aus DB lesen
       const [emailConf] = await db.select().from(schema.emailConfig).limit(1);
       const versandMethode = emailConf?.versandMethode || 'WEBHOOK';
+      console.log(`[${belegNr}] Versandmethode: ${versandMethode}, PDF: ${pdfPfad}, existiert: ${fs.existsSync(pdfPfad)}`);
 
       const webhookData = {
         id: einreichung.id,
@@ -449,6 +450,7 @@ einreichungenRouter.post('/', async (req, res) => {
       // Versandmethode aus DB lesen
       const [emailConfE] = await db.select().from(schema.emailConfig).limit(1);
       const versandMethodeE = emailConfE?.versandMethode || 'WEBHOOK';
+      console.log(`[${belegNr}] Versandmethode: ${versandMethodeE}, PDF: ${pdfPfad}, existiert: ${fs.existsSync(pdfPfad)}`);
 
       const webhookDataE = {
         id: einreichung.id,
