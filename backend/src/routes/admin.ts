@@ -186,6 +186,35 @@ adminRouter.get('/email-config', async (_req, res) => {
   }
 });
 
+// PUT /api/admin/email-config — Versandmethode aktualisieren
+adminRouter.put('/email-config', async (req, res) => {
+  try {
+    const body = z.object({
+      versandMethode: z.enum(['WEBHOOK', 'SMTP', 'MS365']),
+    }).parse(req.body);
+
+    const [existing] = await db.select().from(schema.emailConfig).limit(1);
+    if (!existing) {
+      res.status(404).json({ error: 'Keine E-Mail-Konfiguration vorhanden' });
+      return;
+    }
+
+    const [updated] = await db.update(schema.emailConfig)
+      .set({ versandMethode: body.versandMethode, updatedAt: new Date() })
+      .where(eq(schema.emailConfig.id, existing.id))
+      .returning();
+
+    res.json(updated);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Fehler beim Aktualisieren der E-Mail-Konfiguration' });
+    }
+  }
+});
+
 // ── Webhook-Konfiguration ─────────────────────────────
 
 // GET /api/admin/webhooks — Alle Webhook-Konfigurationen laden

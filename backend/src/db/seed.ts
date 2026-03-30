@@ -77,7 +77,7 @@ async function seed() {
 
   // ── E-Mail-Konfiguration (Platzhalter) ─────────────
   await db.insert(schema.emailConfig).values({
-    versandMethode: 'SMTP',
+    versandMethode: 'WEBHOOK',
     absenderName: 'CREDO Finanzportal',
     absenderEmail: 'finanzportal@credo.de',
     maxVersuche: 3,

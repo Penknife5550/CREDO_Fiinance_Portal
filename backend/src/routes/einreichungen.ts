@@ -275,11 +275,14 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Webhook an n8n senden (fire-and-forget) — inkl. PDF als Base64
-      sendeWebhook('eingereicht', {
+      // Versandmethode aus DB lesen
+      const [emailConf] = await db.select().from(schema.emailConfig).limit(1);
+      const versandMethode = emailConf?.versandMethode || 'WEBHOOK';
+
+      const webhookData = {
         id: einreichung.id,
         belegNr,
-        typ: 'REISEKOSTEN',
+        typ: 'REISEKOSTEN' as const,
         status: 'EINGEREICHT',
         mandant: mandant.name,
         mandantNr: mandant.mandantNr,
@@ -297,56 +300,61 @@ einreichungenRouter.post('/', async (req, res) => {
         verkehrsmittel: parsed.verkehrsmittel,
         kmGefahren: String(parsed.kmGefahren),
         vmaNetto: String(parsed.vmaNetto),
-      }, mandant.dmsEmail, pdfPfad).catch(console.error);
+      };
 
-      // E-Mail an DMS senden (fire-and-forget — blockiert nicht den Response)
-      sendeAnDmsMitRetry({
-        an: mandant.dmsEmail,
-        betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
-        text: erstelleReisekostenEmailText({
-          vorname: parsed.persoenlich.vorname,
-          nachname: parsed.persoenlich.nachname,
-          personalNr: parsed.persoenlich.personalNr,
-          mandantName: mandant.name,
-          mandantNr: String(mandant.mandantNr),
-          reiseziel: parsed.reiseziel,
-          abfahrtZeit: parsed.abfahrtZeit,
-          rueckkehrZeit: parsed.rueckkehrZeit,
-          gesamtbetrag: parsed.gesamtbetrag,
-          iban: parsed.persoenlich.iban,
-          kontoinhaber: parsed.persoenlich.kontoinhaber,
-          reisetage: parsed.reisetage,
-        }),
-        pdfDateipfad: pdfPfad,
-        pdfDateiname: `${belegNr}.pdf`,
-      }).then(emailResult => {
-        const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-        db.update(schema.einreichungen)
-          .set({
-            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-            emailVersuche: emailResult.versuche,
-            emailLetzterFehler: emailResult.fehler || null,
-            status: newStatus,
+      if (versandMethode === 'WEBHOOK') {
+        // Nur Webhook an n8n — n8n übernimmt den E-Mail-Versand
+        sendeWebhook('eingereicht', webhookData, mandant.dmsEmail, pdfPfad)
+          .then(() => {
+            db.update(schema.einreichungen)
+              .set({ emailStatus: 'GESENDET', status: 'GESENDET' })
+              .where(eq(schema.einreichungen.id, einreichung.id))
+              .then(() => {});
           })
-          .where(eq(schema.einreichungen.id, einreichung.id));
-
-        // Webhook bei Statusänderung oder Fehler
-        if (!emailResult.erfolg) {
-          sendeWebhook('fehler', {
-            id: einreichung.id,
-            belegNr,
-            typ: 'REISEKOSTEN',
-            status: 'FEHLER',
-            mandant: mandant.name,
-            mandantNr: mandant.mandantNr,
-            kostenstelle: kostenstelle?.bezeichnung || '',
-            mitarbeiter: { vorname: parsed.persoenlich.vorname, nachname: parsed.persoenlich.nachname, personalNr: parsed.persoenlich.personalNr || '' },
-            gesamtbetrag: String(parsed.gesamtbetrag),
+          .catch(err => {
+            console.error('Webhook-Versand fehlgeschlagen:', err);
+            db.update(schema.einreichungen)
+              .set({ emailStatus: 'FEHLER', status: 'FEHLER', emailLetzterFehler: String(err) })
+              .where(eq(schema.einreichungen.id, einreichung.id))
+              .then(() => {});
+          });
+      } else {
+        // Direkter SMTP-Versand
+        sendeAnDmsMitRetry({
+          an: mandant.dmsEmail,
+          betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
+          text: erstelleReisekostenEmailText({
+            vorname: parsed.persoenlich.vorname,
+            nachname: parsed.persoenlich.nachname,
+            personalNr: parsed.persoenlich.personalNr,
+            mandantName: mandant.name,
+            mandantNr: String(mandant.mandantNr),
+            reiseziel: parsed.reiseziel,
+            abfahrtZeit: parsed.abfahrtZeit,
+            rueckkehrZeit: parsed.rueckkehrZeit,
+            gesamtbetrag: parsed.gesamtbetrag,
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }, mandant.dmsEmail, pdfPfad).catch(console.error);
-        }
-      }).catch(console.error);
+            reisetage: parsed.reisetage,
+          }),
+          pdfDateipfad: pdfPfad,
+          pdfDateiname: `${belegNr}.pdf`,
+        }).then(emailResult => {
+          const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
+          db.update(schema.einreichungen)
+            .set({
+              emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
+              emailVersuche: emailResult.versuche,
+              emailLetzterFehler: emailResult.fehler || null,
+              status: newStatus,
+            })
+            .where(eq(schema.einreichungen.id, einreichung.id));
+
+          if (!emailResult.erfolg) {
+            sendeWebhook('fehler', webhookData, mandant.dmsEmail, pdfPfad).catch(console.error);
+          }
+        }).catch(console.error);
+      }
 
       res.status(201).json({
         success: true,
@@ -438,11 +446,14 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Webhook an n8n senden (fire-and-forget) — inkl. PDF als Base64
-      sendeWebhook('eingereicht', {
+      // Versandmethode aus DB lesen
+      const [emailConfE] = await db.select().from(schema.emailConfig).limit(1);
+      const versandMethodeE = emailConfE?.versandMethode || 'WEBHOOK';
+
+      const webhookDataE = {
         id: einreichung.id,
         belegNr,
-        typ: 'ERSTATTUNG',
+        typ: 'ERSTATTUNG' as const,
         status: 'EINGEREICHT',
         mandant: mandant.name,
         mandantNr: mandant.mandantNr,
@@ -456,51 +467,57 @@ einreichungenRouter.post('/', async (req, res) => {
         iban: parsed.persoenlich.iban,
         kontoinhaber: parsed.persoenlich.kontoinhaber,
         anzahlPositionen: parsed.positionen.length,
-      }, mandant.dmsEmail, pdfPfad).catch(console.error);
+      };
 
-      // E-Mail an DMS (fire-and-forget — blockiert nicht den Response)
-      sendeAnDmsMitRetry({
-        an: mandant.dmsEmail,
-        betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
-        text: erstelleErstattungEmailText({
-          vorname: parsed.persoenlich.vorname,
-          nachname: parsed.persoenlich.nachname,
-          mandantName: mandant.name,
-          mandantNr: String(mandant.mandantNr),
-          anzahlPositionen: parsed.positionen.length,
-          gesamtbetrag: parsed.gesamtbetrag,
-          iban: parsed.persoenlich.iban,
-          kontoinhaber: parsed.persoenlich.kontoinhaber,
-        }),
-        pdfDateipfad: pdfPfad,
-        pdfDateiname: `${belegNr}.pdf`,
-      }).then(emailResult => {
-        const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-        db.update(schema.einreichungen)
-          .set({
-            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-            emailVersuche: emailResult.versuche,
-            emailLetzterFehler: emailResult.fehler || null,
-            status: newStatus,
+      if (versandMethodeE === 'WEBHOOK') {
+        // Nur Webhook an n8n — n8n übernimmt den E-Mail-Versand
+        sendeWebhook('eingereicht', webhookDataE, mandant.dmsEmail, pdfPfad)
+          .then(() => {
+            db.update(schema.einreichungen)
+              .set({ emailStatus: 'GESENDET', status: 'GESENDET' })
+              .where(eq(schema.einreichungen.id, einreichung.id))
+              .then(() => {});
           })
-          .where(eq(schema.einreichungen.id, einreichung.id));
-
-        if (!emailResult.erfolg) {
-          sendeWebhook('fehler', {
-            id: einreichung.id,
-            belegNr,
-            typ: 'ERSTATTUNG',
-            status: 'FEHLER',
-            mandant: mandant.name,
-            mandantNr: mandant.mandantNr,
-            kostenstelle: kostenstelle?.bezeichnung || '',
-            mitarbeiter: { vorname: parsed.persoenlich.vorname, nachname: parsed.persoenlich.nachname, personalNr: parsed.persoenlich.personalNr || '' },
-            gesamtbetrag: String(parsed.gesamtbetrag),
+          .catch(err => {
+            console.error('Webhook-Versand fehlgeschlagen:', err);
+            db.update(schema.einreichungen)
+              .set({ emailStatus: 'FEHLER', status: 'FEHLER', emailLetzterFehler: String(err) })
+              .where(eq(schema.einreichungen.id, einreichung.id))
+              .then(() => {});
+          });
+      } else {
+        // Direkter SMTP-Versand
+        sendeAnDmsMitRetry({
+          an: mandant.dmsEmail,
+          betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
+          text: erstelleErstattungEmailText({
+            vorname: parsed.persoenlich.vorname,
+            nachname: parsed.persoenlich.nachname,
+            mandantName: mandant.name,
+            mandantNr: String(mandant.mandantNr),
+            anzahlPositionen: parsed.positionen.length,
+            gesamtbetrag: parsed.gesamtbetrag,
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }, mandant.dmsEmail, pdfPfad).catch(console.error);
-        }
-      }).catch(console.error);
+          }),
+          pdfDateipfad: pdfPfad,
+          pdfDateiname: `${belegNr}.pdf`,
+        }).then(emailResult => {
+          const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
+          db.update(schema.einreichungen)
+            .set({
+              emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
+              emailVersuche: emailResult.versuche,
+              emailLetzterFehler: emailResult.fehler || null,
+              status: newStatus,
+            })
+            .where(eq(schema.einreichungen.id, einreichung.id));
+
+          if (!emailResult.erfolg) {
+            sendeWebhook('fehler', webhookDataE, mandant.dmsEmail, pdfPfad).catch(console.error);
+          }
+        }).catch(console.error);
+      }
 
       res.status(201).json({
         success: true,

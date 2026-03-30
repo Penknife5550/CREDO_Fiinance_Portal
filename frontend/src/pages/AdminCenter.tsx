@@ -1181,65 +1181,105 @@ const AUTH_TYPE_LABELS: Record<string, string> = {
 };
 
 function VersandTab() {
+  const [versandMethode, setVersandMethode] = useState('WEBHOOK');
+
+  useEffect(() => {
+    const token = localStorage.getItem('adminToken');
+    fetch('/api/admin/email-config', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.versandMethode) setVersandMethode(data.versandMethode); })
+      .catch(() => {});
+  }, []);
+
+  const handleMethodeChange = (methode: string) => {
+    setVersandMethode(methode);
+    const token = localStorage.getItem('adminToken');
+    fetch('/api/admin/email-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ versandMethode: methode }),
+    }).catch(() => {});
+  };
+
   return (
     <div className="space-y-6">
       <div className="card">
-        <h3 className="text-lg font-semibold text-credo-900 mb-4">E-Mail-Konfiguration</h3>
+        <h3 className="text-lg font-semibold text-credo-900 mb-4">Versandmethode</h3>
         <div className="space-y-4">
           <div>
-            <label className="label">Versandmethode</label>
-            <select className="input-field">
-              <option value="SMTP">SMTP (beliebiger Mailserver)</option>
+            <label className="label">Wie sollen Einreichungen versendet werden?</label>
+            <select
+              className="input-field"
+              value={versandMethode}
+              onChange={e => handleMethodeChange(e.target.value)}
+            >
+              <option value="WEBHOOK">Webhook (n8n / Outlook)</option>
+              <option value="SMTP">SMTP (direkter Mailserver)</option>
               <option value="MS365">Microsoft 365 (Graph API)</option>
             </select>
+            {versandMethode === 'WEBHOOK' && (
+              <p className="mt-2 text-sm text-gray-500">
+                E-Mails werden per Webhook an n8n gesendet. n8n übernimmt den Versand inkl. PDF-Anhang über Outlook.
+              </p>
+            )}
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">SMTP-Server</label>
-              <input type="text" className="input-field" placeholder="smtp.office365.com" />
-            </div>
-            <div>
-              <label className="label">Port</label>
-              <input type="number" className="input-field" placeholder="587" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Benutzer</label>
-              <input type="text" className="input-field" placeholder="finanzportal@credo.de" />
-            </div>
-            <div>
-              <label className="label">Passwort</label>
-              <input type="password" className="input-field" placeholder="••••••••" />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="label">Absender-Name</label>
-              <input type="text" className="input-field" defaultValue="CREDO Finanzportal" />
-            </div>
-            <div>
-              <label className="label">Absender-E-Mail</label>
-              <input type="email" className="input-field" defaultValue="finanzportal@credo.de" />
-            </div>
-          </div>
-          <button className="btn-primary text-sm py-2">Test-E-Mail senden</button>
         </div>
       </div>
 
-      <div className="card">
-        <h3 className="text-lg font-semibold text-credo-900 mb-4">Retry & Fehlerbehandlung</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="label">Max. Versuche</label>
-            <input type="number" className="input-field" defaultValue="3" />
+      {versandMethode !== 'WEBHOOK' && (
+        <>
+          <div className="card">
+            <h3 className="text-lg font-semibold text-credo-900 mb-4">E-Mail-Konfiguration</h3>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="label">SMTP-Server</label>
+                  <input type="text" className="input-field" placeholder="smtp.office365.com" />
+                </div>
+                <div>
+                  <label className="label">Port</label>
+                  <input type="number" className="input-field" placeholder="587" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Benutzer</label>
+                  <input type="text" className="input-field" placeholder="finanzportal@credo.de" />
+                </div>
+                <div>
+                  <label className="label">Passwort</label>
+                  <input type="password" className="input-field" placeholder="••••••••" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Absender-Name</label>
+                  <input type="text" className="input-field" defaultValue="CREDO Finanzportal" />
+                </div>
+                <div>
+                  <label className="label">Absender-E-Mail</label>
+                  <input type="email" className="input-field" defaultValue="finanzportal@credo.de" />
+                </div>
+              </div>
+              <button className="btn-primary text-sm py-2">Test-E-Mail senden</button>
+            </div>
           </div>
-          <div>
-            <label className="label">Fehler-Benachrichtigung an</label>
-            <input type="email" className="input-field" placeholder="admin@credo.de" />
+
+          <div className="card">
+            <h3 className="text-lg font-semibold text-credo-900 mb-4">Retry & Fehlerbehandlung</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="label">Max. Versuche</label>
+                <input type="number" className="input-field" defaultValue="3" />
+              </div>
+              <div>
+                <label className="label">Fehler-Benachrichtigung an</label>
+                <input type="email" className="input-field" placeholder="admin@credo.de" />
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
 
       <WebhookSection />
     </div>
