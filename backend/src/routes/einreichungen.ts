@@ -344,7 +344,7 @@ einreichungenRouter.post('/', async (req, res) => {
             gesamtbetrag: String(parsed.gesamtbetrag),
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }, mandant.dmsEmail).catch(console.error);
+          }, mandant.dmsEmail, pdfPfad).catch(console.error);
         }
       }).catch(console.error);
 
@@ -498,7 +498,7 @@ einreichungenRouter.post('/', async (req, res) => {
             gesamtbetrag: String(parsed.gesamtbetrag),
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }, mandant.dmsEmail).catch(console.error);
+          }, mandant.dmsEmail, pdfPfad).catch(console.error);
         }
       }).catch(console.error);
 
