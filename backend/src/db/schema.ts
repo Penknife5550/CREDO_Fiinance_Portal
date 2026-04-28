@@ -2,7 +2,7 @@ import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgE
 
 // ── Enums ──────────────────────────────────────────────
 
-export const einreichungTypEnum = pgEnum('einreichung_typ', ['REISEKOSTEN', 'ERSTATTUNG']);
+export const einreichungTypEnum = pgEnum('einreichung_typ', ['REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT']);
 export const einreichungStatusEnum = pgEnum('einreichung_status', ['EINGEREICHT', 'GESENDET', 'FEHLER']);
 export const emailStatusEnum = pgEnum('email_status', ['AUSSTEHEND', 'GESENDET', 'FEHLER']);
 export const verkehrsmittelEnum = pgEnum('verkehrsmittel', ['PKW', 'MOTORRAD', 'OEPNV', 'BAHN', 'FLUG', 'SONSTIGE']);
@@ -23,6 +23,10 @@ export const mandanten = pgTable('mandanten', {
   primaerfarbe: varchar('primaerfarbe', { length: 7 }).notNull().default('#6B7280'),
   logo: varchar('logo', { length: 500 }),
   active: boolean('active').notNull().default(true),
+  // Kostenstellen-Sichtbarkeit pro Vorgangstyp (Default: anzeigen)
+  kstReisekostenAn: boolean('kst_reisekosten_an').notNull().default(true),
+  kstErstattungAn: boolean('kst_erstattung_an').notNull().default(true),
+  kstSammelfahrtAn: boolean('kst_sammelfahrt_an').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
@@ -97,6 +101,19 @@ export const reisetage = pgTable('reisetage', {
   vmaBrutto: decimal('vma_brutto', { precision: 10, scale: 2 }).notNull(),
   vmaKuerzung: decimal('vma_kuerzung', { precision: 10, scale: 2 }).notNull().default('0'),
   vmaNetto: decimal('vma_netto', { precision: 10, scale: 2 }).notNull(),
+});
+
+// ── Fahrten (für Sammelfahrt-Vorgang) ──────────────────
+
+export const fahrten = pgTable('fahrten', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
+  datum: timestamp('datum').notNull(),
+  startOrt: varchar('start_ort', { length: 500 }).notNull(),
+  ziel: varchar('ziel', { length: 500 }).notNull(),
+  km: decimal('km', { precision: 8, scale: 2 }).notNull(),
+  kmBetrag: decimal('km_betrag', { precision: 10, scale: 2 }).notNull(),
+  reihenfolge: integer('reihenfolge').notNull().default(0),
 });
 
 // ── Erstattungspositionen ──────────────────────────────

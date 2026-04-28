@@ -30,6 +30,9 @@ adminRouter.post('/mandanten', async (req, res) => {
       kategorie: z.string().min(1).max(100),
       dmsEmail: z.string().email(),
       primaerfarbe: z.string().regex(/^#[0-9A-Fa-f]{6}$/),
+      kstReisekostenAn: z.boolean().optional(),
+      kstErstattungAn: z.boolean().optional(),
+      kstSammelfahrtAn: z.boolean().optional(),
     }).parse(req.body);
 
     const result = await db.insert(schema.mandanten).values(body).returning();
@@ -53,6 +56,9 @@ adminRouter.put('/mandanten/:id', async (req, res) => {
       dmsEmail: z.string().email().optional(),
       primaerfarbe: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
       active: z.boolean().optional(),
+      kstReisekostenAn: z.boolean().optional(),
+      kstErstattungAn: z.boolean().optional(),
+      kstSammelfahrtAn: z.boolean().optional(),
     }).parse(req.body);
 
     const result = await db
@@ -245,7 +251,7 @@ adminRouter.post('/webhooks', async (req, res) => {
       authPass: z.string().max(255).optional().nullable(),
       authHeaderName: z.string().max(255).optional().nullable(),
       authHeaderValue: z.string().max(500).optional().nullable(),
-      typFilter: z.enum(['ALLE', 'REISEKOSTEN', 'ERSTATTUNG']).optional().default('ALLE'),
+      typFilter: z.enum(['ALLE', 'REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT']).optional().default('ALLE'),
       aktiv: z.boolean().optional().default(true),
       eventEingereicht: z.boolean().optional().default(true),
       eventStatusGeaendert: z.boolean().optional().default(true),
@@ -275,7 +281,7 @@ adminRouter.put('/webhooks/:id', async (req, res) => {
       authPass: z.string().max(255).optional().nullable(),
       authHeaderName: z.string().max(255).optional().nullable(),
       authHeaderValue: z.string().max(500).optional().nullable(),
-      typFilter: z.enum(['ALLE', 'REISEKOSTEN', 'ERSTATTUNG']).optional(),
+      typFilter: z.enum(['ALLE', 'REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT']).optional(),
       aktiv: z.boolean().optional(),
       eventEingereicht: z.boolean().optional(),
       eventStatusGeaendert: z.boolean().optional(),

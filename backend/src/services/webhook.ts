@@ -10,7 +10,7 @@ interface WebhookPayload {
   einreichung: {
     id: string;
     belegNr: string;
-    typ: 'REISEKOSTEN' | 'ERSTATTUNG';
+    typ: 'REISEKOSTEN' | 'ERSTATTUNG' | 'SAMMELFAHRT';
     status: string;
     mandant: string;
     mandantNr: number;
@@ -31,6 +31,9 @@ interface WebhookPayload {
     vmaNetto?: string;
     // Erstattung-spezifisch
     anzahlPositionen?: number;
+    // Sammelfahrt-spezifisch
+    anzahlFahrten?: number;
+    fahrten?: Array<{ datum: string; startOrt: string; ziel: string; km: number; kmBetrag: number }>;
   };
 }
 

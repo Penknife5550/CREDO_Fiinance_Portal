@@ -1,6 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
+import { useToast } from '@/components/Toast';
+import { VORGANGSTYP_META, istKstAn, type KstField, type MandantAdmin, type Vorgangstyp } from '@/lib/types';
+
+// Default-Flags für editForm: jeder Vorgangstyp ist standardmäßig "an".
+const KST_DEFAULTS: Record<KstField, boolean> = Object.fromEntries(
+  Object.values(VORGANGSTYP_META).map(v => [v.kstFlag, true]),
+) as Record<KstField, boolean>;
 
 const TABS = [
   { id: 'mandanten', label: 'Mandanten', icon: Building2 },
@@ -10,17 +17,49 @@ const TABS = [
   { id: 'protokoll', label: 'Protokoll', icon: Activity },
 ];
 
-interface Mandant {
-  id: string;
-  mandantNr: number;
-  name: string;
-  kategorie: string;
-  dmsEmail: string;
-  primaerfarbe: string;
-  logo: string | null;
-  active: boolean;
-  createdAt: string;
-  updatedAt: string;
+// Pills für die Kostenstellen-Sichtbarkeit pro Vorgangstyp.
+// Liest die Werte aus der übergebenen `flags`-Map (im Read-Modus aus dem Mandanten,
+// im Edit-Modus aus dem editForm) und ruft `onToggle(field, neuerWert)` auf.
+function KstPills({
+  flags,
+  onToggle,
+  disabled,
+}: {
+  flags: Partial<Record<KstField, boolean>>;
+  onToggle: (field: KstField, neuerWert: boolean) => void;
+  disabled?: boolean;
+}) {
+  const vorgangstypen = Object.keys(VORGANGSTYP_META) as Vorgangstyp[];
+
+  return (
+    <div className="flex gap-1 justify-center">
+      {vorgangstypen.map(t => {
+        const { kuerzel, label, kstFlag: field } = VORGANGSTYP_META[t];
+        const aktiv = istKstAn(flags as Partial<MandantAdmin>, t);
+        const stateText = aktiv ? 'sichtbar' : 'ausgeblendet';
+        return (
+          <button
+            key={field}
+            type="button"
+            disabled={disabled}
+            onClick={() => onToggle(field, !aktiv)}
+            aria-pressed={aktiv}
+            aria-label={`Kostenstelle bei ${label}: ${stateText} — klicken zum Umschalten`}
+            title={`Kostenstelle bei ${label}: ${stateText}`}
+            className={`min-w-[2.25rem] px-2 py-1 rounded text-xs font-mono font-semibold transition-colors
+              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-credo-500 focus-visible:ring-offset-1
+              disabled:opacity-50 disabled:cursor-not-allowed ${
+              aktiv
+                ? 'bg-credo-700 text-white hover:bg-credo-800'
+                : 'bg-credo-100 text-credo-700 line-through hover:bg-credo-200'
+            }`}
+          >
+            <span aria-hidden="true">{kuerzel}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export function AdminCenter() {
@@ -166,7 +205,8 @@ function AdminLogin({ onSuccess }: { onSuccess: () => void }) {
 // ── Mandanten Tab ──────────────────────────────────────
 
 function MandantenTab() {
-  const [mandanten, setMandanten] = useState<Mandant[]>([]);
+  const { showToast } = useToast();
+  const [mandanten, setMandanten] = useState<MandantAdmin[]>([]);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -183,13 +223,15 @@ function MandantenTab() {
   });
   const [createFehler, setCreateFehler] = useState('');
 
-  // Edit form state
+  // Edit form state. KST-Flags kommen aus den VORGANGSTYP_META-Defaults,
+  // damit ein neuer Vorgangstyp automatisch mitwächst.
   const [editForm, setEditForm] = useState({
     name: '',
     kategorie: '',
     dmsEmail: '',
     primaerfarbe: '#6B7280',
     active: true,
+    ...KST_DEFAULTS,
   });
 
   const loadMandanten = async () => {
@@ -199,7 +241,8 @@ function MandantenTab() {
       if (!res.ok) throw new Error('Fehler beim Laden');
       const data = await res.json();
       setMandanten(data);
-    } catch {
+    } catch (err) {
+      console.error('[AdminCenter] loadMandanten:', err);
       setFehler('Mandanten konnten nicht geladen werden.');
     } finally {
       setLoading(false);
@@ -237,14 +280,23 @@ function MandantenTab() {
     }
   };
 
-  const startEdit = (m: Mandant) => {
+  const startEdit = (m: MandantAdmin) => {
     setEditingId(m.id);
+    // KST-Flags aus dem Mandanten ableiten — istKstAn behandelt undefined/null defensive als true.
+    const kstFlags = (Object.values(VORGANGSTYP_META).map(v => v.kstFlag) as KstField[]).reduce(
+      (acc, field) => {
+        acc[field] = m[field] !== false;
+        return acc;
+      },
+      {} as Record<KstField, boolean>,
+    );
     setEditForm({
       name: m.name,
       kategorie: m.kategorie,
       dmsEmail: m.dmsEmail,
       primaerfarbe: m.primaerfarbe,
       active: m.active,
+      ...kstFlags,
     });
   };
 
@@ -266,23 +318,54 @@ function MandantenTab() {
       setEditingId(null);
       await loadMandanten();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Fehler beim Speichern');
+      console.error('[AdminCenter] handleSaveEdit:', err);
+      showToast(err instanceof Error ? err.message : 'Fehler beim Speichern', 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleToggleActive = async (m: Mandant) => {
+  // Optimistic Update: lokalen State sofort flippen, bei Fehler vom Server reseten.
+  const handleToggleActive = async (m: MandantAdmin) => {
+    const neuerWert = !m.active;
+    setMandanten(prev => prev.map(x => (x.id === m.id ? { ...x, active: neuerWert } : x)));
     try {
       const res = await adminFetch(`/api/admin/mandanten/${m.id}`, {
         method: 'PUT',
-        body: JSON.stringify({ active: !m.active }),
+        body: JSON.stringify({ active: neuerWert }),
       });
-      if (!res.ok) throw new Error('Fehler');
+      if (!res.ok) throw new Error('Fehler beim Speichern');
+    } catch (err) {
+      console.error('[AdminCenter] handleToggleActive:', err);
+      // Authoritative State vom Server holen statt blind invertieren — robust gegen
+      // parallele Toggles und zwischenzeitliche Server-Änderungen.
       await loadMandanten();
-    } catch {
-      alert('Status konnte nicht geändert werden.');
+      showToast('Status konnte nicht geändert werden.', 'error');
     }
+  };
+
+  // Read-Modus: direkter Toggle gegen die DB mit Optimistic Update.
+  const handleToggleKstReadMode = async (m: MandantAdmin, field: KstField, neuerWert: boolean) => {
+    setMandanten(prev => prev.map(x => (x.id === m.id ? { ...x, [field]: neuerWert } : x)));
+    try {
+      const res = await adminFetch(`/api/admin/mandanten/${m.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ [field]: neuerWert }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.error('[AdminCenter] handleToggleKst:', err);
+      await loadMandanten();
+      showToast('Kostenstellen-Sichtbarkeit konnte nicht geändert werden.', 'error');
+    }
+  };
+
+  // Edit-Modus: Toggle ändert nur das editForm, persistiert wird beim "Speichern".
+  const handleToggleKstEditMode = (field: KstField, neuerWert: boolean) => {
+    setEditForm(prev => ({ ...prev, [field]: neuerWert }));
   };
 
   if (loading) {
@@ -414,6 +497,7 @@ function MandantenTab() {
               <th className="text-left p-3 font-medium text-credo-700">Name</th>
               <th className="text-left p-3 font-medium text-credo-700">Kategorie</th>
               <th className="text-left p-3 font-medium text-credo-700">DMS-E-Mail</th>
+              <th className="text-center p-3 font-medium text-credo-700" title="Kostenstellen-Anzeige pro Vorgangstyp">KST</th>
               <th className="text-center p-3 font-medium text-credo-700">Aktiv</th>
               <th className="text-right p-3 font-medium text-credo-700">Aktionen</th>
             </tr>
@@ -456,6 +540,9 @@ function MandantenTab() {
                         onChange={e => setEditForm({ ...editForm, dmsEmail: e.target.value })}
                       />
                     </td>
+                    <td className="p-3">
+                      <KstPills flags={editForm} onToggle={handleToggleKstEditMode} />
+                    </td>
                     <td className="p-3 text-center">
                       <button onClick={() => setEditForm({ ...editForm, active: !editForm.active })} className="p-1">
                         {editForm.active ? (
@@ -486,6 +573,9 @@ function MandantenTab() {
                     <td className="p-3 font-medium text-credo-900">{m.name}</td>
                     <td className="p-3 text-credo-500">{m.kategorie}</td>
                     <td className="p-3 font-mono text-xs text-credo-600">{m.dmsEmail}</td>
+                    <td className="p-3">
+                      <KstPills flags={m} onToggle={(field, neuerWert) => handleToggleKstReadMode(m, field, neuerWert)} />
+                    </td>
                     <td className="p-3 text-center">
                       <button onClick={() => handleToggleActive(m)} title={m.active ? 'Deaktivieren' : 'Aktivieren'}>
                         <span className={`inline-block w-3 h-3 rounded-full ${m.active ? 'bg-emerald-500' : 'bg-red-400'}`} />
@@ -500,7 +590,7 @@ function MandantenTab() {
             ))}
             {mandanten.length === 0 && !fehler && (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-credo-400">
+                <td colSpan={8} className="p-6 text-center text-credo-400">
                   Keine Mandanten vorhanden. Legen Sie den ersten Mandanten an.
                 </td>
               </tr>
@@ -523,7 +613,8 @@ interface Kostenstelle {
 }
 
 function KostenstellenTab() {
-  const [mandanten, setMandanten] = useState<Mandant[]>([]);
+  const { showToast } = useToast();
+  const [mandanten, setMandanten] = useState<MandantAdmin[]>([]);
   const [selectedMandantId, setSelectedMandantId] = useState('');
   const [kostenstellen, setKostenstellen] = useState<Kostenstelle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -544,7 +635,7 @@ function KostenstellenTab() {
       try {
         const res = await adminFetch('/api/admin/mandanten');
         if (!res.ok) throw new Error('Fehler beim Laden');
-        const data: Mandant[] = await res.json();
+        const data: MandantAdmin[] = await res.json();
         setMandanten(data.filter(m => m.active));
         if (data.length > 0) setSelectedMandantId(data.filter(m => m.active)[0]?.id || '');
       } catch {
@@ -617,7 +708,8 @@ function KostenstellenTab() {
       setEditingId(null);
       await loadKostenstellen(selectedMandantId);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Fehler beim Speichern');
+      console.error('[KostenstellenTab] handleSaveEdit:', err);
+      showToast(err instanceof Error ? err.message : 'Fehler beim Speichern', 'error');
     } finally {
       setSaving(false);
     }
@@ -631,8 +723,9 @@ function KostenstellenTab() {
       });
       if (!res.ok) throw new Error('Fehler');
       await loadKostenstellen(selectedMandantId);
-    } catch {
-      alert('Status konnte nicht geändert werden.');
+    } catch (err) {
+      console.error('[KostenstellenTab] handleToggleActive:', err);
+      showToast('Status konnte nicht geändert werden.', 'error');
     }
   };
 
@@ -642,8 +735,9 @@ function KostenstellenTab() {
       if (!res.ok) throw new Error('Fehler');
       setDeletingId(null);
       await loadKostenstellen(selectedMandantId);
-    } catch {
-      alert('Kostenstelle konnte nicht gelöscht werden.');
+    } catch (err) {
+      console.error('[KostenstellenTab] handleDelete:', err);
+      showToast('Kostenstelle konnte nicht gelöscht werden.', 'error');
     }
   };
 
@@ -860,6 +954,7 @@ interface AuslandRow {
 }
 
 function PauschalenTab() {
+  const { showToast } = useToast();
   const [editing, setEditing] = useState(false);
   const [pauschalen, setPauschalen] = useState({
     kmPkw: '0,30',
@@ -893,7 +988,7 @@ function PauschalenTab() {
   const handleSave = () => {
     // TODO: API-Call PUT /api/admin/pauschalen
     setEditing(false);
-    alert('Pauschalen gespeichert');
+    showToast('Pauschalen gespeichert', 'success');
   };
 
   const startEditRow = (row: AuslandRow) => {

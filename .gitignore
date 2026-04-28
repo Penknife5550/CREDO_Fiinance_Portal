@@ -8,3 +8,9 @@ build/
 .DS_Store
 uploads/
 .claude/settings.local.json
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Vite generated type files
+frontend/vite.config.d.ts

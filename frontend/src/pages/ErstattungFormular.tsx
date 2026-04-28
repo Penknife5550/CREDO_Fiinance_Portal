@@ -104,6 +104,7 @@ export function ErstattungFormular() {
       navigate(`/erfolg/${result.belegNr}`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Ein unbekannter Fehler ist aufgetreten', 'error');
+    } finally {
       setSubmitting(false);
     }
   };
@@ -156,7 +157,7 @@ export function ErstattungFormular() {
       <div className="card">
         {/* Step 1: Persönliche Daten */}
         {currentStep === 0 && (
-          <PersoenlicheDatenStep data={persoenlich} onChange={setPersoenlich} errors={errors} />
+          <PersoenlicheDatenStep data={persoenlich} onChange={setPersoenlich} errors={errors} vorgangstyp="erstattung" />
         )}
 
         {/* Step 2: Positionen & Belege */}

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import QRCode from 'qrcode';
+import { kmSatzAlsString } from '../lib/kmSaetze.js';
 
 interface ReisekostenPdfData {
   typ: 'REISEKOSTEN';
@@ -49,7 +50,27 @@ interface ErstattungPdfData {
   unterschriftBild?: string;
 }
 
-type PdfData = ReisekostenPdfData | ErstattungPdfData;
+interface SammelfahrtPdfData {
+  typ: 'SAMMELFAHRT';
+  belegNr: string;
+  mandantName: string;
+  mandantNr: number;
+  kostenstelleNr: string;
+  kostenstelleBezeichnung: string;
+  vorname: string;
+  nachname: string;
+  personalNr: string;
+  iban: string;
+  kontoinhaber: string;
+  reiseanlass: string;
+  verkehrsmittel: 'PKW' | 'MOTORRAD';
+  kmSumme: number;
+  gesamtbetrag: number;
+  fahrten: Array<{ datum: string; startOrt: string; ziel: string; km: number; kmBetrag: number }>;
+  unterschriftBild?: string;
+}
+
+type PdfData = ReisekostenPdfData | ErstattungPdfData | SammelfahrtPdfData;
 
 // ── Seitenumbruch-Hilfsfunktion ──────────────────────────
 
@@ -127,7 +148,10 @@ export async function erstelleGesamtPdf(
   }
 
   // Header
-  const titel = data.typ === 'REISEKOSTEN' ? 'REISEKOSTENABRECHNUNG' : 'KOSTENERSTATTUNG';
+  const titel =
+    data.typ === 'REISEKOSTEN' ? 'REISEKOSTENABRECHNUNG'
+    : data.typ === 'ERSTATTUNG' ? 'KOSTENERSTATTUNG'
+    : 'FAHRTKOSTENSAMMELANTRAG';
   drawText('CREDO', 50, 14, true);
   drawTextAt(titel, width - 50 - fontBold.widthOfTextAtSize(titel, 14), ctx.y, 14, true);
   ctx.y -= 25;
@@ -159,8 +183,10 @@ export async function erstelleGesamtPdf(
   ctx.y -= 15;
   drawText(`Mandanten-Nr: ${data.mandantNr}`, 50);
   ctx.y -= 15;
-  drawTextClipped(`KST: ${data.kostenstelleNr} (${data.kostenstelleBezeichnung})`, 50, ctx.y, textMaxX);
-  ctx.y -= 15;
+  if (data.kostenstelleNr || data.kostenstelleBezeichnung) {
+    drawTextClipped(`KST: ${data.kostenstelleNr} (${data.kostenstelleBezeichnung})`, 50, ctx.y, textMaxX);
+    ctx.y -= 15;
+  }
   drawTextClipped(`Mitarbeiter: ${data.vorname} ${data.nachname}`, 50, ctx.y, textMaxX);
   drawTextClipped(`PNr: ${data.personalNr}`, 250, ctx.y, textMaxX);
   ctx.y -= 15;
@@ -208,8 +234,7 @@ export async function erstelleGesamtPdf(
       ctx.y -= 18;
       drawText(`Verkehrsmittel: ${data.verkehrsmittel}`, 50);
       ctx.y -= 15;
-      const satz = data.verkehrsmittel === 'PKW' ? '0,30' : '0,20';
-      drawText(`${data.kmGefahren} km × ${satz} EUR = ${formatEur(data.kmBetrag)}`, 50);
+      drawText(`${data.kmGefahren} km × ${kmSatzAlsString(data.verkehrsmittel)} EUR = ${formatEur(data.kmBetrag)}`, 50);
       ctx.y -= 25;
       drawLine();
       ctx.y -= 20;
@@ -249,7 +274,7 @@ export async function erstelleGesamtPdf(
       drawLine();
       ctx.y -= 20;
     }
-  } else {
+  } else if (data.typ === 'ERSTATTUNG') {
     // Erstattung: Positionen
     checkPageBreak(ctx);
     drawText('POSITIONEN', 50, 11, true);
@@ -262,6 +287,51 @@ export async function erstelleGesamtPdf(
       ctx.y -= 14;
     }
     ctx.y -= 10;
+    drawLine();
+    ctx.y -= 20;
+  } else if (data.typ === 'SAMMELFAHRT') {
+    // Sammelfahrt: Anlass + Verkehrsmittel + Einzelfahrten
+    checkPageBreak(ctx);
+    drawText('ANLASS', 50, 11, true);
+    ctx.y -= 18;
+    drawText(data.reiseanlass, 50);
+    ctx.y -= 25;
+    drawLine();
+    ctx.y -= 20;
+
+    checkPageBreak(ctx);
+    drawText('FAHRTEN', 50, 11, true);
+    ctx.y -= 18;
+    drawText(`Verkehrsmittel: ${data.verkehrsmittel}  ·  Pauschale ${kmSatzAlsString(data.verkehrsmittel)} EUR/km`, 50);
+    ctx.y -= 18;
+
+    // Tabellenkopf
+    checkPageBreak(ctx);
+    drawText('Datum', 50, 9, true);
+    drawTextAt('Von', 110, ctx.y, 9, true);
+    drawTextAt('Nach', 270, ctx.y, 9, true);
+    drawTextAt('km', 420, ctx.y, 9, true);
+    drawTextAt('Betrag', 470, ctx.y, 9, true);
+    ctx.y -= 12;
+    drawLine();
+    ctx.y -= 12;
+
+    for (const f of data.fahrten) {
+      checkPageBreak(ctx);
+      drawText(formatDatumKurz(f.datum), 50, 9);
+      drawTextAt(kuerzeText(f.startOrt, 28), 110, ctx.y, 9);
+      drawTextAt(kuerzeText(f.ziel, 28), 270, ctx.y, 9);
+      drawTextAt(f.km.toFixed(2).replace('.', ','), 420, ctx.y, 9);
+      drawTextAt(formatEur(f.kmBetrag), 470, ctx.y, 9);
+      ctx.y -= 13;
+    }
+
+    ctx.y -= 6;
+    drawLine();
+    ctx.y -= 14;
+    drawText(`Gesamt: ${data.kmSumme.toFixed(2).replace('.', ',')} km`, 50, 10, true);
+    drawTextAt(formatEur(data.gesamtbetrag), 470, ctx.y, 10, true);
+    ctx.y -= 22;
     drawLine();
     ctx.y -= 20;
   }
@@ -448,4 +518,8 @@ function formatDatumKurz(datum: string): string {
   const d = new Date(datum);
   const tage = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
   return `${tage[d.getDay()]} ${d.getDate().toString().padStart(2, '0')}.${(d.getMonth() + 1).toString().padStart(2, '0')}.`;
+}
+
+function kuerzeText(text: string, maxLen: number): string {
+  return text.length <= maxLen ? text : text.slice(0, maxLen - 1) + '…';
 }

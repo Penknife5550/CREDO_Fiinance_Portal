@@ -14,6 +14,9 @@ mandantenRouter.get('/', async (_req, res) => {
         name: schema.mandanten.name,
         kategorie: schema.mandanten.kategorie,
         primaerfarbe: schema.mandanten.primaerfarbe,
+        kstReisekostenAn: schema.mandanten.kstReisekostenAn,
+        kstErstattungAn: schema.mandanten.kstErstattungAn,
+        kstSammelfahrtAn: schema.mandanten.kstSammelfahrtAn,
       })
       .from(schema.mandanten)
       .where(eq(schema.mandanten.active, true))

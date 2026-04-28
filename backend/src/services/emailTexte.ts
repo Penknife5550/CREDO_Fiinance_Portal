@@ -119,6 +119,52 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
   return zeilen.join('\n');
 }
 
+import { kmSatzAlsString } from '../lib/kmSaetze.js';
+
+interface FahrtSummary {
+  datum: string;
+  startOrt: string;
+  ziel: string;
+  km: number;
+  kmBetrag: number;
+}
+
+interface SammelfahrtEmailDaten {
+  vorname: string;
+  nachname: string;
+  personalNr: string;
+  mandantName: string;
+  mandantNr: string;
+  reiseanlass: string;
+  verkehrsmittel: 'PKW' | 'MOTORRAD';
+  kmSumme: number;
+  gesamtbetrag: number;
+  iban: string;
+  kontoinhaber: string;
+  fahrten: FahrtSummary[];
+}
+
+export function erstelleSammelfahrtEmailText(data: SammelfahrtEmailDaten): string {
+  const zeilen = [
+    'Neuer Fahrtkostensammelantrag eingereicht.',
+    '',
+    `Mitarbeiter: ${data.vorname} ${data.nachname} (Personal-Nr.: ${data.personalNr})`,
+    `Mandant: ${data.mandantName} (${data.mandantNr})`,
+    `Anlass: ${data.reiseanlass}`,
+    `Verkehrsmittel: ${data.verkehrsmittel} — ${kmSatzAlsString(data.verkehrsmittel)} EUR/km`,
+    `Anzahl Fahrten: ${data.fahrten.length}`,
+    `Gesamt-Kilometer: ${formatiereBetrag(data.kmSumme)} km`,
+    `Gesamtbetrag: ${formatiereBetrag(data.gesamtbetrag)} EUR`,
+    '',
+    `IBAN: ${data.iban}`,
+    `Kontoinhaber: ${data.kontoinhaber}`,
+    '',
+    'Das PDF mit der Fahrten-Übersicht ist als Anhang beigefügt.',
+    'Diese E-Mail wurde automatisch vom CREDO Finanzportal erstellt.',
+  ];
+  return zeilen.join('\n');
+}
+
 export function erstelleErstattungEmailText(data: ErstattungEmailDaten): string {
   return [
     'Neue Kostenerstattung eingereicht.',

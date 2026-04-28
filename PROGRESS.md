@@ -96,11 +96,67 @@
 - [ ] React Query/SWR für API-Caching
 - [ ] Log-Rotation + Monitoring für Production
 
-### Phase 6: Erweiterung
-_Noch nicht gestartet_
+### Phase A: Kostenstellen-Sichtbarkeit pro Mandant + Vorgangstyp (28.04.2026)
 
-### Phase 7: Testing & Go-Live
-_Noch nicht gestartet_
+| # | Aufgabe | Status |
+|---|---|---|
+| A.1 | Migration 0005: 3 Boolean-Spalten in `mandanten` (Default true) | ✅ |
+| A.2 | `VORGANGSTYP_META` als Single Source of Truth in `lib/types.ts` | ✅ |
+| A.3 | `MandantBase` + `MandantAdmin extends MandantBase` (Interface-Dedupe) | ✅ |
+| A.4 | `istKstAn()`-Helper, `KST_DEFAULTS` aus META abgeleitet | ✅ |
+| A.5 | `KstPills`-Component im AdminCenter (Read- + Edit-Mode) | ✅ |
+| A.6 | `PersoenlicheDatenStep` rendert KST-Feld konditional, useEffect-Reset bei Flag-Wechsel | ✅ |
+| A.7 | PDF-Service: KST-Zeile nur rendern wenn vorhanden | ✅ |
+| A.8 | Optimistic Update + Toast-Migration (alert raus) | ✅ |
+| A.9 | `useToast` in MandantenTab, KostenstellenTab, PauschalenTab | ✅ |
+| A.10 | Optimistic Rollback via authoritative `loadMandanten()` bei Fehler | ✅ |
+
+### Phase B: Fahrtkostensammelantrag (28.04.2026)
+
+| # | Aufgabe | Status |
+|---|---|---|
+| B.1 | Migration 0006: `SAMMELFAHRT`-Enum, `fahrten`-Tabelle, ON DELETE CASCADE | ✅ |
+| B.2 | Schema: `fahrten`-Drizzle-Tabelle exportiert | ✅ |
+| B.3 | `belegNummer.ts`: SF-Praefix, Lock-Key year×10+3 | ✅ |
+| B.4 | `kmSaetze.ts` Backend-Helper (Single Source) | ✅ |
+| B.5 | `sammelfahrtBody`-Zod-Schema, min(2)/max(50) | ✅ |
+| B.6 | Sammelfahrt-Branch in `einreichungen.ts` mit Server-Recompute | ✅ |
+| B.7 | PDF-Layout `SAMMELFAHRT` (Anlass, Fahrten-Tabelle) | ✅ |
+| B.8 | `erstelleSammelfahrtEmailText` | ✅ |
+| B.9 | Frontend-Types `Fahrt`, `SammelfahrtFormData`, `SammelfahrtVerkehrsmittel` | ✅ |
+| B.10 | Frontend `lib/sammelfahrt.ts` mit Helper-Funktionen | ✅ |
+| B.11 | API-Funktion `einreichenSammelfahrt` | ✅ |
+| B.12 | `FahrtenListe`-Component (Desktop-Tabelle / Mobile-Cards) | ✅ |
+| B.13 | `SammelfahrtFormular` (3-Step Wizard) | ✅ |
+| B.14 | Startseite mit dritter Karte (CREDO-Grau, MapPin) | ✅ |
+| B.15 | Route `/sammelfahrt` in `main.tsx` | ✅ |
+| B.16 | 15 neue Vitest-Tests in `sammelfahrt.test.ts` (52 gesamt) | ✅ |
+
+### Haerten + Code-Review (28.04.2026)
+
+| # | Aufgabe | Status |
+|---|---|---|
+| H.1 | Server-Recompute kmBetrag/vmaNetto/gesamtbetrag in allen 3 Branches | ✅ |
+| H.2 | Bulk-Insert fuer alle 5 Kindrecord-Typen | ✅ |
+| H.3 | `aktualisiereVersandStatus`-Helper mit awaited DB-Updates | ✅ |
+| H.4 | finally-Reset `setSubmitting(false)` in allen 3 Wizards | ✅ |
+| H.5 | `pdf.ts`: `} else if (data.typ === 'SAMMELFAHRT') {` (Compiler-Schutz) | ✅ |
+| H.6 | Redundanter `useEffect` raus, `fahrtenMitBetrag` durchgereicht | ✅ |
+| H.7 | FahrtenListe Mobile-Cards bis `lg:`, scrollable Tabelle, aria-labels | ✅ |
+| H.8 | Focus-Ring auf Verkehrsmittel-Radio-Cards | ✅ |
+| H.9 | helmet HSTS deaktiviert (Caddy uebernimmt in Production) | ✅ |
+| H.10 | CSP erweitert um Google Fonts (`fonts.googleapis.com` + `fonts.gstatic.com`) | ✅ |
+
+### Phase 7: GoLive
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 7.1 | DEPLOYMENT.md mit Schritt-fuer-Schritt-Anleitung | ✅ | 2026-04-28 |
+| 7.2 | n8n WEBHOOK_DATENSTRUKTUR.md erweitert um Sammelfahrt | ✅ | 2026-04-28 |
+| 7.3 | README.md aktualisiert | ✅ | 2026-04-28 |
+| 7.4 | Lokaler Docker-Smoke-Test ueber `docker-compose.local.yml` | ✅ | 2026-04-28 |
+| 7.5 | GitHub Push | ⏳ | |
+| 7.6 | Production-Deployment auf finance.fes-credo.de | ⏳ | |
 
 ---
 

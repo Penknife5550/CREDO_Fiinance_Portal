@@ -13,8 +13,9 @@ Das Finanzportal ermoeglicht 400-1000 Mitarbeitenden die eigenstaendige Einreich
 
 - **Reisekosten** (6-Schritt-Wizard): Reisedaten, Verkehrsmittel, Verpflegungspauschalen (VMA), Belege, digitale Unterschrift
 - **Kostenerstattungen** (3-Schritt-Wizard): Positionen mit Kategorien, Belege, Unterschrift
+- **Fahrtkosten-Sammelantraege** (3-Schritt-Wizard): Mehrere Einzelfahrten in einem Antrag — nur Kilometerpauschale, ohne VMA. Fuer Mitarbeiter, die regelmaessig zu Praktikumsbesuchen, Aussenterminen o.ae. fahren
 
-Eingereichte Formulare werden als PDF generiert und per E-Mail an das DMS (Docubit) gesendet.
+Eingereichte Formulare werden als PDF generiert und per Webhook an n8n versendet, das die E-Mail an das DMS (Docubit) zustellt. Direkter SMTP-Versand ist alternativ ueber das AdminCenter konfigurierbar.
 
 ---
 
@@ -70,20 +71,23 @@ Finance_Portal/
 │   └── src/
 │       ├── main.tsx                # React Router
 │       ├── pages/
-│       │   ├── Startseite.tsx      # Typenauswahl
-│       │   ├── ReisekostenFormular.tsx  # 6-Step Wizard
-│       │   ├── ErstattungFormular.tsx   # 3-Step Wizard
+│       │   ├── Startseite.tsx      # Typenauswahl (3 Karten)
+│       │   ├── ReisekostenFormular.tsx   # 6-Step Wizard
+│       │   ├── ErstattungFormular.tsx    # 3-Step Wizard
+│       │   ├── SammelfahrtFormular.tsx   # 3-Step Wizard (km-Pauschale)
 │       │   ├── Erfolg.tsx          # Bestaetigung
-│       │   └── AdminCenter.tsx     # 4-Tab Admin
-│       ├── components/forms/       # Shared Form-Komponenten
-│       └── lib/                    # API, Typen, VMA-Berechnung
+│       │   └── AdminCenter.tsx     # 5-Tab Admin
+│       ├── components/forms/       # PersoenlicheDaten, VerpflegungStep, FahrtenListe, BelegUpload, SignaturPad
+│       └── lib/                    # API, Typen, VMA + Sammelfahrt-Berechnung
 │
 ├── Dockerfile                      # Multi-Stage Build
-├── docker-compose.prod.yml         # Produktion
+├── docker-compose.prod.yml         # Produktion (hinter Caddy)
 ├── docker-compose.dev.yml          # Entwicklung (nur DB)
+├── docker-compose.local.yml        # Lokaler Voll-Stack-Test (Port direkt exponiert)
 ├── docker-entrypoint.sh            # Auto-Migration + Start
 ├── deploy.sh                       # Deployment-Script
 ├── Caddyfile.example               # Caddy-Konfiguration
+├── DEPLOYMENT.md                   # GoLive-Schritte
 ├── .env.example                    # Umgebungsvariablen-Template
 └── .env.production                 # Produktions-Geheimnisse (nicht committed)
 ```
@@ -254,8 +258,7 @@ Das Script:
 | `GET` | `/api/kostenstellen?mandantId=...` | Kostenstellen pro Mandant |
 | `GET` | `/api/pauschalen?datum=...` | Pauschalen fuer Datum |
 | `POST` | `/api/einreichungen/belege` | Beleg-Upload (Rate-Limited) |
-| `POST` | `/api/einreichungen/reisekosten` | Reisekosten einreichen |
-| `POST` | `/api/einreichungen/erstattung` | Erstattung einreichen |
+| `POST` | `/api/einreichungen` | Einreichung (typ: `REISEKOSTEN` / `ERSTATTUNG` / `SAMMELFAHRT`) |
 
 ### Admin (Token erforderlich)
 
@@ -292,22 +295,35 @@ Das Script:
 
 ## Datenbank-Schema
 
-12 Tabellen mit PostgreSQL 16 + Drizzle ORM:
+13 Tabellen mit PostgreSQL 16 + Drizzle ORM:
 
 | Tabelle | Beschreibung |
 |---|---|
-| `mandanten` | CREDO-Einrichtungen (7 Schulen/Verwaltung) |
+| `mandanten` | CREDO-Einrichtungen (7 Schulen/Verwaltung), inkl. KST-Sichtbarkeits-Flags pro Vorgangstyp |
 | `kostenstellen` | Kostenstellen pro Mandant |
-| `einreichungen` | Haupttabelle (Reisekosten + Erstattungen) |
-| `reisetage` | Tageseintraege fuer VMA-Berechnung |
+| `einreichungen` | Haupttabelle (Reisekosten + Erstattungen + Sammelfahrt) |
+| `reisetage` | Tageseintraege fuer VMA-Berechnung (nur Reisekosten) |
 | `positionen` | Einzelpositionen bei Erstattungen |
+| `fahrten` | Einzelfahrten bei Sammelantraegen (mit ON DELETE CASCADE) |
 | `belege` | Hochgeladene Nachweise (Dateien) |
 | `weitere_kosten` | Zusatzkosten bei Reisen |
 | `pauschalen` | Kilometerpauschalen, VMA-Saetze |
-| `email_config` | SMTP-/MS365-Konfiguration |
-| `webhook_config` | Webhook-Integration |
+| `email_config` | SMTP-/MS365-/Webhook-Konfiguration |
+| `webhook_config` | Webhook-Endpunkte (n8n) |
 | `admins` | Admin-Konten |
 | `audit_log` | GoBD-konformes Protokoll |
+
+### Migrationen (Drizzle)
+
+| # | Tag | Inhalt |
+|---|---|---|
+| 0000 | exotic_tony_stark | Initiales Schema |
+| 0001 | webhook_auth | Webhook BASIC/HEADER Auth-Felder |
+| 0002 | webhook_typ_filter | Webhook-Filter pro Vorgangstyp |
+| 0003 | kostenstelle_nullable | `kostenstelle_id` optional |
+| 0004 | versand_methode_webhook | Default: WEBHOOK |
+| 0005 | kostenstelle_anzeige | KST-Sichtbarkeits-Flags pro Vorgangstyp |
+| 0006 | sammelfahrt | Sammelfahrt-Enum + `fahrten`-Tabelle + Cascade-Deletes |
 
 ---
 
@@ -325,9 +341,22 @@ Das Script:
 
 ---
 
-## Offene Punkte
+## Status
 
-- [ ] Digitale Unterschrift (Canvas-Komponente)
-- [ ] QR-Code auf generierter PDF
-- [ ] Phase 5: Erweiterte Features (Dreimonatsfrist, Auslandspauschalen)
-- [ ] Phase 6: End-to-End Testing + Go-Live
+- [x] Phase 1-4: Foundation, Wizards, PDF, E-Mail-Pipeline
+- [x] Phase 5: QA-Review, ESLint/Prettier, 37 Unit-Tests, Accessibility, Toasts
+- [x] Phase A: Kostenstellen-Sichtbarkeit pro Mandant + Vorgangstyp (Migration 0005)
+- [x] Phase B: Fahrtkostensammelantrag als 3. Vorgangstyp (Migration 0006, neue Tabelle `fahrten`, neue Wizard-Page, FahrtenListe-Component)
+- [x] Server-Recompute aller Auszahlungsbetraege (kein Trust auf Client-Werte)
+- [x] Bulk-Inserts fuer Kindrecords + ON DELETE CASCADE
+- [x] Optimistic Updates mit Server-Truth-Rollback im AdminCenter
+- [x] 52 Unit-Tests gruen (37 Reisekosten + 15 Sammelfahrt)
+
+### Backlog
+
+- [ ] DB-Transaktion um Multi-Inserts pro Einreichung
+- [ ] Frontend km-Saetze in `vma.ts` zentralisieren (Backend-Pendant existiert bereits)
+- [ ] WizardLayout-Component (~210 Zeilen Duplikat in 3 Wizards)
+- [ ] React Testing Library + Backend-Test-Setup
+- [ ] PostgreSQL-Backups automatisieren
+- [ ] CI/CD-Pipeline (GitHub Actions)

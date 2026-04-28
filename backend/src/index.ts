@@ -48,9 +48,9 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       imgSrc: ["'self'", "data:"],
-      fontSrc: ["'self'"],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
       connectSrc: ["'self'"],
       frameSrc: ["'none'"],
       objectSrc: ["'none'"],
@@ -58,6 +58,10 @@ app.use(helmet({
       formAction: ["'self'"],
     },
   },
+  // HSTS wird in Production von Caddy gesetzt (HTTPS-Terminierung). Express
+  // selbst sollte HSTS nicht senden — sonst pinnt Safari den Header auch für
+  // lokale http://localhost-Aufrufe und bricht den Dev-Loop.
+  hsts: false,
 }));
 app.use(cors({
   origin: true,

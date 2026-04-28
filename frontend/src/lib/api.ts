@@ -1,4 +1,4 @@
-import type { PersoenlicheDaten, Reisetag, WeitereKostenPosition, ErstattungPosition } from './types';
+import type { PersoenlicheDaten, Reisetag, WeitereKostenPosition, ErstattungPosition, Fahrt, SammelfahrtVerkehrsmittel } from './types';
 
 const API = '/api';
 
@@ -108,6 +108,56 @@ interface ErstattungPayload {
   gesamtbetrag: number;
   unterschriftBild?: string;
   belege: File[];
+}
+
+// ── Sammelfahrt einreichen ──────────────────────────────
+
+interface SammelfahrtPayload {
+  persoenlich: PersoenlicheDaten;
+  reiseanlass: string;
+  verkehrsmittel: SammelfahrtVerkehrsmittel;
+  fahrten: Fahrt[];
+  kmSumme: number;
+  gesamtbetrag: number;
+  unterschriftBild?: string;
+  belege: File[];
+}
+
+export async function einreichenSammelfahrt(payload: SammelfahrtPayload): Promise<{ belegNr: string }> {
+  const belegDateipfade = await uploadBelege(payload.belege);
+
+  const res = await fetch(`${API}/einreichungen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      typ: 'SAMMELFAHRT',
+      persoenlich: {
+        vorname: payload.persoenlich.vorname,
+        nachname: payload.persoenlich.nachname,
+        personalNr: payload.persoenlich.personalNr,
+        iban: payload.persoenlich.iban,
+        kontoinhaber: payload.persoenlich.kontoinhaber,
+        mandantId: payload.persoenlich.mandantId,
+        kostenstelleId: payload.persoenlich.kostenstelleId,
+      },
+      reiseanlass: payload.reiseanlass,
+      verkehrsmittel: payload.verkehrsmittel,
+      fahrten: payload.fahrten,
+      kmSumme: payload.kmSumme,
+      gesamtbetrag: payload.gesamtbetrag,
+      unterschriftBild: payload.unterschriftBild,
+      belegDateipfade,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
+    const msg = err.detail ? `${err.error}: ${err.detail}` : (err.error || `Fehler ${res.status}`);
+    throw new Error(msg);
+  }
+
+  const data = await res.json();
+  return { belegNr: data.belegNr };
 }
 
 export async function einreichenErstattung(payload: ErstattungPayload): Promise<{ belegNr: string }> {

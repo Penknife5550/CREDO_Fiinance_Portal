@@ -155,6 +155,7 @@ export function ReisekostenFormular() {
       navigate(`/erfolg/${result.belegNr}`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Ein unbekannter Fehler ist aufgetreten', 'error');
+    } finally {
       setSubmitting(false);
     }
   };
@@ -225,7 +226,7 @@ export function ReisekostenFormular() {
       <div className="card">
         {/* Step 1: Persönliche Daten */}
         {currentStep === 0 && (
-          <PersoenlicheDatenStep data={persoenlich} onChange={setPersoenlich} errors={errors} />
+          <PersoenlicheDatenStep data={persoenlich} onChange={setPersoenlich} errors={errors} vorgangstyp="reisekosten" />
         )}
 
         {/* Step 2: Reisedaten */}

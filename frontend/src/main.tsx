@@ -7,6 +7,7 @@ import { ToastProvider } from './components/Toast';
 import { Startseite } from './pages/Startseite';
 import { ReisekostenFormular } from './pages/ReisekostenFormular';
 import { ErstattungFormular } from './pages/ErstattungFormular';
+import { SammelfahrtFormular } from './pages/SammelfahrtFormular';
 import { Erfolg } from './pages/Erfolg';
 import { AdminCenter } from './pages/AdminCenter';
 import { NotFound } from './pages/NotFound';
@@ -20,6 +21,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<Startseite />} />
             <Route path="/reisekosten" element={<ReisekostenFormular />} />
             <Route path="/erstattung" element={<ErstattungFormular />} />
+            <Route path="/sammelfahrt" element={<SammelfahrtFormular />} />
             <Route path="/erfolg/:belegNr" element={<Erfolg />} />
             <Route path="/admin/*" element={<AdminCenter />} />
             <Route path="*" element={<NotFound />} />

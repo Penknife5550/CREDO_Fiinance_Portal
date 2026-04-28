@@ -9,10 +9,12 @@ Die App sendet Webhooks mit folgender **verschachtelter** Struktur:
   "event": "eingereicht | status_geaendert | fehler",
   "timestamp": "2026-03-27T12:18:34.579Z",
   "an": "buchhaltung@example.de",
+  "pdfBase64": "JVBERi0xLjcK...",
+  "pdfDateiname": "RK-2026-00001.pdf",
   "einreichung": {
     "id": "uuid",
     "belegNr": "RK-2026-00001",
-    "typ": "REISEKOSTEN | ERSTATTUNG",
+    "typ": "REISEKOSTEN | ERSTATTUNG | SAMMELFAHRT",
     "status": "EINGEREICHT | GESENDET | FEHLER",
     "mandant": "Grundschule Haddenhausen",
     "mandantNr": 10,
@@ -27,10 +29,31 @@ Die App sendet Webhooks mit folgender **verschachtelter** Struktur:
     "kontoinhaber": "Max Mustermann",
     "reiseziel": "Berlin",
     "verkehrsmittel": "BAHN",
-    "anzahlPositionen": 3
+    "anzahlPositionen": 3,
+    "anzahlFahrten": 5,
+    "fahrten": [
+      { "datum": "2026-04-14", "startOrt": "Wohnung Minden", "ziel": "Kita Stemwede", "km": 42, "kmBetrag": 12.6 }
+    ]
   }
 }
 ```
+
+## Felder pro Vorgangstyp
+
+### REISEKOSTEN
+- `reiseziel`, `reiseanlass`, `verkehrsmittel`, `kmGefahren`, `vmaNetto`
+
+### ERSTATTUNG
+- `anzahlPositionen`
+
+### SAMMELFAHRT (NEU Phase B)
+- `reiseanlass`, `verkehrsmittel` (`PKW` | `MOTORRAD`), `kmGefahren` (Summe)
+- `anzahlFahrten`
+- `fahrten[]` — Array mit `{datum, startOrt, ziel, km, kmBetrag}` pro Einzelfahrt
+
+> **Wichtig:** `gesamtbetrag`, `kmBetrag` und `kmGefahren` werden vom **Server**
+> aus den Roh-Inputs (`km`, `verkehrsmittel`) berechnet. Frontend-Werte werden
+> ignoriert (Schutz vor Auszahlungs-Manipulation).
 
 ## Wichtige Regeln
 
@@ -40,6 +63,8 @@ Die App sendet Webhooks mit folgender **verschachtelter** Struktur:
 | `event` | Art des Events |
 | `timestamp` | ISO-Zeitstempel |
 | `an` | E-Mail-Empfaenger (= `dmsEmail` des Mandanten) |
+| `pdfBase64` | PDF des Antrags als Base64 (kann mehrere MB sein) |
+| `pdfDateiname` | z.B. `RK-2026-00042.pdf` / `KE-...` / `SF-...` |
 
 ### Verschachtelung
 - Alle Einreichungsdaten liegen unter `einreichung`

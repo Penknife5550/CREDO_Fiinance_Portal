@@ -1,0 +1,73 @@
+# =============================================================================
+# CREDO Finanzportal — Lokales Test-Setup
+# =============================================================================
+# Bringt App + DB hoch ohne externes Caddy/reverse_proxy. Port 3000 ist direkt
+# auf den Host gemappt. Aufruf:
+#   docker compose -f docker-compose.local.yml --env-file .env.production up -d --build
+#   docker compose -f docker-compose.local.yml --env-file .env.production logs -f
+#   docker compose -f docker-compose.local.yml --env-file .env.production down
+# =============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: credo-finanz-db-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: credo
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: finanzportal
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U credo -d finanzportal"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: credo-finanz-app-local
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://credo:${DB_PASSWORD}@db:5432/finanzportal?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-CREDO Finanzportal}
+      MAIL_FROM_EMAIL: ${MAIL_FROM_EMAIL}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      NODE_ENV: production
+    ports:
+      - "3040:3000"
+    volumes:
+      - uploads_data_local:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - internal
+
+volumes:
+  postgres_data_local:
+    driver: local
+  uploads_data_local:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge

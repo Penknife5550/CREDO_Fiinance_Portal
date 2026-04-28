@@ -1,16 +1,34 @@
+import { useEffect, useMemo } from 'react';
 import { useMandanten, useKostenstellen } from '@/lib/hooks';
 import { validateIBAN, formatIBAN } from '@/lib/utils';
-import type { PersoenlicheDaten } from '@/lib/types';
+import { istKstAn, type PersoenlicheDaten, type Vorgangstyp } from '@/lib/types';
 
 interface Props {
   data: PersoenlicheDaten;
   onChange: (data: PersoenlicheDaten) => void;
   errors: Record<string, string>;
+  vorgangstyp: Vorgangstyp;
 }
 
-export function PersoenlicheDatenStep({ data, onChange, errors }: Props) {
-  const { gruppiert } = useMandanten();
+export function PersoenlicheDatenStep({ data, onChange, errors, vorgangstyp }: Props) {
+  const { mandanten, gruppiert } = useMandanten();
   const { kostenstellen } = useKostenstellen(data.mandantId);
+
+  // Beim noch-nicht-gewählten Mandant zeigen, um Layout-Sprung beim Wechsel zu minimieren.
+  const selectedMandant = useMemo(
+    () => mandanten.find(m => m.id === data.mandantId),
+    [mandanten, data.mandantId],
+  );
+  const kstAnzeigen = istKstAn(selectedMandant, vorgangstyp);
+
+  // Wenn der gewählte Mandant das KST-Feld für diesen Vorgangstyp ausblendet,
+  // setzen wir eine evtl. zuvor erfasste Kostenstelle zurück, damit sie nicht
+  // unsichtbar mit ans Backend geschickt wird.
+  useEffect(() => {
+    if (!kstAnzeigen && data.kostenstelleId) {
+      onChange({ ...data, kostenstelleId: '' });
+    }
+  }, [kstAnzeigen, data, onChange]);
 
   const update = (field: keyof PersoenlicheDaten, value: string) => {
     const updated = { ...data, [field]: value };
@@ -109,7 +127,7 @@ export function PersoenlicheDatenStep({ data, onChange, errors }: Props) {
       </div>
 
       {/* Mandant + Kostenstelle */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className={kstAnzeigen ? 'grid grid-cols-1 sm:grid-cols-2 gap-4' : ''}>
         <div>
           <label className="label">Mandant *</label>
           <select
@@ -118,9 +136,9 @@ export function PersoenlicheDatenStep({ data, onChange, errors }: Props) {
             onChange={e => update('mandantId', e.target.value)}
           >
             <option value="">Bitte wählen...</option>
-            {Object.entries(gruppiert).map(([kategorie, mandanten]) => (
+            {Object.entries(gruppiert).map(([kategorie, mandantenInGruppe]) => (
               <optgroup key={kategorie} label={kategorie}>
-                {mandanten.map(m => (
+                {mandantenInGruppe.map(m => (
                   <option key={m.id} value={m.id}>
                     {m.name} ({m.mandantNr})
                   </option>
@@ -130,24 +148,26 @@ export function PersoenlicheDatenStep({ data, onChange, errors }: Props) {
           </select>
           {errors.mandantId && <p className="text-xs text-red-500 mt-1">{errors.mandantId}</p>}
         </div>
-        <div>
-          <label className="label">Kostenstelle <span className="text-credo-500 font-normal">(optional)</span></label>
-          <select
-            className="input-field"
-            value={data.kostenstelleId}
-            onChange={e => update('kostenstelleId', e.target.value)}
-            disabled={!data.mandantId}
-          >
-            <option value="">
-              {data.mandantId ? 'Keine Auswahl' : 'Bitte zuerst Mandant wählen...'}
-            </option>
-            {kostenstellen.map(k => (
-              <option key={k.id} value={k.id}>
-                {k.nummer} — {k.bezeichnung}
+        {kstAnzeigen && (
+          <div>
+            <label className="label">Kostenstelle <span className="text-credo-500 font-normal">(optional)</span></label>
+            <select
+              className="input-field"
+              value={data.kostenstelleId}
+              onChange={e => update('kostenstelleId', e.target.value)}
+              disabled={!data.mandantId}
+            >
+              <option value="">
+                {data.mandantId ? 'Keine Auswahl' : 'Bitte zuerst Mandant wählen...'}
               </option>
-            ))}
-          </select>
-        </div>
+              {kostenstellen.map(k => (
+                <option key={k.id} value={k.id}>
+                  {k.nummer} — {k.bezeichnung}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
     </div>
   );

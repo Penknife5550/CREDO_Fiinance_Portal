@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Car, Receipt } from 'lucide-react';
+import { Car, Receipt, MapPin } from 'lucide-react';
 
 export function Startseite() {
   const navigate = useNavigate();
@@ -22,7 +22,7 @@ export function Startseite() {
       </div>
 
       {/* Auswahl-Karten */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 w-full max-w-2xl">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full max-w-4xl">
         {/* Reisekostenabrechnung */}
         <button
           onClick={() => navigate('/reisekosten')}
@@ -52,6 +52,22 @@ export function Startseite() {
           </h3>
           <p className="text-sm text-credo-500 leading-relaxed">
             Auslagen für Material, Bürobedarf, Fachliteratur und Sonstiges
+          </p>
+        </button>
+
+        {/* Fahrtkostensammelantrag */}
+        <button
+          onClick={() => navigate('/sammelfahrt')}
+          className="card-hover group text-left p-8"
+        >
+          <div className="w-14 h-14 bg-credo-100 rounded-xl flex items-center justify-center mb-5 group-hover:bg-credo-200 transition-colors">
+            <MapPin className="w-7 h-7 text-credo-700" />
+          </div>
+          <h3 className="text-xl font-semibold text-credo-900 mb-2">
+            Sammelfahrten
+          </h3>
+          <p className="text-sm text-credo-500 leading-relaxed">
+            Mehrere Einzelfahrten in einem Antrag — nur Kilometerpauschale
           </p>
         </button>
       </div>

@@ -6,14 +6,48 @@ import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
 import { erstelleGesamtPdf } from '../services/pdf.js';
 import { sendeAnDmsMitRetry } from '../services/email.js';
-import { erstelleReisekostenEmailText, erstelleErstattungEmailText } from '../services/emailTexte.js';
+import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSammelfahrtEmailText } from '../services/emailTexte.js';
 import { sendeWebhook } from '../services/webhook.js';
+import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import path from 'path';
 import fs from 'fs';
 
 export const einreichungenRouter = Router();
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve('uploads');
+
+/** Schreibt einen Status-Patch und loggt Fehler robust. Bewusst nicht-throwend,
+ *  weil dies in fire-and-forget Promise-Ketten nach dem 201-Response läuft. */
+async function aktualisiereVersandStatus(
+  einreichungId: string,
+  belegNr: string,
+  patch: Partial<typeof schema.einreichungen.$inferInsert>,
+): Promise<void> {
+  try {
+    await db
+      .update(schema.einreichungen)
+      .set(patch)
+      .where(eq(schema.einreichungen.id, einreichungId));
+  } catch (err) {
+    console.error(`[${belegNr}] Status-Update fehlgeschlagen:`, err);
+  }
+}
+
+/** Speichert hochgeladene Beleg-Dateien für eine Einreichung als Bulk-Insert. */
+async function speichereBelege(einreichungId: string, validatedBelegPfade: string[]): Promise<void> {
+  if (validatedBelegPfade.length === 0) return;
+  const rows = await Promise.all(
+    validatedBelegPfade.map(async pfad => ({
+      einreichungId,
+      dateiname: path.basename(pfad),
+      dateityp: path.extname(pfad).replace('.', '').toUpperCase(),
+      dateigroesse: 0,
+      dateipfad: pfad,
+      sha256Hash: await berechneHash(pfad),
+    })),
+  );
+  await db.insert(schema.belege).values(rows);
+}
 
 /** Resolve Beleg-Datei-IDs zu absoluten Pfaden und validiere gegen Path Traversal */
 function resolveAndValidateBelegPfade(dateiIds: string[]): string[] {
@@ -136,6 +170,24 @@ const erstattungBody = z.object({
   belegDateipfade: z.array(z.string()),
 });
 
+const sammelfahrtBody = z.object({
+  typ: z.literal('SAMMELFAHRT'),
+  persoenlich: persoenlichSchema,
+  reiseanlass: z.string().min(10),
+  verkehrsmittel: z.enum(['PKW', 'MOTORRAD']),
+  fahrten: z.array(z.object({
+    datum: z.string(),
+    startOrt: z.string().min(1).max(500),
+    ziel: z.string().min(1).max(500),
+    km: z.number().positive(),
+    kmBetrag: z.number().nonnegative(),
+  })).min(2).max(50),
+  kmSumme: z.number().positive(),
+  gesamtbetrag: z.number().positive(),
+  unterschriftBild: z.string().optional(),
+  belegDateipfade: z.array(z.string()),
+});
+
 // ── POST /api/einreichungen — Neue Einreichung ────────
 
 einreichungenRouter.post('/', async (req, res) => {
@@ -165,6 +217,15 @@ einreichungenRouter.post('/', async (req, res) => {
         return;
       }
 
+      // Server-Recompute: km-Beträge und VMA-Summen aus den Roh-Inputs berechnen,
+      // damit ein manipulierter Client keine fremden Beträge auszahlen kann.
+      const serverKmBetrag = berechneKmBetrag(parsed.kmGefahren, parsed.verkehrsmittel);
+      const serverVmaBrutto = rundeAufCent(parsed.reisetage.reduce((s, t) => s + t.vmaBrutto, 0));
+      const serverVmaKuerzung = rundeAufCent(parsed.reisetage.reduce((s, t) => s + t.vmaKuerzung, 0));
+      const serverVmaNetto = rundeAufCent(parsed.reisetage.reduce((s, t) => s + t.vmaNetto, 0));
+      const serverWeitereKostenSumme = rundeAufCent(parsed.weitereKosten.reduce((s, k) => s + k.betrag, 0));
+      const serverGesamtbetrag = rundeAufCent(serverKmBetrag + serverVmaNetto + serverWeitereKostenSumme);
+
       // In DB speichern
       const [einreichung] = await db.insert(schema.einreichungen).values({
         typ: 'REISEKOSTEN',
@@ -184,54 +245,48 @@ einreichungenRouter.post('/', async (req, res) => {
         land: parsed.land || null,
         verkehrsmittel: parsed.verkehrsmittel,
         kmGefahren: String(parsed.kmGefahren),
-        kmPauschaleSatz: parsed.verkehrsmittel === 'PKW' ? '0.30' : parsed.verkehrsmittel === 'MOTORRAD' ? '0.20' : '0',
-        kmBetrag: String(parsed.kmBetrag),
-        vmaBrutto: String(parsed.reisetage.reduce((s, t) => s + t.vmaBrutto, 0)),
-        vmaKuerzung: String(parsed.reisetage.reduce((s, t) => s + t.vmaKuerzung, 0)),
-        vmaNetto: String(parsed.vmaNetto),
-        weitereKostenSumme: String(parsed.weitereKostenSumme),
-        gesamtbetrag: String(parsed.gesamtbetrag),
+        kmPauschaleSatz: kmSatzAlsDecimal(parsed.verkehrsmittel),
+        kmBetrag: String(serverKmBetrag),
+        vmaBrutto: String(serverVmaBrutto),
+        vmaKuerzung: String(serverVmaKuerzung),
+        vmaNetto: String(serverVmaNetto),
+        weitereKostenSumme: String(serverWeitereKostenSumme),
+        gesamtbetrag: String(serverGesamtbetrag),
         unterschriftBild: parsed.unterschriftBild,
         status: 'EINGEREICHT',
       }).returning();
 
-      // Reisetage speichern
-      for (const tag of parsed.reisetage) {
-        await db.insert(schema.reisetage).values({
-          einreichungId: einreichung.id,
-          datum: new Date(tag.datum),
-          typ: tag.typ,
-          fruehstueckGestellt: tag.fruehstueckGestellt,
-          mittagGestellt: tag.mittagGestellt,
-          abendGestellt: tag.abendGestellt,
-          vmaBrutto: String(tag.vmaBrutto),
-          vmaKuerzung: String(tag.vmaKuerzung),
-          vmaNetto: String(tag.vmaNetto),
-        });
+      // Reisetage als Bulk-Insert
+      if (parsed.reisetage.length > 0) {
+        await db.insert(schema.reisetage).values(
+          parsed.reisetage.map(tag => ({
+            einreichungId: einreichung.id,
+            datum: new Date(tag.datum),
+            typ: tag.typ,
+            fruehstueckGestellt: tag.fruehstueckGestellt,
+            mittagGestellt: tag.mittagGestellt,
+            abendGestellt: tag.abendGestellt,
+            vmaBrutto: String(tag.vmaBrutto),
+            vmaKuerzung: String(tag.vmaKuerzung),
+            vmaNetto: String(tag.vmaNetto),
+          })),
+        );
       }
 
-      // Weitere Kosten speichern
-      for (const k of parsed.weitereKosten) {
-        await db.insert(schema.weitereKosten).values({
-          einreichungId: einreichung.id,
-          typ: k.typ,
-          beschreibung: k.beschreibung,
-          betrag: String(k.betrag),
-        });
+      // Weitere Kosten als Bulk-Insert
+      if (parsed.weitereKosten.length > 0) {
+        await db.insert(schema.weitereKosten).values(
+          parsed.weitereKosten.map(k => ({
+            einreichungId: einreichung.id,
+            typ: k.typ,
+            beschreibung: k.beschreibung,
+            betrag: String(k.betrag),
+          })),
+        );
       }
 
-      // Belege in DB registrieren (validierte Pfade verwenden)
-      for (const pfad of validatedBelegPfade) {
-        const hash = await berechneHash(pfad);
-        await db.insert(schema.belege).values({
-          einreichungId: einreichung.id,
-          dateiname: path.basename(pfad),
-          dateityp: path.extname(pfad).replace('.', '').toUpperCase(),
-          dateigroesse: 0,
-          dateipfad: pfad,
-          sha256Hash: hash,
-        });
-      }
+      // Belege als Bulk-Insert (Hashes parallel berechnen)
+      await speichereBelege(einreichung.id, validatedBelegPfade);
 
       // PDF generieren (Hauptdokument + Belege in einer PDF)
       const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
@@ -254,10 +309,10 @@ einreichungenRouter.post('/', async (req, res) => {
         rueckkehrZeit: parsed.rueckkehrZeit,
         verkehrsmittel: parsed.verkehrsmittel,
         kmGefahren: parsed.kmGefahren,
-        kmBetrag: parsed.kmBetrag,
-        vmaNetto: parsed.vmaNetto,
-        weitereKostenSumme: parsed.weitereKostenSumme,
-        gesamtbetrag: parsed.gesamtbetrag,
+        kmBetrag: serverKmBetrag,
+        vmaNetto: serverVmaNetto,
+        weitereKostenSumme: serverWeitereKostenSumme,
+        gesamtbetrag: serverGesamtbetrag,
         reisetage: parsed.reisetage.map(t => ({
           datum: t.datum,
           typ: t.typ,
@@ -293,31 +348,27 @@ einreichungenRouter.post('/', async (req, res) => {
           nachname: parsed.persoenlich.nachname,
           personalNr: parsed.persoenlich.personalNr || '',
         },
-        gesamtbetrag: String(parsed.gesamtbetrag),
+        gesamtbetrag: String(serverGesamtbetrag),
         iban: parsed.persoenlich.iban,
         kontoinhaber: parsed.persoenlich.kontoinhaber,
         reiseziel: parsed.reiseziel,
         reiseanlass: parsed.reiseanlass,
         verkehrsmittel: parsed.verkehrsmittel,
         kmGefahren: String(parsed.kmGefahren),
-        vmaNetto: String(parsed.vmaNetto),
+        vmaNetto: String(serverVmaNetto),
       };
 
       if (versandMethode === 'WEBHOOK') {
         // Nur Webhook an n8n — n8n übernimmt den E-Mail-Versand
         sendeWebhook('eingereicht', webhookData, mandant.dmsEmail, pdfPfad)
-          .then(() => {
-            db.update(schema.einreichungen)
-              .set({ emailStatus: 'GESENDET', status: 'GESENDET' })
-              .where(eq(schema.einreichungen.id, einreichung.id))
-              .then(() => {});
-          })
-          .catch(err => {
-            console.error('Webhook-Versand fehlgeschlagen:', err);
-            db.update(schema.einreichungen)
-              .set({ emailStatus: 'FEHLER', status: 'FEHLER', emailLetzterFehler: String(err) })
-              .where(eq(schema.einreichungen.id, einreichung.id))
-              .then(() => {});
+          .then(() => aktualisiereVersandStatus(einreichung.id, belegNr, { emailStatus: 'GESENDET', status: 'GESENDET' }))
+          .catch(async err => {
+            console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
+            await aktualisiereVersandStatus(einreichung.id, belegNr, {
+              emailStatus: 'FEHLER',
+              status: 'FEHLER',
+              emailLetzterFehler: String(err),
+            });
           });
       } else {
         // Direkter SMTP-Versand
@@ -333,28 +384,28 @@ einreichungenRouter.post('/', async (req, res) => {
             reiseziel: parsed.reiseziel,
             abfahrtZeit: parsed.abfahrtZeit,
             rueckkehrZeit: parsed.rueckkehrZeit,
-            gesamtbetrag: parsed.gesamtbetrag,
+            gesamtbetrag: serverGesamtbetrag,
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
             reisetage: parsed.reisetage,
           }),
           pdfDateipfad: pdfPfad,
           pdfDateiname: `${belegNr}.pdf`,
-        }).then(emailResult => {
+        }).then(async emailResult => {
           const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-          db.update(schema.einreichungen)
-            .set({
-              emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-              emailVersuche: emailResult.versuche,
-              emailLetzterFehler: emailResult.fehler || null,
-              status: newStatus,
-            })
-            .where(eq(schema.einreichungen.id, einreichung.id));
+          await aktualisiereVersandStatus(einreichung.id, belegNr, {
+            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
+            emailVersuche: emailResult.versuche,
+            emailLetzterFehler: emailResult.fehler || null,
+            status: newStatus,
+          });
 
           if (!emailResult.erfolg) {
-            sendeWebhook('fehler', webhookData, mandant.dmsEmail, pdfPfad).catch(console.error);
+            await sendeWebhook('fehler', webhookData, mandant.dmsEmail, pdfPfad).catch(err =>
+              console.error(`[${belegNr}] Fehler-Webhook fehlgeschlagen:`, err),
+            );
           }
-        }).catch(console.error);
+        }).catch(err => console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err));
       }
 
       res.status(201).json({
@@ -384,6 +435,9 @@ einreichungenRouter.post('/', async (req, res) => {
         return;
       }
 
+      // Server-Recompute: Gesamtbetrag aus Positions-Summen, Frontend-Wert wird ignoriert.
+      const serverGesamtbetragE = rundeAufCent(parsed.positionen.reduce((s, p) => s + p.betrag, 0));
+
       // In DB speichern
       const [einreichung] = await db.insert(schema.einreichungen).values({
         typ: 'ERSTATTUNG',
@@ -395,34 +449,26 @@ einreichungenRouter.post('/', async (req, res) => {
         mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
         bankIban: parsed.persoenlich.iban,
         bankKontoinhaber: parsed.persoenlich.kontoinhaber,
-        gesamtbetrag: String(parsed.gesamtbetrag),
+        gesamtbetrag: String(serverGesamtbetragE),
         unterschriftBild: parsed.unterschriftBild || null,
         status: 'EINGEREICHT',
       }).returning();
 
-      // Positionen speichern
-      for (const pos of parsed.positionen) {
-        await db.insert(schema.positionen).values({
-          einreichungId: einreichung.id,
-          beschreibung: pos.beschreibung,
-          kategorie: pos.kategorie,
-          datum: new Date(pos.datum),
-          betrag: String(pos.betrag),
-        });
+      // Positionen als Bulk-Insert
+      if (parsed.positionen.length > 0) {
+        await db.insert(schema.positionen).values(
+          parsed.positionen.map(pos => ({
+            einreichungId: einreichung.id,
+            beschreibung: pos.beschreibung,
+            kategorie: pos.kategorie,
+            datum: new Date(pos.datum),
+            betrag: String(pos.betrag),
+          })),
+        );
       }
 
-      // Belege registrieren (validierte Pfade verwenden)
-      for (const pfad of validatedBelegPfade) {
-        const hash = await berechneHash(pfad);
-        await db.insert(schema.belege).values({
-          einreichungId: einreichung.id,
-          dateiname: path.basename(pfad),
-          dateityp: path.extname(pfad).replace('.', '').toUpperCase(),
-          dateigroesse: 0,
-          dateipfad: pfad,
-          sha256Hash: hash,
-        });
-      }
+      // Belege als Bulk-Insert
+      await speichereBelege(einreichung.id, validatedBelegPfade);
 
       // PDF generieren
       const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
@@ -438,7 +484,7 @@ einreichungenRouter.post('/', async (req, res) => {
         personalNr: parsed.persoenlich.personalNr,
         iban: parsed.persoenlich.iban,
         kontoinhaber: parsed.persoenlich.kontoinhaber,
-        gesamtbetrag: parsed.gesamtbetrag,
+        gesamtbetrag: serverGesamtbetragE,
         positionen: parsed.positionen,
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
@@ -465,7 +511,7 @@ einreichungenRouter.post('/', async (req, res) => {
           nachname: parsed.persoenlich.nachname,
           personalNr: parsed.persoenlich.personalNr || '',
         },
-        gesamtbetrag: String(parsed.gesamtbetrag),
+        gesamtbetrag: String(serverGesamtbetragE),
         iban: parsed.persoenlich.iban,
         kontoinhaber: parsed.persoenlich.kontoinhaber,
         anzahlPositionen: parsed.positionen.length,
@@ -474,18 +520,14 @@ einreichungenRouter.post('/', async (req, res) => {
       if (versandMethodeE === 'WEBHOOK') {
         // Nur Webhook an n8n — n8n übernimmt den E-Mail-Versand
         sendeWebhook('eingereicht', webhookDataE, mandant.dmsEmail, pdfPfad)
-          .then(() => {
-            db.update(schema.einreichungen)
-              .set({ emailStatus: 'GESENDET', status: 'GESENDET' })
-              .where(eq(schema.einreichungen.id, einreichung.id))
-              .then(() => {});
-          })
-          .catch(err => {
-            console.error('Webhook-Versand fehlgeschlagen:', err);
-            db.update(schema.einreichungen)
-              .set({ emailStatus: 'FEHLER', status: 'FEHLER', emailLetzterFehler: String(err) })
-              .where(eq(schema.einreichungen.id, einreichung.id))
-              .then(() => {});
+          .then(() => aktualisiereVersandStatus(einreichung.id, belegNr, { emailStatus: 'GESENDET', status: 'GESENDET' }))
+          .catch(async err => {
+            console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
+            await aktualisiereVersandStatus(einreichung.id, belegNr, {
+              emailStatus: 'FEHLER',
+              status: 'FEHLER',
+              emailLetzterFehler: String(err),
+            });
           });
       } else {
         // Direkter SMTP-Versand
@@ -498,27 +540,203 @@ einreichungenRouter.post('/', async (req, res) => {
             mandantName: mandant.name,
             mandantNr: String(mandant.mandantNr),
             anzahlPositionen: parsed.positionen.length,
-            gesamtbetrag: parsed.gesamtbetrag,
+            gesamtbetrag: serverGesamtbetragE,
             iban: parsed.persoenlich.iban,
             kontoinhaber: parsed.persoenlich.kontoinhaber,
           }),
           pdfDateipfad: pdfPfad,
           pdfDateiname: `${belegNr}.pdf`,
-        }).then(emailResult => {
+        }).then(async emailResult => {
           const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-          db.update(schema.einreichungen)
-            .set({
-              emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-              emailVersuche: emailResult.versuche,
-              emailLetzterFehler: emailResult.fehler || null,
-              status: newStatus,
-            })
-            .where(eq(schema.einreichungen.id, einreichung.id));
+          await aktualisiereVersandStatus(einreichung.id, belegNr, {
+            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
+            emailVersuche: emailResult.versuche,
+            emailLetzterFehler: emailResult.fehler || null,
+            status: newStatus,
+          });
 
           if (!emailResult.erfolg) {
-            sendeWebhook('fehler', webhookDataE, mandant.dmsEmail, pdfPfad).catch(console.error);
+            await sendeWebhook('fehler', webhookDataE, mandant.dmsEmail, pdfPfad).catch(err =>
+              console.error(`[${belegNr}] Fehler-Webhook fehlgeschlagen:`, err),
+            );
           }
-        }).catch(console.error);
+        }).catch(err => console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err));
+      }
+
+      res.status(201).json({
+        success: true,
+        belegNr,
+      });
+
+    } else if (body.typ === 'SAMMELFAHRT') {
+      const parsed = sammelfahrtBody.parse(body);
+
+      // Path Traversal Schutz: Beleg-Pfade validieren
+      const validatedBelegPfade = resolveAndValidateBelegPfade(parsed.belegDateipfade);
+
+      const belegNr = await generateBelegNr('SAMMELFAHRT');
+
+      const [mandant] = await db.select().from(schema.mandanten).where(eq(schema.mandanten.id, parsed.persoenlich.mandantId));
+      const [kostenstelle] = parsed.persoenlich.kostenstelleId
+        ? await db.select().from(schema.kostenstellen).where(eq(schema.kostenstellen.id, parsed.persoenlich.kostenstelleId))
+        : [undefined];
+
+      if (!mandant) {
+        res.status(400).json({ error: 'Mandant nicht gefunden' });
+        return;
+      }
+      if (parsed.persoenlich.kostenstelleId && !kostenstelle) {
+        res.status(400).json({ error: 'Kostenstelle nicht gefunden' });
+        return;
+      }
+
+      // Server-Recompute: kmBetrag pro Fahrt aus km × satz, Summen aus den Server-Werten.
+      const serverFahrten = parsed.fahrten.map(f => ({
+        ...f,
+        kmBetrag: berechneKmBetrag(f.km, parsed.verkehrsmittel),
+      }));
+      const serverKmSumme = rundeAufCent(serverFahrten.reduce((s, f) => s + f.km, 0));
+      const serverGesamtbetragS = rundeAufCent(serverFahrten.reduce((s, f) => s + f.kmBetrag, 0));
+
+      // Einreichung speichern (Sammelfahrt nutzt km-Felder, kein VMA)
+      const [einreichung] = await db.insert(schema.einreichungen).values({
+        typ: 'SAMMELFAHRT',
+        belegNr,
+        mandantId: parsed.persoenlich.mandantId,
+        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
+        mitarbeiterVorname: parsed.persoenlich.vorname,
+        mitarbeiterNachname: parsed.persoenlich.nachname,
+        mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
+        bankIban: parsed.persoenlich.iban,
+        bankKontoinhaber: parsed.persoenlich.kontoinhaber,
+        reiseanlass: parsed.reiseanlass,
+        verkehrsmittel: parsed.verkehrsmittel,
+        kmGefahren: String(serverKmSumme),
+        kmPauschaleSatz: kmSatzAlsDecimal(parsed.verkehrsmittel),
+        kmBetrag: String(serverGesamtbetragS),
+        gesamtbetrag: String(serverGesamtbetragS),
+        unterschriftBild: parsed.unterschriftBild || null,
+        status: 'EINGEREICHT',
+      }).returning();
+
+      // Einzelfahrten als Bulk-Insert
+      if (serverFahrten.length > 0) {
+        await db.insert(schema.fahrten).values(
+          serverFahrten.map((f, i) => ({
+            einreichungId: einreichung.id,
+            datum: new Date(f.datum),
+            startOrt: f.startOrt,
+            ziel: f.ziel,
+            km: String(f.km),
+            kmBetrag: String(f.kmBetrag),
+            reihenfolge: i,
+          })),
+        );
+      }
+
+      // Belege als Bulk-Insert
+      await speichereBelege(einreichung.id, validatedBelegPfade);
+
+      // PDF generieren
+      const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
+      await erstelleGesamtPdf({
+        typ: 'SAMMELFAHRT',
+        belegNr,
+        mandantName: mandant.name,
+        mandantNr: mandant.mandantNr,
+        kostenstelleNr: kostenstelle?.nummer || '',
+        kostenstelleBezeichnung: kostenstelle?.bezeichnung || '',
+        vorname: parsed.persoenlich.vorname,
+        nachname: parsed.persoenlich.nachname,
+        personalNr: parsed.persoenlich.personalNr,
+        iban: parsed.persoenlich.iban,
+        kontoinhaber: parsed.persoenlich.kontoinhaber,
+        reiseanlass: parsed.reiseanlass,
+        verkehrsmittel: parsed.verkehrsmittel,
+        kmSumme: serverKmSumme,
+        gesamtbetrag: serverGesamtbetragS,
+        fahrten: serverFahrten,
+        unterschriftBild: parsed.unterschriftBild,
+      }, validatedBelegPfade, pdfPfad);
+
+      await db.update(schema.einreichungen)
+        .set({ pdfDateipfad: pdfPfad })
+        .where(eq(schema.einreichungen.id, einreichung.id));
+
+      // Versandmethode aus DB lesen
+      const [emailConfS] = await db.select().from(schema.emailConfig).limit(1);
+      const versandMethodeS = emailConfS?.versandMethode || 'WEBHOOK';
+      console.log(`[${belegNr}] Versandmethode: ${versandMethodeS}, PDF: ${pdfPfad}, existiert: ${fs.existsSync(pdfPfad)}`);
+
+      const webhookDataS = {
+        id: einreichung.id,
+        belegNr,
+        typ: 'SAMMELFAHRT' as const,
+        status: 'EINGEREICHT',
+        mandant: mandant.name,
+        mandantNr: mandant.mandantNr,
+        kostenstelle: kostenstelle?.bezeichnung || '',
+        mitarbeiter: {
+          vorname: parsed.persoenlich.vorname,
+          nachname: parsed.persoenlich.nachname,
+          personalNr: parsed.persoenlich.personalNr || '',
+        },
+        gesamtbetrag: String(serverGesamtbetragS),
+        iban: parsed.persoenlich.iban,
+        kontoinhaber: parsed.persoenlich.kontoinhaber,
+        reiseanlass: parsed.reiseanlass,
+        verkehrsmittel: parsed.verkehrsmittel,
+        kmGefahren: String(serverKmSumme),
+        anzahlFahrten: serverFahrten.length,
+        fahrten: serverFahrten,
+      };
+
+      if (versandMethodeS === 'WEBHOOK') {
+        sendeWebhook('eingereicht', webhookDataS, mandant.dmsEmail, pdfPfad)
+          .then(() => aktualisiereVersandStatus(einreichung.id, belegNr, { emailStatus: 'GESENDET', status: 'GESENDET' }))
+          .catch(async err => {
+            console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
+            await aktualisiereVersandStatus(einreichung.id, belegNr, {
+              emailStatus: 'FEHLER',
+              status: 'FEHLER',
+              emailLetzterFehler: String(err),
+            });
+          });
+      } else {
+        sendeAnDmsMitRetry({
+          an: mandant.dmsEmail,
+          betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
+          text: erstelleSammelfahrtEmailText({
+            vorname: parsed.persoenlich.vorname,
+            nachname: parsed.persoenlich.nachname,
+            personalNr: parsed.persoenlich.personalNr,
+            mandantName: mandant.name,
+            mandantNr: String(mandant.mandantNr),
+            reiseanlass: parsed.reiseanlass,
+            verkehrsmittel: parsed.verkehrsmittel,
+            kmSumme: serverKmSumme,
+            gesamtbetrag: serverGesamtbetragS,
+            iban: parsed.persoenlich.iban,
+            kontoinhaber: parsed.persoenlich.kontoinhaber,
+            fahrten: serverFahrten,
+          }),
+          pdfDateipfad: pdfPfad,
+          pdfDateiname: `${belegNr}.pdf`,
+        }).then(async emailResult => {
+          const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
+          await aktualisiereVersandStatus(einreichung.id, belegNr, {
+            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
+            emailVersuche: emailResult.versuche,
+            emailLetzterFehler: emailResult.fehler || null,
+            status: newStatus,
+          });
+
+          if (!emailResult.erfolg) {
+            await sendeWebhook('fehler', webhookDataS, mandant.dmsEmail, pdfPfad).catch(err =>
+              console.error(`[${belegNr}] Fehler-Webhook fehlgeschlagen:`, err),
+            );
+          }
+        }).catch(err => console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err));
       }
 
       res.status(201).json({
@@ -527,7 +745,7 @@ einreichungenRouter.post('/', async (req, res) => {
       });
 
     } else {
-      res.status(400).json({ error: 'Ungültiger Typ. Erlaubt: REISEKOSTEN, ERSTATTUNG' });
+      res.status(400).json({ error: 'Ungültiger Typ. Erlaubt: REISEKOSTEN, ERSTATTUNG, SAMMELFAHRT' });
     }
   } catch (error) {
     if (error instanceof z.ZodError) {

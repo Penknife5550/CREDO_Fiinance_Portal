@@ -1,13 +1,27 @@
 import { db } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 
-export async function generateBelegNr(typ: 'REISEKOSTEN' | 'ERSTATTUNG'): Promise<string> {
-  const prefix = typ === 'REISEKOSTEN' ? 'RK' : 'KE';
+export type EinreichungTyp = 'REISEKOSTEN' | 'ERSTATTUNG' | 'SAMMELFAHRT';
+
+const PREFIX_BY_TYP: Record<EinreichungTyp, string> = {
+  REISEKOSTEN: 'RK',
+  ERSTATTUNG: 'KE',
+  SAMMELFAHRT: 'SF',
+};
+
+const LOCK_OFFSET_BY_TYP: Record<EinreichungTyp, number> = {
+  REISEKOSTEN: 1,
+  ERSTATTUNG: 2,
+  SAMMELFAHRT: 3,
+};
+
+export async function generateBelegNr(typ: EinreichungTyp): Promise<string> {
+  const prefix = PREFIX_BY_TYP[typ];
   const year = new Date().getFullYear();
   const pattern = `${prefix}-${year}-%`;
 
   // Advisory Lock Key: Kombination aus Typ und Jahr für exklusive Sperre
-  const lockKey = typ === 'REISEKOSTEN' ? year * 10 + 1 : year * 10 + 2;
+  const lockKey = year * 10 + LOCK_OFFSET_BY_TYP[typ];
 
   return await db.transaction(async (tx) => {
     // PostgreSQL Advisory Lock für threadsafe Belegnummern-Vergabe
