@@ -97,7 +97,7 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
       continue;
     }
 
-    // Typ-Filter prüfen (ALLE, REISEKOSTEN, ERSTATTUNG, SAMMELFAHRT)
+    // Typ-Filter prüfen (ALLE, REISEKOSTEN, ERSTATTUNG)
     if (config.typFilter && config.typFilter !== 'ALLE' && config.typFilter !== data.typ) {
       console.log(`  Webhook übersprungen: typFilter=${config.typFilter}, typ=${data.typ}`);
       continue;
