@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { Eraser } from 'lucide-react';
 
 interface Props {
@@ -6,43 +6,76 @@ interface Props {
   value?: string;
 }
 
+const CSS_HEIGHT = 150;
+
 export function SignaturPad({ onSignature, value }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
+  // Aktuelle Unterschrift als DataURL — wird beim Resize neu in das Canvas
+  // gemalt, damit ein Tablet-Rotation oder responsive Breakpoint nichts loescht.
+  const lastSnapshotRef = useRef<string | null>(value ?? null);
 
-  useEffect(() => {
+  /**
+   * Richtet das Canvas hochaufloesend ein (devicePixelRatio-aware) und stellt
+   * eine vorhandene Unterschrift wieder her. Wird beim Mount und bei jedem
+   * Container-Resize ausgefuehrt.
+   *
+   * Hintergrund: ohne DPR-Skalierung zeichnet der Browser auf einem 2x-Display
+   * mit 0.5x-Aufloesung und skaliert dann hoch — Resultat ist eine matschige
+   * Unterschrift, die im PDF nicht eindeutig lesbar ist (Audit-Risiko).
+   */
+  const setupCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-
+    if (!canvas?.parentElement) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Canvas-Größe an Container anpassen
-    const rect = canvas.parentElement!.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = 150;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const cssWidth = Math.max(1, Math.round(rect.width));
 
-    // Weißer Hintergrund
+    // CSS-Groesse (was der User sieht) und Bitmap-Groesse (was gezeichnet wird)
+    // entkoppeln. Das Canvas-Bitmap ist dpr-mal so gross wie die CSS-Flaeche.
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${CSS_HEIGHT}px`;
+    canvas.width = Math.round(cssWidth * dpr);
+    canvas.height = Math.round(CSS_HEIGHT * dpr);
+
+    // Zeichenkoordinaten zurueck auf CSS-Pixel skalieren (setTransform statt
+    // scale, damit kumulatives Skalieren bei Re-Setup ausgeschlossen ist).
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Hintergrund + Stil neu setzen (Bitmap-Reset hat alles geloescht)
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Zeichenstil
+    ctx.fillRect(0, 0, cssWidth, CSS_HEIGHT);
     ctx.strokeStyle = '#1F2937';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Vorhandene Unterschrift laden
-    if (value) {
+    // Vorhandene Unterschrift (initial value oder bisheriger Strich) wiederherstellen
+    const snapshot = lastSnapshotRef.current;
+    if (snapshot) {
       const img = new Image();
       img.onload = () => {
-        ctx.drawImage(img, 0, 0);
+        ctx.drawImage(img, 0, 0, cssWidth, CSS_HEIGHT);
         setHasSignature(true);
       };
-      img.src = value;
+      img.src = snapshot;
     }
   }, []);
+
+  useEffect(() => {
+    setupCanvas();
+
+    const parent = canvasRef.current?.parentElement;
+    if (!parent) return;
+
+    const observer = new ResizeObserver(() => setupCanvas());
+    observer.observe(parent);
+    return () => observer.disconnect();
+  }, [setupCanvas]);
 
   const getPos = (e: React.MouseEvent | React.TouchEvent) => {
     const canvas = canvasRef.current!;
@@ -90,19 +123,24 @@ export function SignaturPad({ onSignature, value }: Props) {
 
     const canvas = canvasRef.current;
     if (canvas) {
-      onSignature(canvas.toDataURL('image/png'));
+      const dataUrl = canvas.toDataURL('image/png');
+      lastSnapshotRef.current = dataUrl;
+      onSignature(dataUrl);
     }
   };
 
   const clear = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    const dpr = window.devicePixelRatio || 1;
+    const cssWidth = canvas.width / dpr;
+
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, cssWidth, CSS_HEIGHT);
+    lastSnapshotRef.current = null;
     setHasSignature(false);
     onSignature(undefined);
   };
@@ -125,10 +163,8 @@ export function SignaturPad({ onSignature, value }: Props) {
       <div className="border-2 border-credo-300 rounded-lg overflow-hidden bg-white relative">
         <canvas
           ref={canvasRef}
-          className="w-full cursor-crosshair touch-none"
-          style={{ height: 150 }}
-          role="img"
-          aria-label="Unterschrift zeichnen — mit Maus oder Finger auf dieser Fläche unterschreiben"
+          className="w-full cursor-crosshair touch-none block"
+          aria-label="Unterschrift-Zeichenfläche — mit Maus, Stift oder Finger unterschreiben"
           onMouseDown={startDrawing}
           onMouseMove={draw}
           onMouseUp={stopDrawing}
@@ -140,13 +176,13 @@ export function SignaturPad({ onSignature, value }: Props) {
         {!hasSignature && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <p className="text-sm text-credo-300">
-              Mit der Maus hier unterschreiben
+              Hier unterschreiben
             </p>
           </div>
         )}
       </div>
       <p className="text-xs text-credo-400 mt-1">
-        Zeichnen Sie Ihre Unterschrift mit der Maus (PC) oder dem Finger (Tablet/Handy).
+        Mit Maus, Stift oder Finger zeichnen.
       </p>
     </div>
   );
