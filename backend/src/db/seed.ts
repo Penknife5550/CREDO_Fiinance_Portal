@@ -20,33 +20,7 @@ async function seed() {
   }
   console.log(`  ✓ ${mandantenData.length} Mandanten angelegt`);
 
-  // ── Kostenstellen ──────────────────────────────────
-  const mandantenRows = await db.select().from(schema.mandanten);
-  const verwaltung = mandantenRows.find(m => m.mandantNr === 40);
-
-  if (verwaltung) {
-    const kostenstellen = [
-      { mandantId: verwaltung.id, bezeichnung: 'Allgemeine Verwaltung', nummer: '1000' },
-      { mandantId: verwaltung.id, bezeichnung: 'IT & Digitalisierung', nummer: '1100' },
-      { mandantId: verwaltung.id, bezeichnung: 'Personal', nummer: '1200' },
-    ];
-    for (const k of kostenstellen) {
-      await db.insert(schema.kostenstellen).values(k).onConflictDoNothing();
-    }
-    console.log(`  ✓ Kostenstellen für Verwaltung angelegt`);
-  }
-
-  // Kostenstellen für alle Schulen
-  for (const m of mandantenRows) {
-    if (m.kategorie !== 'Verwaltung') {
-      await db.insert(schema.kostenstellen).values([
-        { mandantId: m.id, bezeichnung: 'Schulbetrieb', nummer: '4000' },
-        { mandantId: m.id, bezeichnung: 'Lehrmittel', nummer: '4100' },
-        { mandantId: m.id, bezeichnung: 'Fortbildung', nummer: '4200' },
-      ]).onConflictDoNothing();
-    }
-  }
-  console.log(`  ✓ Kostenstellen für Schulen angelegt`);
+  // ── Kostenstellen werden NICHT geseedet (über AdminCenter pflegen) ──
 
   // ── Inlandspauschalen 2026 ─────────────────────────
   const pauschalen2026 = [
@@ -66,7 +40,12 @@ async function seed() {
   console.log(`  ✓ Inlandspauschalen 2026 angelegt`);
 
   // ── Admin-Zugang ───────────────────────────────────
-  const adminPasswort = process.env.ADMIN_INITIAL_PASSWORD || 'admin123';
+  const adminPasswort = process.env.ADMIN_INITIAL_PASSWORD;
+  if (!adminPasswort || adminPasswort.length < 12) {
+    console.error('\n  FEHLER: ADMIN_INITIAL_PASSWORD muss gesetzt sein (min. 12 Zeichen).');
+    console.error('  Beispiel: ADMIN_INITIAL_PASSWORD=$(openssl rand -base64 24) npm run seed\n');
+    process.exit(1);
+  }
   const hash = await bcrypt.hash(adminPasswort, 12);
   await db.insert(schema.admins).values({
     email: 'admin@credo.de',

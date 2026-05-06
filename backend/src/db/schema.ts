@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial, index } from 'drizzle-orm/pg-core';
 
 // ── Enums ──────────────────────────────────────────────
 
@@ -29,17 +29,21 @@ export const mandanten = pgTable('mandanten', {
   kstSammelfahrtAn: boolean('kst_sammelfahrt_an').notNull().default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (t) => ({
+  activeIdx: index('mandanten_active_idx').on(t.active),
+}));
 
 // ── Kostenstellen ──────────────────────────────────────
 
 export const kostenstellen = pgTable('kostenstellen', {
   id: uuid('id').defaultRandom().primaryKey(),
-  mandantId: uuid('mandant_id').notNull().references(() => mandanten.id),
+  mandantId: uuid('mandant_id').notNull().references(() => mandanten.id, { onDelete: 'cascade' }),
   bezeichnung: varchar('bezeichnung', { length: 255 }).notNull(),
   nummer: varchar('nummer', { length: 20 }).notNull(),
   active: boolean('active').notNull().default(true),
-});
+}, (t) => ({
+  mandantActiveIdx: index('kostenstellen_mandant_active_idx').on(t.mandantId, t.active),
+}));
 
 // ── Einreichungen (Reisekosten + Erstattungen) ─────────
 
@@ -86,13 +90,18 @@ export const einreichungen = pgTable('einreichungen', {
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   submittedAt: timestamp('submitted_at').notNull().defaultNow(),
-});
+}, (t) => ({
+  mandantIdx: index('einreichungen_mandant_idx').on(t.mandantId),
+  statusIdx: index('einreichungen_status_idx').on(t.status),
+  emailStatusIdx: index('einreichungen_email_status_idx').on(t.emailStatus),
+  createdAtIdx: index('einreichungen_created_at_idx').on(t.createdAt),
+}));
 
 // ── Reisetage (tagesweise VMA-Erfassung) ───────────────
 
 export const reisetage = pgTable('reisetage', {
   id: uuid('id').defaultRandom().primaryKey(),
-  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
   datum: timestamp('datum').notNull(),
   typ: reisetagTypEnum('typ').notNull(),
   fruehstueckGestellt: boolean('fruehstueck_gestellt').notNull().default(false),
@@ -101,7 +110,9 @@ export const reisetage = pgTable('reisetage', {
   vmaBrutto: decimal('vma_brutto', { precision: 10, scale: 2 }).notNull(),
   vmaKuerzung: decimal('vma_kuerzung', { precision: 10, scale: 2 }).notNull().default('0'),
   vmaNetto: decimal('vma_netto', { precision: 10, scale: 2 }).notNull(),
-});
+}, (t) => ({
+  einreichungIdx: index('reisetage_einreichung_idx').on(t.einreichungId),
+}));
 
 // ── Fahrten (für Sammelfahrt-Vorgang) ──────────────────
 
@@ -120,19 +131,21 @@ export const fahrten = pgTable('fahrten', {
 
 export const positionen = pgTable('positionen', {
   id: uuid('id').defaultRandom().primaryKey(),
-  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
   beschreibung: varchar('beschreibung', { length: 500 }).notNull(),
   kategorie: erstattungKategorieEnum('kategorie').notNull(),
   datum: timestamp('datum').notNull(),
   betrag: decimal('betrag', { precision: 10, scale: 2 }).notNull(),
   belegId: uuid('beleg_id'),
-});
+}, (t) => ({
+  einreichungIdx: index('positionen_einreichung_idx').on(t.einreichungId),
+}));
 
 // ── Belege (Anlagen) ───────────────────────────────────
 
 export const belege = pgTable('belege', {
   id: uuid('id').defaultRandom().primaryKey(),
-  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
   dateiname: varchar('dateiname', { length: 255 }).notNull(),
   dateityp: varchar('dateityp', { length: 10 }).notNull(),
   dateigroesse: integer('dateigroesse').notNull(),
@@ -141,18 +154,22 @@ export const belege = pgTable('belege', {
   uploadZeit: timestamp('upload_zeit').notNull().defaultNow(),
   beschreibung: varchar('beschreibung', { length: 500 }),
   betrag: decimal('betrag', { precision: 10, scale: 2 }),
-});
+}, (t) => ({
+  einreichungIdx: index('belege_einreichung_idx').on(t.einreichungId),
+}));
 
 // ── Weitere Kosten (bei Reisekosten) ───────────────────
 
 export const weitereKosten = pgTable('weitere_kosten', {
   id: uuid('id').defaultRandom().primaryKey(),
-  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
   typ: varchar('typ', { length: 50 }).notNull(), // UEBERNACHTUNG, PARKEN, MAUT, SONSTIGE
   beschreibung: varchar('beschreibung', { length: 500 }),
   betrag: decimal('betrag', { precision: 10, scale: 2 }).notNull(),
-  belegId: uuid('beleg_id').references(() => belege.id),
-});
+  belegId: uuid('beleg_id').references(() => belege.id, { onDelete: 'set null' }),
+}, (t) => ({
+  einreichungIdx: index('weitere_kosten_einreichung_idx').on(t.einreichungId),
+}));
 
 // ── Pauschalen ─────────────────────────────────────────
 

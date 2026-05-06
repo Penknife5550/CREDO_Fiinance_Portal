@@ -20,10 +20,11 @@ const PORT = process.env.PORT || 3000;
 // ── Rate Limiting ─────────────────────────────────────────
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 Minuten
-  max: 5,
+  max: 20,
   message: { error: 'Zu viele Anmeldeversuche. Bitte versuchen Sie es in 15 Minuten erneut.' },
   standardHeaders: true,
   legacyHeaders: false,
+  skipSuccessfulRequests: true,
 });
 
 const uploadLimiter = rateLimit({
@@ -34,12 +35,23 @@ const uploadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Schutz gegen Massen-Einreichungen pro IP (Spam an DMS-Mailadressen)
+const submitLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 Stunde
+  max: 10,
+  message: { error: 'Zu viele Einreichungen. Bitte versuchen Sie es in einer Stunde erneut.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
   message: { error: 'Zu viele Anfragen. Bitte versuchen Sie es in 15 Minuten erneut.' },
   standardHeaders: true,
   legacyHeaders: false,
+  // Admin-Routen sind bereits durch requireAdmin geschützt — nicht durch globales Limit drosseln
+  skip: (req) => req.path.startsWith('/api/admin') || req.path.startsWith('/admin'),
 });
 
 // ── Middleware ──────────────────────────────────────────
@@ -82,6 +94,8 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/mandanten', mandantenRouter);
 app.use('/api/kostenstellen', kostenstellenRouter);
 app.post('/api/einreichungen/belege', uploadLimiter);
+// Eigentlicher Submit (Reisekosten + Erstattungen) zusätzlich gedrosselt
+app.post('/api/einreichungen', submitLimiter);
 app.use('/api/einreichungen', einreichungenRouter);
 app.use('/api/pauschalen', pauschalenRouter);
 

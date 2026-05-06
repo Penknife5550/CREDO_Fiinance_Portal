@@ -8,7 +8,10 @@ const envSchema = z.object({
   SMTP_HOST: z.string().optional(),
   SMTP_USER: z.string().optional(),
   SMTP_PASS: z.string().optional(),
-  ENCRYPTION_KEY: z.string().optional(),
+  ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'ENCRYPTION_KEY muss 64 Hex-Zeichen sein (openssl rand -hex 32)')
+    .optional(),
   APP_URL: z.string().optional(),
   PORT: z.string().optional(),
   ADMIN_INITIAL_PASSWORD: z.string().optional(),
