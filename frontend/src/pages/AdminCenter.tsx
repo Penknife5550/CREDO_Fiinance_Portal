@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 import { useToast } from '@/components/Toast';
@@ -646,23 +646,32 @@ function KostenstellenTab() {
     })();
   }, []);
 
-  // Kostenstellen laden wenn Mandant wechselt
+  // Kostenstellen laden wenn Mandant wechselt — mit AbortController gegen Race Conditions
+  const ksAbortRef = useRef<AbortController | null>(null);
+
   const loadKostenstellen = async (mandantId: string) => {
     if (!mandantId) { setKostenstellen([]); return; }
+    ksAbortRef.current?.abort();
+    const controller = new AbortController();
+    ksAbortRef.current = controller;
     setKsLoading(true);
+    setFehler('');
     try {
-      const res = await adminFetch(`/api/admin/kostenstellen/${mandantId}`);
+      const res = await adminFetch(`/api/admin/kostenstellen/${mandantId}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       if (!res.ok) throw new Error('Fehler');
       setKostenstellen(await res.json());
-    } catch {
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError' || controller.signal.aborted) return;
       setFehler('Kostenstellen konnten nicht geladen werden.');
     } finally {
-      setKsLoading(false);
+      if (!controller.signal.aborted) setKsLoading(false);
     }
   };
 
   useEffect(() => {
     if (selectedMandantId) loadKostenstellen(selectedMandantId);
+    return () => ksAbortRef.current?.abort();
   }, [selectedMandantId]);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -1278,22 +1287,31 @@ const AUTH_TYPE_LABELS: Record<string, string> = {
 function VersandTab() {
   const [versandMethode, setVersandMethode] = useState('WEBHOOK');
 
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
-    const token = localStorage.getItem('adminToken');
-    fetch('/api/admin/email-config', { headers: { Authorization: `Bearer ${token}` } })
+    adminFetch('/api/admin/email-config')
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data?.versandMethode) setVersandMethode(data.versandMethode); })
       .catch(() => {});
   }, []);
 
-  const handleMethodeChange = (methode: string) => {
+  const handleMethodeChange = async (methode: string) => {
+    const previous = versandMethode;
     setVersandMethode(methode);
-    const token = localStorage.getItem('adminToken');
-    fetch('/api/admin/email-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ versandMethode: methode }),
-    }).catch(() => {});
+    setSaving(true);
+    try {
+      const res = await adminFetch('/api/admin/email-config', {
+        method: 'PUT',
+        body: JSON.stringify({ versandMethode: methode }),
+      });
+      if (!res.ok) throw new Error('Speichern fehlgeschlagen');
+    } catch {
+      setVersandMethode(previous);
+      alert('Versandmethode konnte nicht gespeichert werden.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -1307,6 +1325,7 @@ function VersandTab() {
               className="input-field"
               value={versandMethode}
               onChange={e => handleMethodeChange(e.target.value)}
+              disabled={saving}
             >
               <option value="WEBHOOK">Webhook (n8n / Outlook)</option>
               <option value="SMTP">SMTP (direkter Mailserver)</option>
