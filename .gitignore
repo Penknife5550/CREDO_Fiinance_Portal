@@ -14,3 +14,13 @@ uploads/
 
 # Vite generated type files
 frontend/vite.config.d.ts
+
+# Outlook-Mails (haeufig PII — Empfaengername, Schule, Anhang)
+*.msg
+*.eml
+
+# Versehentliche Notiz-Dateien
+n8n/Textdokument*.txt
+
+# Versehentlich verschachtelter Repo-Klon
+/CREDO_Fiinance_Portal/
