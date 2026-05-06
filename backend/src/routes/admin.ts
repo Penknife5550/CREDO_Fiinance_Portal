@@ -2,11 +2,25 @@ import { Router } from 'express';
 import { db, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
-import { sendeTestWebhook } from '../services/webhook.js';
+import { sendeTestWebhook, assertSafeWebhookUrl, UnsafeWebhookUrlError } from '../services/webhook.js';
+import { encryptSecret, isEncryptionConfigured, decryptSecretIfNeeded } from '../services/crypto.js';
+
+class EncryptionConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EncryptionConfigError';
+  }
+}
+
+function encryptOrPassthrough(value: string | null | undefined): string | null | undefined {
+  if (value === null || value === undefined || value === '') return value;
+  if (!isEncryptionConfigured()) {
+    throw new EncryptionConfigError('ENCRYPTION_KEY nicht gesetzt — Webhook-Auth-Daten koennen nicht verschluesselt gespeichert werden. Bitte ENV-Variable setzen (openssl rand -hex 32).');
+  }
+  return encryptSecret(value);
+}
 
 export const adminRouter = Router();
-
-// TODO: Auth-Middleware für Admin-Zugang hinzufügen
 
 // ── Mandanten CRUD ─────────────────────────────────────
 
@@ -258,11 +272,22 @@ adminRouter.post('/webhooks', async (req, res) => {
       eventFehler: z.boolean().optional().default(true),
     }).parse(req.body);
 
-    const result = await db.insert(schema.webhookConfig).values(body).returning();
+    assertSafeWebhookUrl(body.url);
+
+    const insertData = {
+      ...body,
+      secret: body.secret ? encryptOrPassthrough(body.secret) ?? null : null,
+      authPass: body.authPass ? encryptOrPassthrough(body.authPass) ?? null : null,
+      authHeaderValue: body.authHeaderValue ? encryptOrPassthrough(body.authHeaderValue) ?? null : null,
+    };
+
+    const result = await db.insert(schema.webhookConfig).values(insertData).returning();
     res.status(201).json(result[0]);
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else if (error instanceof UnsafeWebhookUrlError || error instanceof EncryptionConfigError) {
+      res.status(400).json({ error: error.message });
     } else {
       console.error('Fehler:', error);
       res.status(500).json({ error: 'Webhook konnte nicht angelegt werden' });
@@ -288,16 +313,24 @@ adminRouter.put('/webhooks/:id', async (req, res) => {
       eventFehler: z.boolean().optional(),
     }).parse(req.body);
 
-    // Maskierte Werte nicht überschreiben
+    if (body.url) assertSafeWebhookUrl(body.url);
+
+    // Maskierte Werte nicht überschreiben; neue Werte verschluesselt ablegen
     const updateData: Record<string, unknown> = { ...body, updatedAt: new Date() };
     if (body.secret === '***' || body.secret === undefined) {
       delete updateData.secret;
+    } else {
+      updateData.secret = body.secret ? encryptOrPassthrough(body.secret) ?? null : null;
     }
     if (body.authPass === '***' || body.authPass === undefined) {
       delete updateData.authPass;
+    } else {
+      updateData.authPass = body.authPass ? encryptOrPassthrough(body.authPass) ?? null : null;
     }
     if (body.authHeaderValue === '***' || body.authHeaderValue === undefined) {
       delete updateData.authHeaderValue;
+    } else {
+      updateData.authHeaderValue = body.authHeaderValue ? encryptOrPassthrough(body.authHeaderValue) ?? null : null;
     }
 
     const result = await db
@@ -319,6 +352,8 @@ adminRouter.put('/webhooks/:id', async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else if (error instanceof UnsafeWebhookUrlError || error instanceof EncryptionConfigError) {
+      res.status(400).json({ error: error.message });
     } else {
       console.error('Fehler:', error);
       res.status(500).json({ error: 'Webhook konnte nicht aktualisiert werden' });
@@ -357,9 +392,9 @@ adminRouter.post('/webhooks/:id/test', async (req, res) => {
     const result = await sendeTestWebhook(config.url, {
       authType: config.authType,
       authUser: config.authUser,
-      authPass: config.authPass,
+      authPass: decryptSecretIfNeeded(config.authPass),
       authHeaderName: config.authHeaderName,
-      authHeaderValue: config.authHeaderValue,
+      authHeaderValue: decryptSecretIfNeeded(config.authHeaderValue),
     });
     res.json(result);
   } catch (error) {
@@ -380,6 +415,8 @@ adminRouter.post('/webhooks/test-url', async (req, res) => {
       authHeaderValue: z.string().optional().nullable(),
     }).parse(req.body);
 
+    assertSafeWebhookUrl(body.url);
+
     const result = await sendeTestWebhook(body.url, {
       authType: body.authType,
       authUser: body.authUser ?? null,
@@ -391,6 +428,8 @@ adminRouter.post('/webhooks/test-url', async (req, res) => {
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Ungültige URL' });
+    } else if (error instanceof UnsafeWebhookUrlError) {
+      res.status(400).json({ error: error.message });
     } else {
       console.error('Fehler:', error);
       res.status(500).json({ error: 'Test konnte nicht durchgeführt werden' });

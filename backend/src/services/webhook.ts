@@ -1,5 +1,54 @@
 import fs from 'fs';
+import net from 'net';
+import crypto from 'crypto';
 import { db, schema } from '../db/index.js';
+import { decryptSecretIfNeeded } from './crypto.js';
+
+// SSRF-Schutz: Loopback-, Link-local- und RFC1918-Adressen blockieren.
+// Override fuer lokale Entwicklung: WEBHOOK_ALLOW_PRIVATE_HOSTS=true
+const ALLOW_PRIVATE_HOSTS = process.env.WEBHOOK_ALLOW_PRIVATE_HOSTS === 'true';
+
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === 'localhost' || h === '0.0.0.0' || h === '::' || h === '::1') return true;
+
+  if (net.isIPv4(h)) {
+    const [a, b] = h.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+  }
+
+  if (net.isIPv6(h)) {
+    if (h.startsWith('fc') || h.startsWith('fd')) return true; // ULA fc00::/7
+    if (h.startsWith('fe80:')) return true; // link-local
+  }
+
+  return false;
+}
+
+export class UnsafeWebhookUrlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsafeWebhookUrlError';
+  }
+}
+
+export function assertSafeWebhookUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UnsafeWebhookUrlError('Ungueltige URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new UnsafeWebhookUrlError('Nur http(s)-URLs erlaubt');
+  }
+  if (!ALLOW_PRIVATE_HOSTS && isPrivateOrLoopbackHost(parsed.hostname)) {
+    throw new UnsafeWebhookUrlError('URL zeigt auf ein privates oder Loopback-Netz — aus Sicherheitsgruenden blockiert');
+  }
+}
 
 interface WebhookPayload {
   event: 'eingereicht' | 'status_geaendert' | 'fehler';
@@ -69,6 +118,50 @@ function buildAuthHeaders(config: WebhookAuthConfig): Record<string, string> {
   return headers;
 }
 
+/** HMAC-SHA256 Signatur ueber den Body — n8n kann das mit dem secret pruefen */
+function buildSignatureHeader(body: string, secret: string | null): string | null {
+  if (!secret) return null;
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('hex');
+  return `sha256=${sig}`;
+}
+
+/** Sendet einen einzelnen POST mit Retry-Logik bei 5xx/Netzwerkfehlern */
+async function postMitRetry(url: string, body: string, headers: Record<string, string>): Promise<{ ok: boolean; status?: number; fehler?: string }> {
+  const wartezeiten = [0, 30000, 60000]; // 0s, 30s, 60s
+  let letzterFehler = '';
+  let letzterStatus: number | undefined;
+
+  for (let versuch = 1; versuch <= 3; versuch++) {
+    if (versuch > 1) {
+      await new Promise(r => setTimeout(r, wartezeiten[versuch - 1]));
+    }
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (res.ok) {
+        return { ok: true, status: res.status };
+      }
+
+      letzterStatus = res.status;
+      letzterFehler = await res.text().catch(() => '');
+
+      // 4xx ist Client-Fehler — Retry sinnlos
+      if (res.status >= 400 && res.status < 500) {
+        return { ok: false, status: res.status, fehler: letzterFehler.substring(0, 500) };
+      }
+    } catch (err) {
+      letzterFehler = err instanceof Error ? err.message : 'Unbekannter Fehler';
+    }
+  }
+
+  return { ok: false, status: letzterStatus, fehler: letzterFehler.substring(0, 500) };
+}
+
 /** Sendet Webhook an alle aktiven Konfigurationen */
 export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookPayload['einreichung'], an: string, pdfDateipfad?: string) {
   const configs = await db.select().from(schema.webhookConfig);
@@ -78,7 +171,7 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
   let pdfDateiname: string | undefined;
   if (pdfDateipfad) {
     try {
-      const pdfBuffer = fs.readFileSync(pdfDateipfad);
+      const pdfBuffer = await fs.promises.readFile(pdfDateipfad);
       pdfBase64 = pdfBuffer.toString('base64');
       pdfDateiname = pdfDateipfad.split(/[/\\]/).pop();
       console.log(`  PDF gelesen: ${pdfDateiname} (${Math.round(pdfBuffer.length / 1024)} KB, Base64: ${Math.round((pdfBase64?.length || 0) / 1024)} KB)`);
@@ -97,25 +190,14 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
       continue;
     }
 
-    // Typ-Filter prüfen (ALLE, REISEKOSTEN, ERSTATTUNG)
     if (config.typFilter && config.typFilter !== 'ALLE' && config.typFilter !== data.typ) {
       console.log(`  Webhook übersprungen: typFilter=${config.typFilter}, typ=${data.typ}`);
       continue;
     }
 
-    // Event-Filter prüfen
-    if (event === 'eingereicht' && !config.eventEingereicht) {
-      console.log(`  Webhook übersprungen: eventEingereicht ist deaktiviert`);
-      continue;
-    }
+    if (event === 'eingereicht' && !config.eventEingereicht) continue;
     if (event === 'status_geaendert' && !config.eventStatusGeaendert) continue;
-    if (event === 'fehler' && !config.eventFehler) {
-      console.log(`  Webhook übersprungen: eventFehler ist deaktiviert`);
-      continue;
-    }
-
-    // PDF sowohl auf Top-Level als auch in einreichung (Kompatibilität)
-    const payloadData = pdfBase64 ? { ...data, pdfBase64, pdfDateiname } : data;
+    if (event === 'fehler' && !config.eventFehler) continue;
 
     const payload = {
       event,
@@ -123,33 +205,44 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
       an,
       pdfBase64,
       pdfDateiname,
-      einreichung: payloadData,
+      einreichung: data,
     };
-
     const body = JSON.stringify(payload);
+
+    // Auth-Daten und Secret entschluesseln (Legacy-Klartext wird durchgereicht)
+    let plainAuthPass: string | null = null;
+    let plainAuthHeaderValue: string | null = null;
+    let plainSecret: string | null = null;
+    try {
+      plainAuthPass = decryptSecretIfNeeded(config.authPass);
+      plainAuthHeaderValue = decryptSecretIfNeeded(config.authHeaderValue);
+      plainSecret = decryptSecretIfNeeded(config.secret);
+    } catch (err) {
+      console.error(`  Webhook-Secrets konnten nicht entschluesselt werden (${config.url}):`, err);
+      continue;
+    }
+
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-Webhook-Event': event,
-      ...buildAuthHeaders(config),
+      ...buildAuthHeaders({
+        authType: config.authType,
+        authUser: config.authUser,
+        authPass: plainAuthPass,
+        authHeaderName: config.authHeaderName,
+        authHeaderValue: plainAuthHeaderValue,
+      }),
     };
+    const signature = buildSignatureHeader(body, plainSecret);
+    if (signature) headers['X-Webhook-Signature'] = signature;
 
-    console.log(`  Webhook senden → ${config.url} [${event}] (${Math.round(body.length / 1024)} KB, hasPdf=${!!pdfBase64})`);
+    console.log(`  Webhook senden → ${config.url} [${event}] (${Math.round(body.length / 1024)} KB, hasPdf=${!!pdfBase64}, signed=${!!signature})`);
 
-    try {
-      const res = await fetch(config.url, {
-        method: 'POST',
-        headers,
-        body,
-        signal: AbortSignal.timeout(30000),
-      });
-
-      if (!res.ok) {
-        console.error(`  Webhook fehlgeschlagen (${config.url}): HTTP ${res.status} ${await res.text().catch(() => '')}`);
-      } else {
-        console.log(`  Webhook erfolgreich → ${config.url} [${event}]`);
-      }
-    } catch (err) {
-      console.error(`  Webhook-Fehler (${config.url}):`, err);
+    const result = await postMitRetry(config.url, body, headers);
+    if (result.ok) {
+      console.log(`  Webhook erfolgreich → ${config.url} [${event}] (${result.status})`);
+    } else {
+      console.error(`  Webhook fehlgeschlagen (${config.url}): HTTP ${result.status ?? 'n/a'} ${result.fehler}`);
     }
   }
 }

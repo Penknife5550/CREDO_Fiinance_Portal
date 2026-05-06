@@ -6,6 +6,7 @@ import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
 import { erstelleGesamtPdf } from '../services/pdf.js';
 import { sendeAnDmsMitRetry } from '../services/email.js';
+import { resolveAndValidateBelegPfade as resolveBelegPfadeImpl } from '../services/uploadResolve.js';
 import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSammelfahrtEmailText } from '../services/emailTexte.js';
 import { sendeWebhook } from '../services/webhook.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
@@ -49,34 +50,9 @@ async function speichereBelege(einreichungId: string, validatedBelegPfade: strin
   await db.insert(schema.belege).values(rows);
 }
 
-/** Resolve Beleg-Datei-IDs zu absoluten Pfaden und validiere gegen Path Traversal */
-function resolveAndValidateBelegPfade(dateiIds: string[]): string[] {
-  const resolvedUploadDir = path.resolve(UPLOAD_DIR);
-  return dateiIds.map(id => {
-    // Nur den Dateinamen akzeptieren (keine Pfadbestandteile)
-    const basename = path.basename(id);
-
-    // In monatlichen Unterordnern suchen
-    const subdirs = fs.readdirSync(resolvedUploadDir, { withFileTypes: true })
-      .filter(d => d.isDirectory() && /^\d{4}-\d{2}$/.test(d.name));
-
-    for (const subdir of subdirs) {
-      const candidate = path.resolve(resolvedUploadDir, subdir.name, basename);
-      if (candidate.startsWith(resolvedUploadDir) && fs.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-
-    // Fallback: direkt im UPLOAD_DIR
-    const directPath = path.resolve(resolvedUploadDir, basename);
-    if (!directPath.startsWith(resolvedUploadDir)) {
-      throw new Error('Ungültiger Dateipfad: Path Traversal erkannt');
-    }
-    if (!fs.existsSync(directPath)) {
-      throw new Error(`Datei nicht gefunden: ${basename}`);
-    }
-    return directPath;
-  });
+/** Wrapper, bindet die in services/uploadResolve.ts implementierte Logik an UPLOAD_DIR. */
+function resolveAndValidateBelegPfade(dateiIds: string[]): Promise<string[]> {
+  return resolveBelegPfadeImpl(dateiIds, UPLOAD_DIR);
 }
 
 // ── Beleg-Upload (vorab, vor Einreichung) ──────────────
@@ -198,7 +174,7 @@ einreichungenRouter.post('/', async (req, res) => {
       const parsed = reisekostenBody.parse(body);
 
       // Path Traversal Schutz: Beleg-Pfade validieren und auflösen
-      const validatedBelegPfade = resolveAndValidateBelegPfade(parsed.belegDateipfade);
+      const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
 
       const belegNr = await generateBelegNr('REISEKOSTEN');
 
@@ -325,9 +301,10 @@ einreichungenRouter.post('/', async (req, res) => {
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
 
-      // PDF-Pfad in DB speichern
+      // PDF-Pfad in DB speichern, Unterschrift-Biometrie nach erfolgreicher
+      // PDF-Erstellung loeschen (DSGVO — sie ist im PDF persistiert).
       await db.update(schema.einreichungen)
-        .set({ pdfDateipfad: pdfPfad })
+        .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
       // Versandmethode aus DB lesen
@@ -417,7 +394,7 @@ einreichungenRouter.post('/', async (req, res) => {
       const parsed = erstattungBody.parse(body);
 
       // Path Traversal Schutz: Beleg-Pfade validieren und auflösen
-      const validatedBelegPfade = resolveAndValidateBelegPfade(parsed.belegDateipfade);
+      const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
 
       const belegNr = await generateBelegNr('ERSTATTUNG');
 
@@ -572,7 +549,7 @@ einreichungenRouter.post('/', async (req, res) => {
       const parsed = sammelfahrtBody.parse(body);
 
       // Path Traversal Schutz: Beleg-Pfade validieren
-      const validatedBelegPfade = resolveAndValidateBelegPfade(parsed.belegDateipfade);
+      const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
 
       const belegNr = await generateBelegNr('SAMMELFAHRT');
 

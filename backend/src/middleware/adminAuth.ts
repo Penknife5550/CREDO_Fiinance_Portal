@@ -7,6 +7,16 @@ import { eq } from 'drizzle-orm';
 // Einfacher Token-basierter Auth (kein JWT nötig für internes Tool)
 const activeSessions = new Map<string, { email: string; expiresAt: Date }>();
 
+// Periodisches Aufräumen abgelaufener Sessions (verhindert Memory-Leak bei
+// vielen Login-Versuchen / abgelaufenen Tokens, die nie wieder berührt werden).
+const SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1h
+setInterval(() => {
+  const now = new Date();
+  for (const [token, session] of activeSessions) {
+    if (session.expiresAt < now) activeSessions.delete(token);
+  }
+}, SWEEP_INTERVAL_MS).unref();
+
 function generateToken(): string {
   return crypto.randomBytes(32).toString('hex');
 }

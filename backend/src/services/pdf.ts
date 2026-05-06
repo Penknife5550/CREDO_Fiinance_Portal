@@ -430,7 +430,7 @@ export async function erstelleGesamtPdf(
     try {
       if (ext === '.pdf') {
         // PDF-Belege: Seiten direkt kopieren
-        const belegBytes = fs.readFileSync(pfad);
+        const belegBytes = await fs.promises.readFile(pfad);
         const belegDoc = await PDFDocument.load(belegBytes);
         const pages = await doc.copyPages(belegDoc, belegDoc.getPageIndices());
         for (const p of pages) {
@@ -495,8 +495,8 @@ export async function erstelleGesamtPdf(
 
   const pdfBytes = await doc.save();
   const dir = path.dirname(outputPfad);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(outputPfad, pdfBytes);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(outputPfad, pdfBytes);
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────

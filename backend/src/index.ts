@@ -9,7 +9,6 @@ import { mandantenRouter } from './routes/mandanten.js';
 import { kostenstellenRouter } from './routes/kostenstellen.js';
 import { einreichungenRouter } from './routes/einreichungen.js';
 import { adminRouter } from './routes/admin.js';
-import { pauschalenRouter } from './routes/pauschalen.js';
 import { adminLogin, adminLogout, adminCheck, requireAdmin } from './middleware/adminAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -75,11 +74,19 @@ app.use(helmet({
   // lokale http://localhost-Aufrufe und bricht den Dev-Loop.
   hsts: false,
 }));
+// CORS: in Production Caddy/Nginx terminieren — Same-Origin. In Dev kommt das
+// Frontend von Vite (5173), Backend von 3000 → erlaubte Origins explizit setzen.
+const allowedOrigins = (process.env.APP_URL || 'http://localhost:5173')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
 app.use(cors({
-  origin: true,
-  credentials: true,
+  origin: allowedOrigins,
+  credentials: false,
 }));
-app.use(express.json({ limit: '10mb' }));
+// 2 MB reicht für Submit (Unterschriftsbild + Metadaten); Belege laufen ueber den
+// /belege-Upload-Endpoint mit eigenem multer-Limit.
+app.use(express.json({ limit: '2mb' }));
 
 // ── Allgemeines Rate Limiting für API ─────────────────────
 app.use('/api/', apiLimiter);
@@ -97,7 +104,6 @@ app.post('/api/einreichungen/belege', uploadLimiter);
 // Eigentlicher Submit (Reisekosten + Erstattungen) zusätzlich gedrosselt
 app.post('/api/einreichungen', submitLimiter);
 app.use('/api/einreichungen', einreichungenRouter);
-app.use('/api/pauschalen', pauschalenRouter);
 
 // AdminCenter Auth (Login/Logout — ohne Middleware)
 app.post('/api/admin/login', loginLimiter, adminLogin);
