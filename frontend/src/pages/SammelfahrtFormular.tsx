@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useUnsavedWarning } from '@/lib/hooks';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '@/components/Toast';
@@ -43,15 +44,8 @@ export function SammelfahrtFormular() {
   );
 
   // Datenverlust-Warnung
-  const hasData = persoenlich.vorname || persoenlich.nachname || reiseanlass || fahrten.some(f => f.datum || f.ziel || f.km > 0);
-  const handleBeforeUnload = useCallback((e: BeforeUnloadEvent) => {
-    if (hasData) e.preventDefault();
-  }, [hasData]);
-
-  useEffect(() => {
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [handleBeforeUnload]);
+  const hasData = !!(persoenlich.vorname || persoenlich.nachname || reiseanlass || fahrten.some(f => f.datum || f.ziel || f.km > 0));
+  useUnsavedWarning(hasData);
 
   const validateStep = (step: number): boolean => {
     const errs: Record<string, string> = {};

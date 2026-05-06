@@ -48,3 +48,20 @@ export function formatIBAN(iban: string): string {
   const cleaned = iban.replace(/\s/g, '').toUpperCase();
   return cleaned.replace(/(.{4})/g, '$1 ').trim();
 }
+
+/**
+ * Parsed Dezimalzahlen aus Eingaben mit deutschem Komma ODER Punkt.
+ * `<input type="number">` akzeptiert in DE-Locale kein Komma — nutze daher
+ * `<input type="text" inputMode="decimal">` und diese Funktion zum Parsen.
+ * Gibt 0 zurueck bei leerer/ungueltiger Eingabe.
+ */
+export function parseGermanDecimal(value: string): number {
+  if (!value) return 0;
+  // Tausender-Punkte/Spaces entfernen, Komma -> Punkt
+  const normalized = value
+    .replace(/\s/g, '')
+    .replace(/\.(?=\d{3}(\D|$))/g, '') // 1.234,56 -> 1234,56
+    .replace(',', '.');
+  const n = parseFloat(normalized);
+  return Number.isFinite(n) ? n : 0;
+}

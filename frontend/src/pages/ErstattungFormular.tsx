@@ -1,11 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { useUnsavedWarning } from '@/lib/hooks';
 import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '@/components/Toast';
 import { PersoenlicheDatenStep } from '@/components/forms/PersoenlicheDatenStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
-import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
+import { formatCurrency, formatIBAN, validateIBAN, parseGermanDecimal } from '@/lib/utils';
 import { einreichenErstattung } from '@/lib/api';
 import type { PersoenlicheDaten, ErstattungPosition } from '@/lib/types';
 import { ERSTATTUNG_KATEGORIEN } from '@/lib/types';
@@ -36,18 +37,9 @@ export function ErstattungFormular() {
 
   const gesamt = positionen.reduce((sum, p) => sum + (p.betrag || 0), 0);
 
-  // ── Warnung bei Datenverlust ──────────────────────
-  const hasData = persoenlich.vorname || persoenlich.nachname || positionen.some(p => p.beschreibung);
-  const handleBeforeUnload = useCallback((e: BeforeUnloadEvent) => {
-    if (hasData) {
-      e.preventDefault();
-    }
-  }, [hasData]);
-
-  useEffect(() => {
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [handleBeforeUnload]);
+  // Warnung bei Datenverlust (Browser-Reload / Schliessen)
+  const hasData = !!(persoenlich.vorname || persoenlich.nachname || positionen.some(p => p.beschreibung));
+  useUnsavedWarning(hasData);
 
   // ── Positionen-Verwaltung ──────────────────────────
   const addPosition = () => setPositionen([...positionen, { ...EMPTY_POSITION }]);
@@ -219,13 +211,12 @@ export function ErstattungFormular() {
                     <div>
                       <label className="label">Betrag (brutto) *</label>
                       <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
                         className={`input-field ${errors[`pos_${index}_betrag`] ? 'border-red-400' : ''}`}
                         placeholder="0,00"
                         value={pos.betrag || ''}
-                        onChange={e => updatePosition(index, 'betrag', parseFloat(e.target.value) || 0)}
+                        onChange={e => updatePosition(index, 'betrag', parseGermanDecimal(e.target.value))}
                       />
                       {errors[`pos_${index}_betrag`] && (
                         <p className="text-xs text-red-500 mt-1">{errors[`pos_${index}_betrag`]}</p>

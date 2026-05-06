@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { useUnsavedWarning } from '@/lib/hooks';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '@/components/Toast';
@@ -7,7 +8,7 @@ import { VerpflegungStep } from '@/components/forms/VerpflegungStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
 import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagAusland, AUSLANDSPAUSCHALEN } from '@/lib/vma';
-import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
+import { formatCurrency, formatIBAN, validateIBAN, parseGermanDecimal } from '@/lib/utils';
 import { einreichenReisekosten } from '@/lib/api';
 import { pruefeDreiMonatsFrist, speichereReiseziel } from '@/lib/dreiMonatsFrist';
 import type { PersoenlicheDaten, Reisetag, WeitereKostenPosition, ReisekostenFormData } from '@/lib/types';
@@ -51,18 +52,9 @@ export function ReisekostenFormular() {
   const [belege, setBelege] = useState<File[]>([]);
   const [unterschrift, setUnterschrift] = useState<string | undefined>();
 
-  // ── Warnung bei Datenverlust ──────────────────────
-  const hasData = persoenlich.vorname || persoenlich.nachname || reiseanlass || reiseziel;
-  const handleBeforeUnload = useCallback((e: BeforeUnloadEvent) => {
-    if (hasData) {
-      e.preventDefault();
-    }
-  }, [hasData]);
-
-  useEffect(() => {
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [handleBeforeUnload]);
+  // Warnung bei Datenverlust (Browser-Reload / Schliessen)
+  const hasData = !!(persoenlich.vorname || persoenlich.nachname || reiseanlass || reiseziel);
+  useUnsavedWarning(hasData);
 
   // ── 3-Monats-Frist prüfen ─────────────────────────
   const dreiMonatsFrist = pruefeDreiMonatsFrist(reiseziel);
@@ -366,12 +358,12 @@ export function ReisekostenFormular() {
                 <div>
                   <label className="label">Gefahrene Kilometer *</label>
                   <input
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="decimal"
                     className={`input-field ${errors.kmGefahren ? 'border-red-400' : ''}`}
                     placeholder="86"
                     value={kmGefahren || ''}
-                    onChange={e => setKmGefahren(parseFloat(e.target.value) || 0)}
+                    onChange={e => setKmGefahren(parseGermanDecimal(e.target.value))}
                   />
                   {errors.kmGefahren && <p className="text-xs text-red-500 mt-1">{errors.kmGefahren}</p>}
                 </div>
@@ -446,13 +438,12 @@ export function ReisekostenFormular() {
                   <div>
                     <label className="label">Betrag (brutto)</label>
                     <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                      type="text"
+                      inputMode="decimal"
                       className="input-field"
                       placeholder="0,00"
                       value={kosten.betrag || ''}
-                      onChange={e => updateWeitereKosten(index, 'betrag', parseFloat(e.target.value) || 0)}
+                      onChange={e => updateWeitereKosten(index, 'betrag', parseGermanDecimal(e.target.value))}
                     />
                   </div>
                 </div>

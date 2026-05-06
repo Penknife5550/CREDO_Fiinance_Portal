@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers } from 'lucide-react';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 import { useToast } from '@/components/Toast';
 import { VORGANGSTYP_META, istKstAn, type KstField, type MandantAdmin, type Vorgangstyp } from '@/lib/types';
@@ -952,306 +952,58 @@ function KostenstellenTab() {
   );
 }
 
-// ── Pauschalen Tab (editierbar) ────────────────────────
+// ── Pauschalen Tab (read-only) ─────────────────────────
+// Pauschalen werden im Code gepflegt (backend/src/lib/kmSaetze.ts und
+// frontend/src/lib/vma.ts). Eine UI-Editierung wäre irreführend, weil die
+// Berechnungen serverseitig hardgecodet sind.
 
-interface AuslandRow {
-  id: number;
-  land: string;
-  t8h: string;
-  t24h: string;
-  ueb: string;
-}
+const INLANDSPAUSCHALEN_2026: Array<{ label: string; value: string; suffix: string }> = [
+  { label: 'Kilometerpauschale PKW', value: '0,30', suffix: 'EUR/km' },
+  { label: 'Kilometerpauschale Motorrad', value: '0,20', suffix: 'EUR/km' },
+  { label: 'VMA > 8h (eintägig)', value: '14,00', suffix: 'EUR' },
+  { label: 'VMA 24h (Ganztag)', value: '28,00', suffix: 'EUR' },
+  { label: 'VMA An-/Abreisetag', value: '14,00', suffix: 'EUR' },
+  { label: 'Kürzung Frühstück', value: '20', suffix: '%' },
+  { label: 'Kürzung Mittagessen', value: '40', suffix: '%' },
+  { label: 'Kürzung Abendessen', value: '40', suffix: '%' },
+];
 
 function PauschalenTab() {
-  const { showToast } = useToast();
-  const [editing, setEditing] = useState(false);
-  const [pauschalen, setPauschalen] = useState({
-    kmPkw: '0,30',
-    kmMotorrad: '0,20',
-    vma8h: '14,00',
-    vma24h: '28,00',
-    vmaAnreisetag: '14,00',
-    kuerzungFruehstueck: '20',
-    kuerzungMittag: '40',
-    kuerzungAbend: '40',
-  });
-
-  // Auslandspauschalen state
-  const [ausland, setAusland] = useState<AuslandRow[]>([
-    { id: 1, land: 'Österreich', t8h: '27,00', t24h: '40,00', ueb: '105,00' },
-    { id: 2, land: 'Schweiz', t8h: '43,00', t24h: '64,00', ueb: '180,00' },
-    { id: 3, land: 'Niederlande', t8h: '32,00', t24h: '47,00', ueb: '125,00' },
-    { id: 4, land: 'Frankreich', t8h: '39,00', t24h: '58,00', ueb: '148,00' },
-  ]);
-  const [nextId, setNextId] = useState(5);
-  const [editingRowId, setEditingRowId] = useState<number | null>(null);
-  const [editDraft, setEditDraft] = useState<AuslandRow | null>(null);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newRow, setNewRow] = useState<Omit<AuslandRow, 'id'>>({ land: '', t8h: '', t24h: '', ueb: '' });
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-
-  const updatePauschale = (key: keyof typeof pauschalen, value: string) => {
-    setPauschalen({ ...pauschalen, [key]: value });
-  };
-
-  const handleSave = () => {
-    // TODO: API-Call PUT /api/admin/pauschalen
-    setEditing(false);
-    showToast('Pauschalen gespeichert', 'success');
-  };
-
-  const startEditRow = (row: AuslandRow) => {
-    setEditingRowId(row.id);
-    setEditDraft({ ...row });
-  };
-
-  const cancelEditRow = () => {
-    setEditingRowId(null);
-    setEditDraft(null);
-  };
-
-  const saveEditRow = () => {
-    if (!editDraft) return;
-    setAusland(prev => prev.map(r => r.id === editDraft.id ? editDraft : r));
-    setEditingRowId(null);
-    setEditDraft(null);
-  };
-
-  const handleAddRow = () => {
-    if (!newRow.land.trim()) return;
-    setAusland(prev => [...prev, { id: nextId, ...newRow }]);
-    setNextId(n => n + 1);
-    setNewRow({ land: '', t8h: '', t24h: '', ueb: '' });
-    setShowAddForm(false);
-  };
-
-  const handleDeleteRow = (id: number) => {
-    setAusland(prev => prev.filter(r => r.id !== id));
-    setDeletingId(null);
-  };
-
   return (
     <div className="space-y-6">
-      {/* Inlandspauschalen */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-credo-900">Inlandspauschalen 2026</h3>
-          {editing ? (
-            <button onClick={handleSave} className="btn-primary text-sm py-2">
-              <Save className="w-4 h-4 mr-1.5" />
-              Speichern
-            </button>
-          ) : (
-            <button onClick={() => setEditing(true)} className="btn-secondary text-sm py-2">
-              <Edit className="w-4 h-4 mr-1.5" />
-              Bearbeiten
-            </button>
-          )}
-        </div>
-
-        <div className="space-y-3">
-          <PauschaleRow label="Kilometerpauschale PKW" value={pauschalen.kmPkw} suffix="EUR/km" editing={editing} onChange={v => updatePauschale('kmPkw', v)} />
-          <PauschaleRow label="Kilometerpauschale Motorrad" value={pauschalen.kmMotorrad} suffix="EUR/km" editing={editing} onChange={v => updatePauschale('kmMotorrad', v)} />
-          <PauschaleRow label="VMA > 8h (eintägig)" value={pauschalen.vma8h} suffix="EUR" editing={editing} onChange={v => updatePauschale('vma8h', v)} />
-          <PauschaleRow label="VMA 24h (Ganztag)" value={pauschalen.vma24h} suffix="EUR" editing={editing} onChange={v => updatePauschale('vma24h', v)} />
-          <PauschaleRow label="VMA An-/Abreisetag" value={pauschalen.vmaAnreisetag} suffix="EUR" editing={editing} onChange={v => updatePauschale('vmaAnreisetag', v)} />
-          <PauschaleRow label="Kürzung Frühstück" value={pauschalen.kuerzungFruehstueck} suffix="%" editing={editing} onChange={v => updatePauschale('kuerzungFruehstueck', v)} />
-          <PauschaleRow label="Kürzung Mittagessen" value={pauschalen.kuerzungMittag} suffix="%" editing={editing} onChange={v => updatePauschale('kuerzungMittag', v)} />
-          <PauschaleRow label="Kürzung Abendessen" value={pauschalen.kuerzungAbend} suffix="%" editing={editing} onChange={v => updatePauschale('kuerzungAbend', v)} />
-        </div>
-      </div>
-
-      {/* Auslandspauschalen */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-credo-900">Auslandspauschalen (BMF)</h3>
-          <button onClick={() => { setShowAddForm(true); setNewRow({ land: '', t8h: '', t24h: '', ueb: '' }); }} className="btn-secondary text-sm py-2">
-            <Plus className="w-4 h-4 mr-1.5" />
-            Land hinzufügen
-          </button>
-        </div>
-
-        {/* Add new country form */}
-        {showAddForm && (
-          <div className="border border-blue-200 bg-blue-50/30 rounded-lg p-4 mb-4 space-y-3">
-            <h4 className="font-semibold text-credo-900 text-sm">Neues Land hinzufügen</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <div>
-                <label className="label">Land</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="z.B. Belgien"
-                  value={newRow.land}
-                  onChange={e => setNewRow({ ...newRow, land: e.target.value })}
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="label">Tagessatz &gt;8h (EUR)</label>
-                <input
-                  type="text"
-                  className="input-field font-mono"
-                  placeholder="0,00"
-                  value={newRow.t8h}
-                  onChange={e => setNewRow({ ...newRow, t8h: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">Tagessatz 24h (EUR)</label>
-                <input
-                  type="text"
-                  className="input-field font-mono"
-                  placeholder="0,00"
-                  value={newRow.t24h}
-                  onChange={e => setNewRow({ ...newRow, t24h: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="label">Übernachtung (EUR)</label>
-                <input
-                  type="text"
-                  className="input-field font-mono"
-                  placeholder="0,00"
-                  value={newRow.ueb}
-                  onChange={e => setNewRow({ ...newRow, ueb: e.target.value })}
-                />
-              </div>
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={handleAddRow} disabled={!newRow.land.trim()} className="btn-primary text-sm py-2 disabled:opacity-50">
-                <Check className="w-4 h-4 mr-1.5" />
-                Hinzufügen
-              </button>
-              <button onClick={() => setShowAddForm(false)} className="btn-secondary text-sm py-2">
-                Abbrechen
-              </button>
-            </div>
+      <div className="card border border-blue-200 bg-blue-50/40">
+        <div className="flex items-start gap-3">
+          <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-credo-700">
+            <strong className="block text-credo-900 mb-1">Pauschalen werden im Code gepflegt</strong>
+            Die hier gezeigten Werte sind eine Anzeige-Kopie der serverseitig hartkodierten
+            Pauschalen (Quelle: <code className="text-xs">backend/src/lib/kmSaetze.ts</code> und
+            <code className="text-xs"> frontend/src/lib/vma.ts</code>). Aenderungen erfolgen per
+            Code-Anpassung — eine UI-Bearbeitung waere irrefuehrend, da die Berechnungen
+            unveraendert weiter mit den Code-Werten laufen wuerden.
           </div>
-        )}
-
-        <div className="border border-credo-200 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-credo-50">
-              <tr>
-                <th className="text-left p-3 font-medium text-credo-700">Land</th>
-                <th className="text-right p-3 font-medium text-credo-700">Tagessatz &gt;8h</th>
-                <th className="text-right p-3 font-medium text-credo-700">Tagessatz 24h</th>
-                <th className="text-right p-3 font-medium text-credo-700">Übernachtung</th>
-                <th className="text-right p-3 font-medium text-credo-700">Aktionen</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ausland.map((row, i) => (
-                <tr key={row.id} className={`border-t border-credo-100 ${i % 2 ? 'bg-credo-50/30' : ''}`}>
-                  {editingRowId === row.id && editDraft ? (
-                    <>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          className="input-field py-1.5 px-2 text-sm"
-                          value={editDraft.land}
-                          onChange={e => setEditDraft({ ...editDraft, land: e.target.value })}
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          className="input-field py-1.5 px-2 text-right font-mono text-sm w-24 ml-auto"
-                          value={editDraft.t8h}
-                          onChange={e => setEditDraft({ ...editDraft, t8h: e.target.value })}
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          className="input-field py-1.5 px-2 text-right font-mono text-sm w-24 ml-auto"
-                          value={editDraft.t24h}
-                          onChange={e => setEditDraft({ ...editDraft, t24h: e.target.value })}
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          className="input-field py-1.5 px-2 text-right font-mono text-sm w-24 ml-auto"
-                          value={editDraft.ueb}
-                          onChange={e => setEditDraft({ ...editDraft, ueb: e.target.value })}
-                        />
-                      </td>
-                      <td className="p-2 text-right whitespace-nowrap">
-                        <button onClick={saveEditRow} className="text-emerald-600 hover:text-emerald-700 p-1" title="Speichern">
-                          <Check className="w-4 h-4" />
-                        </button>
-                        <button onClick={cancelEditRow} className="text-credo-400 hover:text-credo-600 p-1" title="Abbrechen">
-                          <X className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td className="p-3 font-medium text-credo-900">{row.land}</td>
-                      <td className="p-3 text-right font-mono">{row.t8h} EUR</td>
-                      <td className="p-3 text-right font-mono">{row.t24h} EUR</td>
-                      <td className="p-3 text-right font-mono">{row.ueb} EUR</td>
-                      <td className="p-3 text-right whitespace-nowrap">
-                        <button onClick={() => startEditRow(row)} className="text-credo-400 hover:text-credo-600 p-1" title="Bearbeiten">
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        {deletingId === row.id ? (
-                          <span className="inline-flex items-center gap-1 ml-1">
-                            <button onClick={() => handleDeleteRow(row.id)} className="text-xs text-red-600 font-medium px-2 py-1 bg-red-50 rounded hover:bg-red-100">Ja</button>
-                            <button onClick={() => setDeletingId(null)} className="text-xs text-credo-500 px-2 py-1">Nein</button>
-                          </span>
-                        ) : (
-                          <button onClick={() => setDeletingId(row.id)} className="text-credo-400 hover:text-red-500 p-1" title="Löschen">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
-                      </td>
-                    </>
-                  )}
-                </tr>
-              ))}
-              {ausland.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-credo-400 text-sm">
-                    Keine Auslandspauschalen vorhanden. Klicken Sie auf &quot;Land hinzufügen&quot;.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
-        <p className="text-xs text-credo-400 mt-2">
-          Basierend auf den BMF-Pauschalen. CSV-Import für jährliche Aktualisierung geplant.
-        </p>
+      </div>
+
+      {/* Inlandspauschalen — read-only */}
+      <div className="card">
+        <h3 className="text-lg font-semibold text-credo-900 mb-4">Inlandspauschalen 2026</h3>
+        <div className="space-y-3">
+          {INLANDSPAUSCHALEN_2026.map(p => (
+            <div key={p.label} className="flex justify-between items-center py-2 border-b border-credo-100 last:border-0">
+              <span className="text-credo-600">{p.label}</span>
+              <span className="font-medium font-mono">{p.value} {p.suffix}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-function PauschaleRow({ label, value, suffix, editing, onChange }: {
-  label: string; value: string; suffix: string; editing: boolean; onChange: (v: string) => void;
-}) {
-  return (
-    <div className="flex justify-between items-center py-2 border-b border-credo-100 last:border-0">
-      <span className="text-credo-600">{label}</span>
-      {editing ? (
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
-            className="input-field w-24 text-right py-1.5 px-2 font-mono"
-            value={value}
-            onChange={e => onChange(e.target.value)}
-          />
-          <span className="text-xs text-credo-400 w-10">{suffix}</span>
-        </div>
-      ) : (
-        <span className="font-medium font-mono">{value} {suffix}</span>
-      )}
-    </div>
-  );
-}
+// Auslandspauschalen-Anzeige wurde mit dem Edit-Stub entfernt. Bei Bedarf
+// als read-only-Block ergaenzen (analog Inlandspauschalen oben), wenn die
+// BMF-Werte zur Anzeige im AdminCenter sichtbar sein sollen.
 
 // ── Versand Tab ────────────────────────────────────────
 
