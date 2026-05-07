@@ -158,6 +158,15 @@
 | 7.5 | GitHub Push | ⏳ | |
 | 7.6 | Production-Deployment auf finance.fes-credo.de | ⏳ | |
 
+### Phase 9: Komma-Eingabe in Dezimal-Feldern (07.05.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 9.1 | Bug: In allen 4 Dezimal-Inputs (Erstattung Betrag, RK kmGefahren, RK Weitere Kosten, SF km Desktop+Mobile) konnte kein Komma eingegeben werden | ✅ | 2026-05-07 |
+| 9.2 | Ursache: controlled input + Number-State — `parseGermanDecimal("66,")` = 66, render `"66"` löschte das gerade getippte Komma sofort wieder | ✅ | 2026-05-07 |
+| 9.3 | Neue Komponente `frontend/src/components/forms/DezimalInput.tsx` mit lokalem String-State + Focus-Tracking | ✅ | 2026-05-07 |
+| 9.4 | Eingesetzt in `ErstattungFormular.tsx`, `ReisekostenFormular.tsx` (2x), `FahrtenListe.tsx` (Desktop + Mobile) | ✅ | 2026-05-07 |
+
 ### Phase 8: n8n Workflow Fix — PDF-Anhang (07.05.2026)
 
 | # | Aufgabe | Status | Datum |

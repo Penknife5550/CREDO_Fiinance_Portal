@@ -1,7 +1,8 @@
 import { Plus, Trash2 } from 'lucide-react';
 import type { Fahrt, SammelfahrtVerkehrsmittel } from '@/lib/types';
 import { berechneKmBetrag, satzFuer, SAMMELFAHRT_MAX_FAHRTEN } from '@/lib/sammelfahrt';
-import { formatCurrency, parseGermanDecimal } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
+import { DezimalInput } from './DezimalInput';
 
 interface Props {
   fahrten: Fahrt[];
@@ -90,14 +91,12 @@ export function FahrtenListe({ fahrten, onChange, verkehrsmittel, defaultStartOr
                   />
                 </td>
                 <td className="p-2 align-top">
-                  <input
-                    type="text"
-                    inputMode="decimal"
+                  <DezimalInput
                     aria-label={`Fahrt ${i + 1}: Kilometer`}
                     className={`input-field py-2 px-2 text-sm text-right font-mono ${fehlerFuer(i, 'km') ? 'border-red-400' : ''}`}
                     placeholder="0"
-                    value={f.km || ''}
-                    onChange={e => updateFahrt(i, { km: parseGermanDecimal(e.target.value) })}
+                    value={f.km}
+                    onChange={km => updateFahrt(i, { km })}
                   />
                 </td>
                 <td className="p-2 align-top text-right text-sm font-medium text-credo-800 pt-3.5">
@@ -160,13 +159,11 @@ export function FahrtenListe({ fahrten, onChange, verkehrsmittel, defaultStartOr
               aria-label="Nach"
             />
             <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                inputMode="decimal"
+              <DezimalInput
                 className={`input-field text-sm font-mono ${fehlerFuer(i, 'km') ? 'border-red-400' : ''}`}
                 placeholder="km"
-                value={f.km || ''}
-                onChange={e => updateFahrt(i, { km: parseGermanDecimal(e.target.value) })}
+                value={f.km}
+                onChange={km => updateFahrt(i, { km })}
                 aria-label="Kilometer"
               />
               <div className="flex items-center justify-end px-2 text-sm font-medium text-credo-800">

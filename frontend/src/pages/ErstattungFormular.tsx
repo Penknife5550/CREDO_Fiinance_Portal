@@ -6,7 +6,8 @@ import { useToast } from '@/components/Toast';
 import { PersoenlicheDatenStep } from '@/components/forms/PersoenlicheDatenStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
-import { formatCurrency, formatIBAN, validateIBAN, parseGermanDecimal } from '@/lib/utils';
+import { DezimalInput } from '@/components/forms/DezimalInput';
+import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenErstattung } from '@/lib/api';
 import type { PersoenlicheDaten, ErstattungPosition } from '@/lib/types';
 import { ERSTATTUNG_KATEGORIEN } from '@/lib/types';
@@ -210,13 +211,11 @@ export function ErstattungFormular() {
                     </div>
                     <div>
                       <label className="label">Betrag (brutto) *</label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
+                      <DezimalInput
                         className={`input-field ${errors[`pos_${index}_betrag`] ? 'border-red-400' : ''}`}
                         placeholder="0,00"
-                        value={pos.betrag || ''}
-                        onChange={e => updatePosition(index, 'betrag', parseGermanDecimal(e.target.value))}
+                        value={pos.betrag}
+                        onChange={n => updatePosition(index, 'betrag', n)}
                       />
                       {errors[`pos_${index}_betrag`] && (
                         <p className="text-xs text-red-500 mt-1">{errors[`pos_${index}_betrag`]}</p>

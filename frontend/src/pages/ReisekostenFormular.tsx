@@ -7,8 +7,9 @@ import { PersoenlicheDatenStep } from '@/components/forms/PersoenlicheDatenStep'
 import { VerpflegungStep } from '@/components/forms/VerpflegungStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
+import { DezimalInput } from '@/components/forms/DezimalInput';
 import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagAusland, AUSLANDSPAUSCHALEN } from '@/lib/vma';
-import { formatCurrency, formatIBAN, validateIBAN, parseGermanDecimal } from '@/lib/utils';
+import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenReisekosten } from '@/lib/api';
 import { pruefeDreiMonatsFrist, speichereReiseziel } from '@/lib/dreiMonatsFrist';
 import type { PersoenlicheDaten, Reisetag, WeitereKostenPosition, ReisekostenFormData } from '@/lib/types';
@@ -357,13 +358,11 @@ export function ReisekostenFormular() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">Gefahrene Kilometer *</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
+                  <DezimalInput
                     className={`input-field ${errors.kmGefahren ? 'border-red-400' : ''}`}
                     placeholder="86"
-                    value={kmGefahren || ''}
-                    onChange={e => setKmGefahren(parseGermanDecimal(e.target.value))}
+                    value={kmGefahren}
+                    onChange={setKmGefahren}
                   />
                   {errors.kmGefahren && <p className="text-xs text-red-500 mt-1">{errors.kmGefahren}</p>}
                 </div>
@@ -437,13 +436,11 @@ export function ReisekostenFormular() {
                   </div>
                   <div>
                     <label className="label">Betrag (brutto)</label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
+                    <DezimalInput
                       className="input-field"
                       placeholder="0,00"
-                      value={kosten.betrag || ''}
-                      onChange={e => updateWeitereKosten(index, 'betrag', parseGermanDecimal(e.target.value))}
+                      value={kosten.betrag}
+                      onChange={n => updateWeitereKosten(index, 'betrag', n)}
                     />
                   </div>
                 </div>
