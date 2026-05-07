@@ -158,6 +158,18 @@
 | 7.5 | GitHub Push | ⏳ | |
 | 7.6 | Production-Deployment auf finance.fes-credo.de | ⏳ | |
 
+### Phase 8: n8n Workflow Fix — PDF-Anhang (07.05.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 8.1 | Bug identifiziert: n8n Code-Nodes lasen `pdfBase64`/`pdfDateiname` aus `d` (Einreichung), die Felder liegen aber auf Root-Ebene des Webhook-Payloads | ✅ | 2026-05-07 |
+| 8.2 | Folge: `hasPdf=false`, IF-Node leitete zum „kein Anhang"-Outlook-Pfad → DMS-PDF mit QR-Code wurde nie als Anhang versendet | ✅ | 2026-05-07 |
+| 8.3 | Patch in beiden Code-Nodes (`HTML Reisekosten` + `HTML Erstattung`): `_root.pdfBase64 \|\| d.pdfBase64` (Fallback bleibt für Robustheit) | ✅ | 2026-05-07 |
+| 8.4 | Neue Datei `n8n/CREDO Finanzportal — E-Mail Versand (PDF-Fix).json` erstellt, Original (1).json zur Referenz behalten | ✅ | 2026-05-07 |
+| 8.5 | Test-Einreichung mit Beleg-Upload: PDF (Hauptdokument mit Swiss QR-Code + eingebettete Belege) kommt korrekt als Anhang in der DMS-Mail an | ✅ | 2026-05-07 |
+
+**Backend war nicht betroffen** — `erstelleGesamtPdf()` und `sendeWebhook()` arbeiteten korrekt; das PDF wurde erstellt und als Base64 im Webhook-Payload gesendet. Bug war ausschließlich im n8n-Mapping.
+
 ---
 
 ## Entscheidungslog
@@ -179,6 +191,7 @@
 | 2026-03-27 | ESLint Flat Config (v9) statt .eslintrc | Zukunftssicher, empfohlen ab ESLint 9 |
 | 2026-03-27 | Vitest statt Jest | Schneller, native ESM/Vite-Unterstützung |
 | 2026-03-27 | Eigene Toast-Komponente statt Radix Toast | Leichtgewichtiger, keine Extra-Dependency |
+| 2026-05-07 | n8n Code-Nodes lesen `pdfBase64` von `_root` (Webhook-Payload-Wurzel) | Backend sendet PDF auf Root-Ebene, nicht in `einreichung` |
 
 ---
 
