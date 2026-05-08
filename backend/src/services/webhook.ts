@@ -1,53 +1,39 @@
 import fs from 'fs';
-import net from 'net';
 import crypto from 'crypto';
 import { db, schema } from '../db/index.js';
 import { decryptSecretIfNeeded } from './crypto.js';
+import type { EinreichungTyp } from '../lib/constants.js';
+import { matchesTypFilter, assertSafeWebhookUrl, UnsafeWebhookUrlError } from './webhook-utils.js';
 
-// SSRF-Schutz: Loopback-, Link-local- und RFC1918-Adressen blockieren.
-// Override fuer lokale Entwicklung: WEBHOOK_ALLOW_PRIVATE_HOSTS=true
-const ALLOW_PRIVATE_HOSTS = process.env.WEBHOOK_ALLOW_PRIVATE_HOSTS === 'true';
+export { assertSafeWebhookUrl, UnsafeWebhookUrlError };
 
-function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
-  if (h === 'localhost' || h === '0.0.0.0' || h === '::' || h === '::1') return true;
-
-  if (net.isIPv4(h)) {
-    const [a, b] = h.split('.').map(Number);
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-  }
-
-  if (net.isIPv6(h)) {
-    if (h.startsWith('fc') || h.startsWith('fd')) return true; // ULA fc00::/7
-    if (h.startsWith('fe80:')) return true; // link-local
-  }
-
-  return false;
-}
-
-export class UnsafeWebhookUrlError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'UnsafeWebhookUrlError';
-  }
-}
-
-export function assertSafeWebhookUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new UnsafeWebhookUrlError('Ungueltige URL');
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new UnsafeWebhookUrlError('Nur http(s)-URLs erlaubt');
-  }
-  if (!ALLOW_PRIVATE_HOSTS && isPrivateOrLoopbackHost(parsed.hostname)) {
-    throw new UnsafeWebhookUrlError('URL zeigt auf ein privates oder Loopback-Netz — aus Sicherheitsgruenden blockiert');
-  }
+export interface WebhookEinreichungData {
+  id: string;
+  belegNr: string;
+  typ: EinreichungTyp;
+  status: string;
+  mandant: string;
+  mandantNr: number;
+  kostenstelle: string;
+  mitarbeiter: {
+    vorname: string;
+    nachname: string;
+    personalNr: string;
+  };
+  gesamtbetrag: string;
+  iban: string;
+  kontoinhaber: string;
+  // Reisekosten-spezifisch
+  reiseziel?: string;
+  reiseanlass?: string;
+  verkehrsmittel?: string;
+  kmGefahren?: string;
+  vmaNetto?: string;
+  // Erstattung-spezifisch
+  anzahlPositionen?: number;
+  // Sammelfahrt-spezifisch
+  anzahlFahrten?: number;
+  fahrten?: Array<{ datum: string; startOrt: string; ziel: string; km: number; kmBetrag: number }>;
 }
 
 interface WebhookPayload {
@@ -56,34 +42,7 @@ interface WebhookPayload {
   an: string;
   pdfBase64?: string;
   pdfDateiname?: string;
-  einreichung: {
-    id: string;
-    belegNr: string;
-    typ: 'REISEKOSTEN' | 'ERSTATTUNG' | 'SAMMELFAHRT';
-    status: string;
-    mandant: string;
-    mandantNr: number;
-    kostenstelle: string;
-    mitarbeiter: {
-      vorname: string;
-      nachname: string;
-      personalNr: string;
-    };
-    gesamtbetrag: string;
-    iban: string;
-    kontoinhaber: string;
-    // Reisekosten-spezifisch
-    reiseziel?: string;
-    reiseanlass?: string;
-    verkehrsmittel?: string;
-    kmGefahren?: string;
-    vmaNetto?: string;
-    // Erstattung-spezifisch
-    anzahlPositionen?: number;
-    // Sammelfahrt-spezifisch
-    anzahlFahrten?: number;
-    fahrten?: Array<{ datum: string; startOrt: string; ziel: string; km: number; kmBetrag: number }>;
-  };
+  einreichung: WebhookEinreichungData;
 }
 
 interface WebhookAuthConfig {
@@ -163,7 +122,7 @@ async function postMitRetry(url: string, body: string, headers: Record<string, s
 }
 
 /** Sendet Webhook an alle aktiven Konfigurationen */
-export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookPayload['einreichung'], an: string, pdfDateipfad?: string) {
+export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookEinreichungData, an: string, pdfDateipfad?: string) {
   const configs = await db.select().from(schema.webhookConfig);
 
   // PDF als Base64 lesen (einmal für alle Webhooks)
@@ -190,7 +149,7 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
       continue;
     }
 
-    if (config.typFilter && config.typFilter !== 'ALLE' && config.typFilter !== data.typ) {
+    if (!matchesTypFilter(config.typFilter, data.typ)) {
       console.log(`  Webhook übersprungen: typFilter=${config.typFilter}, typ=${data.typ}`);
       continue;
     }

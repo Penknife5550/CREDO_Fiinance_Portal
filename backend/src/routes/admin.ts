@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { sendeTestWebhook, assertSafeWebhookUrl, UnsafeWebhookUrlError } from '../services/webhook.js';
 import { encryptSecret, isEncryptionConfigured, decryptSecretIfNeeded } from '../services/crypto.js';
+import { TYP_FILTER_VALUES } from '../lib/constants.js';
 
 class EncryptionConfigError extends Error {
   constructor(message: string) {
@@ -265,7 +266,7 @@ adminRouter.post('/webhooks', async (req, res) => {
       authPass: z.string().max(255).optional().nullable(),
       authHeaderName: z.string().max(255).optional().nullable(),
       authHeaderValue: z.string().max(500).optional().nullable(),
-      typFilter: z.enum(['ALLE', 'REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT']).optional().default('ALLE'),
+      typFilter: z.enum(TYP_FILTER_VALUES).optional().default('ALLE'),
       aktiv: z.boolean().optional().default(true),
       eventEingereicht: z.boolean().optional().default(true),
       eventStatusGeaendert: z.boolean().optional().default(true),
@@ -306,7 +307,7 @@ adminRouter.put('/webhooks/:id', async (req, res) => {
       authPass: z.string().max(255).optional().nullable(),
       authHeaderName: z.string().max(255).optional().nullable(),
       authHeaderValue: z.string().max(500).optional().nullable(),
-      typFilter: z.enum(['ALLE', 'REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT']).optional(),
+      typFilter: z.enum(TYP_FILTER_VALUES).optional(),
       aktiv: z.boolean().optional(),
       eventEingereicht: z.boolean().optional(),
       eventStatusGeaendert: z.boolean().optional(),

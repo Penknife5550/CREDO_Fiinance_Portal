@@ -5,34 +5,15 @@ import { z } from 'zod';
 import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
 import { erstelleGesamtPdf } from '../services/pdf.js';
-import { sendeAnDmsMitRetry } from '../services/email.js';
 import { resolveAndValidateBelegPfade as resolveBelegPfadeImpl } from '../services/uploadResolve.js';
 import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSammelfahrtEmailText } from '../services/emailTexte.js';
-import { sendeWebhook } from '../services/webhook.js';
+import { versendeEinreichung } from '../services/versand.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import path from 'path';
-import fs from 'fs';
 
 export const einreichungenRouter = Router();
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve('uploads');
-
-/** Schreibt einen Status-Patch und loggt Fehler robust. Bewusst nicht-throwend,
- *  weil dies in fire-and-forget Promise-Ketten nach dem 201-Response läuft. */
-async function aktualisiereVersandStatus(
-  einreichungId: string,
-  belegNr: string,
-  patch: Partial<typeof schema.einreichungen.$inferInsert>,
-): Promise<void> {
-  try {
-    await db
-      .update(schema.einreichungen)
-      .set(patch)
-      .where(eq(schema.einreichungen.id, einreichungId));
-  } catch (err) {
-    console.error(`[${belegNr}] Status-Update fehlgeschlagen:`, err);
-  }
-}
 
 /** Speichert hochgeladene Beleg-Dateien für eine Einreichung als Bulk-Insert. */
 async function speichereBelege(einreichungId: string, validatedBelegPfade: string[]): Promise<void> {
@@ -307,11 +288,6 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Versandmethode aus DB lesen
-      const [emailConf] = await db.select().from(schema.emailConfig).limit(1);
-      const versandMethode = emailConf?.versandMethode || 'WEBHOOK';
-      console.log(`[${belegNr}] Versandmethode: ${versandMethode}, PDF: ${pdfPfad}, existiert: ${fs.existsSync(pdfPfad)}`);
-
       const webhookData = {
         id: einreichung.id,
         belegNr,
@@ -335,55 +311,28 @@ einreichungenRouter.post('/', async (req, res) => {
         vmaNetto: String(serverVmaNetto),
       };
 
-      if (versandMethode === 'WEBHOOK') {
-        // Nur Webhook an n8n — n8n übernimmt den E-Mail-Versand
-        sendeWebhook('eingereicht', webhookData, mandant.dmsEmail, pdfPfad)
-          .then(() => aktualisiereVersandStatus(einreichung.id, belegNr, { emailStatus: 'GESENDET', status: 'GESENDET' }))
-          .catch(async err => {
-            console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
-            await aktualisiereVersandStatus(einreichung.id, belegNr, {
-              emailStatus: 'FEHLER',
-              status: 'FEHLER',
-              emailLetzterFehler: String(err),
-            });
-          });
-      } else {
-        // Direkter SMTP-Versand
-        sendeAnDmsMitRetry({
-          an: mandant.dmsEmail,
-          betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
-          text: erstelleReisekostenEmailText({
-            vorname: parsed.persoenlich.vorname,
-            nachname: parsed.persoenlich.nachname,
-            personalNr: parsed.persoenlich.personalNr,
-            mandantName: mandant.name,
-            mandantNr: String(mandant.mandantNr),
-            reiseziel: parsed.reiseziel,
-            abfahrtZeit: parsed.abfahrtZeit,
-            rueckkehrZeit: parsed.rueckkehrZeit,
-            gesamtbetrag: serverGesamtbetrag,
-            iban: parsed.persoenlich.iban,
-            kontoinhaber: parsed.persoenlich.kontoinhaber,
-            reisetage: parsed.reisetage,
-          }),
-          pdfDateipfad: pdfPfad,
-          pdfDateiname: `${belegNr}.pdf`,
-        }).then(async emailResult => {
-          const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-          await aktualisiereVersandStatus(einreichung.id, belegNr, {
-            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-            emailVersuche: emailResult.versuche,
-            emailLetzterFehler: emailResult.fehler || null,
-            status: newStatus,
-          });
-
-          if (!emailResult.erfolg) {
-            await sendeWebhook('fehler', webhookData, mandant.dmsEmail, pdfPfad).catch(err =>
-              console.error(`[${belegNr}] Fehler-Webhook fehlgeschlagen:`, err),
-            );
-          }
-        }).catch(err => console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err));
-      }
+      void versendeEinreichung({
+        einreichungId: einreichung.id,
+        belegNr,
+        dmsEmail: mandant.dmsEmail,
+        pdfPfad,
+        webhookData,
+        smtpBetreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
+        smtpText: erstelleReisekostenEmailText({
+          vorname: parsed.persoenlich.vorname,
+          nachname: parsed.persoenlich.nachname,
+          personalNr: parsed.persoenlich.personalNr,
+          mandantName: mandant.name,
+          mandantNr: String(mandant.mandantNr),
+          reiseziel: parsed.reiseziel,
+          abfahrtZeit: parsed.abfahrtZeit,
+          rueckkehrZeit: parsed.rueckkehrZeit,
+          gesamtbetrag: serverGesamtbetrag,
+          iban: parsed.persoenlich.iban,
+          kontoinhaber: parsed.persoenlich.kontoinhaber,
+          reisetage: parsed.reisetage,
+        }),
+      });
 
       res.status(201).json({
         success: true,
@@ -470,11 +419,6 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Versandmethode aus DB lesen
-      const [emailConfE] = await db.select().from(schema.emailConfig).limit(1);
-      const versandMethodeE = emailConfE?.versandMethode || 'WEBHOOK';
-      console.log(`[${belegNr}] Versandmethode: ${versandMethodeE}, PDF: ${pdfPfad}, existiert: ${fs.existsSync(pdfPfad)}`);
-
       const webhookDataE = {
         id: einreichung.id,
         belegNr,
@@ -494,51 +438,24 @@ einreichungenRouter.post('/', async (req, res) => {
         anzahlPositionen: parsed.positionen.length,
       };
 
-      if (versandMethodeE === 'WEBHOOK') {
-        // Nur Webhook an n8n — n8n übernimmt den E-Mail-Versand
-        sendeWebhook('eingereicht', webhookDataE, mandant.dmsEmail, pdfPfad)
-          .then(() => aktualisiereVersandStatus(einreichung.id, belegNr, { emailStatus: 'GESENDET', status: 'GESENDET' }))
-          .catch(async err => {
-            console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
-            await aktualisiereVersandStatus(einreichung.id, belegNr, {
-              emailStatus: 'FEHLER',
-              status: 'FEHLER',
-              emailLetzterFehler: String(err),
-            });
-          });
-      } else {
-        // Direkter SMTP-Versand
-        sendeAnDmsMitRetry({
-          an: mandant.dmsEmail,
-          betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
-          text: erstelleErstattungEmailText({
-            vorname: parsed.persoenlich.vorname,
-            nachname: parsed.persoenlich.nachname,
-            mandantName: mandant.name,
-            mandantNr: String(mandant.mandantNr),
-            anzahlPositionen: parsed.positionen.length,
-            gesamtbetrag: serverGesamtbetragE,
-            iban: parsed.persoenlich.iban,
-            kontoinhaber: parsed.persoenlich.kontoinhaber,
-          }),
-          pdfDateipfad: pdfPfad,
-          pdfDateiname: `${belegNr}.pdf`,
-        }).then(async emailResult => {
-          const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-          await aktualisiereVersandStatus(einreichung.id, belegNr, {
-            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-            emailVersuche: emailResult.versuche,
-            emailLetzterFehler: emailResult.fehler || null,
-            status: newStatus,
-          });
-
-          if (!emailResult.erfolg) {
-            await sendeWebhook('fehler', webhookDataE, mandant.dmsEmail, pdfPfad).catch(err =>
-              console.error(`[${belegNr}] Fehler-Webhook fehlgeschlagen:`, err),
-            );
-          }
-        }).catch(err => console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err));
-      }
+      void versendeEinreichung({
+        einreichungId: einreichung.id,
+        belegNr,
+        dmsEmail: mandant.dmsEmail,
+        pdfPfad,
+        webhookData: webhookDataE,
+        smtpBetreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
+        smtpText: erstelleErstattungEmailText({
+          vorname: parsed.persoenlich.vorname,
+          nachname: parsed.persoenlich.nachname,
+          mandantName: mandant.name,
+          mandantNr: String(mandant.mandantNr),
+          anzahlPositionen: parsed.positionen.length,
+          gesamtbetrag: serverGesamtbetragE,
+          iban: parsed.persoenlich.iban,
+          kontoinhaber: parsed.persoenlich.kontoinhaber,
+        }),
+      });
 
       res.status(201).json({
         success: true,
@@ -640,11 +557,6 @@ einreichungenRouter.post('/', async (req, res) => {
         .set({ pdfDateipfad: pdfPfad })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
-      // Versandmethode aus DB lesen
-      const [emailConfS] = await db.select().from(schema.emailConfig).limit(1);
-      const versandMethodeS = emailConfS?.versandMethode || 'WEBHOOK';
-      console.log(`[${belegNr}] Versandmethode: ${versandMethodeS}, PDF: ${pdfPfad}, existiert: ${fs.existsSync(pdfPfad)}`);
-
       const webhookDataS = {
         id: einreichung.id,
         belegNr,
@@ -668,53 +580,28 @@ einreichungenRouter.post('/', async (req, res) => {
         fahrten: serverFahrten,
       };
 
-      if (versandMethodeS === 'WEBHOOK') {
-        sendeWebhook('eingereicht', webhookDataS, mandant.dmsEmail, pdfPfad)
-          .then(() => aktualisiereVersandStatus(einreichung.id, belegNr, { emailStatus: 'GESENDET', status: 'GESENDET' }))
-          .catch(async err => {
-            console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
-            await aktualisiereVersandStatus(einreichung.id, belegNr, {
-              emailStatus: 'FEHLER',
-              status: 'FEHLER',
-              emailLetzterFehler: String(err),
-            });
-          });
-      } else {
-        sendeAnDmsMitRetry({
-          an: mandant.dmsEmail,
-          betreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
-          text: erstelleSammelfahrtEmailText({
-            vorname: parsed.persoenlich.vorname,
-            nachname: parsed.persoenlich.nachname,
-            personalNr: parsed.persoenlich.personalNr,
-            mandantName: mandant.name,
-            mandantNr: String(mandant.mandantNr),
-            reiseanlass: parsed.reiseanlass,
-            verkehrsmittel: parsed.verkehrsmittel,
-            kmSumme: serverKmSumme,
-            gesamtbetrag: serverGesamtbetragS,
-            iban: parsed.persoenlich.iban,
-            kontoinhaber: parsed.persoenlich.kontoinhaber,
-            fahrten: serverFahrten,
-          }),
-          pdfDateipfad: pdfPfad,
-          pdfDateiname: `${belegNr}.pdf`,
-        }).then(async emailResult => {
-          const newStatus = emailResult.erfolg ? 'GESENDET' : 'FEHLER';
-          await aktualisiereVersandStatus(einreichung.id, belegNr, {
-            emailStatus: emailResult.erfolg ? 'GESENDET' : 'FEHLER',
-            emailVersuche: emailResult.versuche,
-            emailLetzterFehler: emailResult.fehler || null,
-            status: newStatus,
-          });
-
-          if (!emailResult.erfolg) {
-            await sendeWebhook('fehler', webhookDataS, mandant.dmsEmail, pdfPfad).catch(err =>
-              console.error(`[${belegNr}] Fehler-Webhook fehlgeschlagen:`, err),
-            );
-          }
-        }).catch(err => console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err));
-      }
+      void versendeEinreichung({
+        einreichungId: einreichung.id,
+        belegNr,
+        dmsEmail: mandant.dmsEmail,
+        pdfPfad,
+        webhookData: webhookDataS,
+        smtpBetreff: `[${belegNr}] ${parsed.persoenlich.vorname} ${parsed.persoenlich.nachname} - ${mandant.name}`,
+        smtpText: erstelleSammelfahrtEmailText({
+          vorname: parsed.persoenlich.vorname,
+          nachname: parsed.persoenlich.nachname,
+          personalNr: parsed.persoenlich.personalNr,
+          mandantName: mandant.name,
+          mandantNr: String(mandant.mandantNr),
+          reiseanlass: parsed.reiseanlass,
+          verkehrsmittel: parsed.verkehrsmittel,
+          kmSumme: serverKmSumme,
+          gesamtbetrag: serverGesamtbetragS,
+          iban: parsed.persoenlich.iban,
+          kontoinhaber: parsed.persoenlich.kontoinhaber,
+          fahrten: serverFahrten,
+        }),
+      });
 
       res.status(201).json({
         success: true,

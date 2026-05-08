@@ -1017,17 +1017,20 @@ interface WebhookConfig {
   authPass: string | null;
   authHeaderName: string | null;
   authHeaderValue: string | null;
-  typFilter: 'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG';
+  typFilter: TypFilter;
   eventEingereicht: boolean;
   eventStatusGeaendert: boolean;
   eventFehler: boolean;
   updatedAt: string;
 }
 
-const TYP_FILTER_LABELS: Record<string, string> = {
+type TypFilter = 'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG' | 'SAMMELFAHRT';
+
+const TYP_FILTER_LABELS: Record<TypFilter, string> = {
   ALLE: 'Alle Einreichungen',
   REISEKOSTEN: 'Nur Reisekosten',
   ERSTATTUNG: 'Nur Erstattungen',
+  SAMMELFAHRT: 'Nur Sammelfahrten',
 };
 
 const AUTH_TYPE_LABELS: Record<string, string> = {
@@ -1344,7 +1347,7 @@ function WebhookForm({ initial, onSave, onCancel }: {
   const [authPass, setAuthPass] = useState('');
   const [authHeaderName, setAuthHeaderName] = useState(initial?.authHeaderName || '');
   const [authHeaderValue, setAuthHeaderValue] = useState('');
-  const [typFilter, setTypFilter] = useState<'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG'>(initial?.typFilter || 'ALLE');
+  const [typFilter, setTypFilter] = useState<TypFilter>(initial?.typFilter || 'ALLE');
   const [aktiv, setAktiv] = useState(initial?.aktiv ?? true);
   const [eventEingereicht, setEventEingereicht] = useState(initial?.eventEingereicht ?? true);
   const [eventStatusGeaendert, setEventStatusGeaendert] = useState(initial?.eventStatusGeaendert ?? true);
@@ -1404,11 +1407,11 @@ function WebhookForm({ initial, onSave, onCancel }: {
         <select
           className="input-field"
           value={typFilter}
-          onChange={e => setTypFilter(e.target.value as 'ALLE' | 'REISEKOSTEN' | 'ERSTATTUNG')}
+          onChange={e => setTypFilter(e.target.value as TypFilter)}
         >
-          <option value="ALLE">Alle Einreichungen</option>
-          <option value="REISEKOSTEN">Nur Reisekosten</option>
-          <option value="ERSTATTUNG">Nur Erstattungen</option>
+          {(Object.keys(TYP_FILTER_LABELS) as TypFilter[]).map(k => (
+            <option key={k} value={k}>{TYP_FILTER_LABELS[k]}</option>
+          ))}
         </select>
       </div>
 
