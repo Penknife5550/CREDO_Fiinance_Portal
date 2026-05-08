@@ -167,6 +167,27 @@
 | 9.3 | Neue Komponente `frontend/src/components/forms/DezimalInput.tsx` mit lokalem String-State + Focus-Tracking | ✅ | 2026-05-07 |
 | 9.4 | Eingesetzt in `ErstattungFormular.tsx`, `ReisekostenFormular.tsx` (2x), `FahrtenListe.tsx` (Desktop + Mobile) | ✅ | 2026-05-07 |
 
+### Phase 10: Sammelfahrt-Webhook + Versand-Refactor + Härtung (08.05.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 10.1 | n8n: dritter Webhook-Trigger `credo-sammelfahrt` + HTML-Code-Node + Outlook-Branch (mit/ohne PDF) | ✅ | 2026-05-08 |
+| 10.2 | HTML Sammelfahrt: Fahrtkostensammelantrag-Layout, blaue Akzentlinie (#009AC6), Einzelfahrten-Tabelle mit GESAMT-Zeile, feste Spaltenbreiten | ✅ | 2026-05-08 |
+| 10.3 | AdminCenter: Filter-Option „Nur Sammelfahrten", `TypFilter`-Type-Alias eliminiert 4-fach Union-Duplikation, Dropdown aus `TYP_FILTER_LABELS`-Map generiert | ✅ | 2026-05-08 |
+| 10.4 | Backend: `EINREICHUNG_TYPEN` als Single Source of Truth in `lib/constants.ts`; Zod-Schemas in `admin.ts` und Webhook-Types darauf umgestellt | ✅ | 2026-05-08 |
+| 10.5 | Backend-Refactor: 3× identische ~50-Zeilen Versand-Logik aus `einreichungen.ts` in neue `services/versand.ts` extrahiert (Datei 738 → 583 LoC) | ✅ | 2026-05-08 |
+| 10.6 | Backend-Refactor: pure Helpers (`matchesTypFilter`, `assertSafeWebhookUrl`, `isPrivateOrLoopbackHost`) in `services/webhook-utils.ts` ohne DB-Side-Effects → testbar ohne DB-Mock | ✅ | 2026-05-08 |
+| 10.7 | n8n-Härtung in allen 3 HTML-Code-Nodes: `esc()`-Helper für User-Felder, PDF-Magic-Bytes-Check + try/catch, `rawBelegNr`-Fallback statt `[undefined].pdf` | ✅ | 2026-05-08 |
+| 10.8 | UI-Polish: HTML Reisekosten Hinweis-Box-Akzent #dadada → #FBC900 (gelb), HTML Sammelfahrt Spaltenbreiten 14/28/28/13/17 % | ✅ | 2026-05-08 |
+| 10.9 | Tests: neu `services/__tests__/webhook.test.ts` mit 23 Cases (typFilter ALLE/exakt/Mismatch + SSRF-Schutz für loopback/private/non-http) | ✅ | 2026-05-08 |
+| 10.10 | Dokumentation: `n8n/WEBHOOK_DATENSTRUKTUR.md` erweitert (Webhook-Pfade-Tabelle, Setup-Anleitung pro Vorgangstyp, Härtungs-Patterns) | ✅ | 2026-05-08 |
+
+**Code-Review:** 7 parallele Spezial-Agenten (Security, UI/UX, Performance, Architecture, Testing, Error Handling, Code Quality) haben den Branch geprüft. 1 CRITICAL (PDF Magic-Bytes), 11 MAJOR, 22 MINOR identifiziert — alle CRITICAL/MAJOR umgesetzt, MINOR/INFO selektiv soweit sinnvoll.
+
+**Verifikation:** Backend-tsc grün, Frontend-tsc grün, vitest 98/98 Tests grün (vorher 75 + 23 neu), n8n-JSON-Smoke-Test mit XSS-Payload bestanden.
+
+**Bewusst out of scope:** HMAC-Signatur-Verify in n8n (eigenes Topic mit Secret-Distribution), n8n-Filename-Versionierung (Bestandsschuld), Supertest-Integration-Tests (kein Express-Test-Setup vorhanden).
+
 ### Phase 8: n8n Workflow Fix — PDF-Anhang (07.05.2026)
 
 | # | Aufgabe | Status | Datum |
@@ -201,6 +222,10 @@
 | 2026-03-27 | Vitest statt Jest | Schneller, native ESM/Vite-Unterstützung |
 | 2026-03-27 | Eigene Toast-Komponente statt Radix Toast | Leichtgewichtiger, keine Extra-Dependency |
 | 2026-05-07 | n8n Code-Nodes lesen `pdfBase64` von `_root` (Webhook-Payload-Wurzel) | Backend sendet PDF auf Root-Ebene, nicht in `einreichung` |
+| 2026-05-08 | Eigener n8n-Webhook `credo-sammelfahrt` statt Erstattung-Pfad zu teilen | Saubere Trennung pro Vorgangstyp; eigenes HTML-Layout mit Fahrten-Tabelle und blauer Akzentlinie; `typFilter`-Routing im Backend |
+| 2026-05-08 | Versand-Pipeline in `services/versand.ts` extrahiert | 3× identische ~50-Zeilen-Blöcke ergaben 1× Funktion; künftige Bug-Fixes nur an einer Stelle; `einreichungen.ts` von 738 auf 583 LoC |
+| 2026-05-08 | `webhook-utils.ts` mit pure Functions, getrennt von `webhook.ts` | DB-freier Modul-Load → Unit-Tests ohne DB-Mock möglich |
+| 2026-05-08 | Härtung der n8n-Code-Nodes (esc, Magic-Bytes, belegNr-Fallback) | Defense in depth: HTML-Injection bei intern eingespielten Feldern + kein Versand kaputter PDFs + nie `[undefined].pdf` |
 
 ---
 
