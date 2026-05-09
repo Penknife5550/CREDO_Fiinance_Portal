@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useUnsavedWarning } from '@/lib/hooks';
+import { useUnsavedWarning, useAuslandsPauschalen } from '@/lib/hooks';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '@/components/Toast';
@@ -8,7 +8,7 @@ import { VerpflegungStep } from '@/components/forms/VerpflegungStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
 import { DezimalInput } from '@/components/forms/DezimalInput';
-import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagAusland, AUSLANDSPAUSCHALEN } from '@/lib/vma';
+import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagAusland } from '@/lib/vma';
 import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenReisekosten } from '@/lib/api';
 import { pruefeDreiMonatsFrist, speichereReiseziel } from '@/lib/dreiMonatsFrist';
@@ -66,8 +66,11 @@ export function ReisekostenFormular() {
   const weitereKostenSumme = weitereKosten.reduce((sum, k) => sum + (k.betrag || 0), 0);
   const gesamtbetrag = kmBetrag + vmaGesamt + weitereKostenSumme;
 
+  // ── Auslandspauschalen aus DB (AdminCenter-pflegbar) ────
+  const { map: auslandsPauschalenMap } = useAuslandsPauschalen();
+
   // ── Aktives Auslandsland für VMA ─────────────────────
-  const aktivesAuslandsLand = inlandAusland === 'ausland' && auslandsLand ? AUSLANDSPAUSCHALEN[auslandsLand] : null;
+  const aktivesAuslandsLand = inlandAusland === 'ausland' && auslandsLand ? auslandsPauschalenMap[auslandsLand] : null;
 
   // ── Reisetage automatisch berechnen ────────────────
   useEffect(() => {
@@ -335,13 +338,13 @@ export function ReisekostenFormular() {
                   onChange={e => setAuslandsLand(e.target.value)}
                 >
                   <option value="">Bitte Land wählen...</option>
-                  {Object.keys(AUSLANDSPAUSCHALEN).map(land => (
+                  {Object.keys(auslandsPauschalenMap).map(land => (
                     <option key={land} value={land}>{land}</option>
                   ))}
                 </select>
-                {auslandsLand && AUSLANDSPAUSCHALEN[auslandsLand] && (
+                {aktivesAuslandsLand && (
                   <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-                    Tagessatz {auslandsLand}: {AUSLANDSPAUSCHALEN[auslandsLand].tagessatz24h},00 EUR (24h) / {AUSLANDSPAUSCHALEN[auslandsLand].tagessatz8h},00 EUR (8h) | Übernachtung: {AUSLANDSPAUSCHALEN[auslandsLand].uebernachtung},00 EUR
+                    Tagessatz {auslandsLand}: {formatCurrency(aktivesAuslandsLand.tagessatz24h)} (24h) / {formatCurrency(aktivesAuslandsLand.tagessatz8h)} (8h) | Übernachtung: {formatCurrency(aktivesAuslandsLand.uebernachtung)}
                   </div>
                 )}
               </div>

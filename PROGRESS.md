@@ -167,6 +167,25 @@
 | 9.3 | Neue Komponente `frontend/src/components/forms/DezimalInput.tsx` mit lokalem String-State + Focus-Tracking | ✅ | 2026-05-07 |
 | 9.4 | Eingesetzt in `ErstattungFormular.tsx`, `ReisekostenFormular.tsx` (2x), `FahrtenListe.tsx` (Desktop + Mobile) | ✅ | 2026-05-07 |
 
+### Phase 12: Auslandspauschalen DB-gepflegt im AdminCenter (09.05.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 12.1 | DB-Schema: dedizierte `pauschalen_ausland`-Tabelle (eine Row pro Land/Stadt-Variante mit `landKey`, `tagessatz_24h/8h`, `uebernachtung`, `reihenfolge`) | ✅ | 2026-05-09 |
+| 12.2 | Migration `0008_pauschalen_ausland.sql` mit Initial-INSERT der 19 BMF-2026-Werte (Belgien, Dänemark, Frankreich/Paris, GB/London, Italien/Rom, Luxemburg, Niederlande, Österreich, Polen, Schweiz/Genf, Spanien/Barcelona/Madrid, Tschechien, USA) | ✅ | 2026-05-09 |
+| 12.3 | Public-Endpoint `GET /api/pauschalen/ausland` für Reisekosten-Wizard | ✅ | 2026-05-09 |
+| 12.4 | Admin-Endpoints `GET/POST/PUT/DELETE /api/admin/pauschalen-ausland[/:landKey]` mit Zod-Validation | ✅ | 2026-05-09 |
+| 12.5 | Frontend-Hook `useAuslandsPauschalen` (analog `useMandanten`) — liefert sowohl Liste als auch Lookup-Map | ✅ | 2026-05-09 |
+| 12.6 | ReisekostenFormular umgestellt: nutzt Hook statt Code-Konstante `AUSLANDSPAUSCHALEN`. Konstante in `vma.ts` bleibt als Default-Seed-Quelle für Tests/Fallback | ✅ | 2026-05-09 |
+| 12.7 | AdminCenter PauschalenTab: editierbare Liste mit Inline-Editor pro Zeile (24h/8h/Übernachtung/Reihenfolge), Plus-Button für neuen Eintrag, Delete pro Eintrag, optimistic-via-reload | ✅ | 2026-05-09 |
+| 12.8 | Hinweis-Box im Tab klarer formuliert: "Inland im Code, Ausland in der Datenbank" | ✅ | 2026-05-09 |
+
+**Was sich für Admins ändert:** Bei neuem BMF-Schreiben (Dezember jährlich) Werte direkt im AdminCenter unter „Pauschalen → Auslandspauschalen" editieren — kein Code-Deploy mehr nötig. Bestehender Reisekosten-Wizard zieht die Werte beim nächsten Aufruf aus der DB.
+
+**Bewusst NICHT umgesetzt:** Inland-Pauschalen (PKW/Motorrad/VMA) bleiben im Code — sie ändern sich praktisch nie (14/28 € seit 2020 unverändert, km-Pauschale 0,30 € seit 1991). Eine DB-Migration dort wäre Over-Engineering ohne Nutzen.
+
+**Verifikation:** Frontend-tsc grün, Backend-tsc grün, Vitest 104/104 grün.
+
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 
 Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.

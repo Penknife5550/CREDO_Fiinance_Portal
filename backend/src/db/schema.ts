@@ -183,6 +183,19 @@ export const pauschalen = pgTable('pauschalen', {
   gueltigBis: timestamp('gueltig_bis').notNull(),
 });
 
+// ── Auslandspauschalen (DB-gepflegt, BMF-Schreiben jaehrlich) ──
+// Eine Row pro Land bzw. Land—Stadt-Variante. Dropdown-Reihenfolge ueber
+// `reihenfolge`. Editierbar im AdminCenter (PauschalenTab).
+
+export const pauschalenAusland = pgTable('pauschalen_ausland', {
+  landKey: varchar('land_key', { length: 100 }).primaryKey(),
+  tagessatz24h: decimal('tagessatz_24h', { precision: 8, scale: 2 }).notNull(),
+  tagessatz8h: decimal('tagessatz_8h', { precision: 8, scale: 2 }).notNull(),
+  uebernachtung: decimal('uebernachtung', { precision: 8, scale: 2 }).notNull(),
+  reihenfolge: integer('reihenfolge').notNull().default(0),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+});
+
 // ── E-Mail-Konfiguration (AdminCenter) ─────────────────
 
 export const emailConfig = pgTable('email_config', {

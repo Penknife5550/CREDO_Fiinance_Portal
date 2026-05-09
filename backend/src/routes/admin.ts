@@ -184,6 +184,118 @@ adminRouter.delete('/kostenstellen/:id', async (req, res) => {
   }
 });
 
+// ── Auslandspauschalen ─────────────────────────────────
+// Editierbar im AdminCenter (PauschalenTab). Quelle: BMF-Schreiben (jaehrlich).
+
+const auslandspauschaleSchema = z.object({
+  landKey: z.string().min(1).max(100),
+  tagessatz24h: z.number().nonnegative().max(999),
+  tagessatz8h: z.number().nonnegative().max(999),
+  uebernachtung: z.number().nonnegative().max(9999),
+  reihenfolge: z.number().int().nonnegative().default(0),
+});
+
+// GET /api/admin/pauschalen-ausland — Liste fuer AdminCenter (mit allen Feldern)
+adminRouter.get('/pauschalen-ausland', async (_req, res) => {
+  try {
+    const result = await db
+      .select()
+      .from(schema.pauschalenAusland)
+      .orderBy(schema.pauschalenAusland.reihenfolge, schema.pauschalenAusland.landKey);
+
+    res.json(result.map(row => ({
+      landKey: row.landKey,
+      tagessatz24h: Number(row.tagessatz24h),
+      tagessatz8h: Number(row.tagessatz8h),
+      uebernachtung: Number(row.uebernachtung),
+      reihenfolge: row.reihenfolge,
+      updatedAt: row.updatedAt,
+    })));
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Auslandspauschalen konnten nicht geladen werden' });
+  }
+});
+
+// POST /api/admin/pauschalen-ausland — neuer Eintrag
+adminRouter.post('/pauschalen-ausland', async (req, res) => {
+  try {
+    const parsed = auslandspauschaleSchema.parse(req.body);
+    const [row] = await db.insert(schema.pauschalenAusland).values({
+      landKey: parsed.landKey,
+      tagessatz24h: String(parsed.tagessatz24h),
+      tagessatz8h: String(parsed.tagessatz8h),
+      uebernachtung: String(parsed.uebernachtung),
+      reihenfolge: parsed.reihenfolge,
+    }).returning();
+    res.status(201).json({ landKey: row.landKey });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+      return;
+    }
+    if (error instanceof Error && error.message.includes('duplicate')) {
+      res.status(409).json({ error: 'Ein Eintrag mit diesem Land existiert bereits' });
+      return;
+    }
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Auslandspauschale konnte nicht angelegt werden' });
+  }
+});
+
+// PUT /api/admin/pauschalen-ausland/:landKey — Update (URL-encoded landKey)
+adminRouter.put('/pauschalen-ausland/:landKey', async (req, res) => {
+  try {
+    const landKey = decodeURIComponent(req.params.landKey);
+    const parsed = auslandspauschaleSchema.partial({ landKey: true }).parse(req.body);
+
+    const result = await db
+      .update(schema.pauschalenAusland)
+      .set({
+        tagessatz24h: parsed.tagessatz24h !== undefined ? String(parsed.tagessatz24h) : undefined,
+        tagessatz8h: parsed.tagessatz8h !== undefined ? String(parsed.tagessatz8h) : undefined,
+        uebernachtung: parsed.uebernachtung !== undefined ? String(parsed.uebernachtung) : undefined,
+        reihenfolge: parsed.reihenfolge,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.pauschalenAusland.landKey, landKey))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Auslandspauschale nicht gefunden' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+      return;
+    }
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Auslandspauschale konnte nicht aktualisiert werden' });
+  }
+});
+
+// DELETE /api/admin/pauschalen-ausland/:landKey
+adminRouter.delete('/pauschalen-ausland/:landKey', async (req, res) => {
+  try {
+    const landKey = decodeURIComponent(req.params.landKey);
+    const result = await db
+      .delete(schema.pauschalenAusland)
+      .where(eq(schema.pauschalenAusland.landKey, landKey))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Auslandspauschale nicht gefunden' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Auslandspauschale konnte nicht geloescht werden' });
+  }
+});
+
 // ── E-Mail-Konfiguration ──────────────────────────────
 
 // GET /api/admin/email-config

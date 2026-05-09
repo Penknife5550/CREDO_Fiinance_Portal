@@ -968,26 +968,93 @@ const INLANDSPAUSCHALEN_2026: Array<{ label: string; value: string; suffix: stri
   { label: 'Kürzung Abendessen', value: '40', suffix: '%' },
 ];
 
+interface AuslandsPauschaleAdmin {
+  landKey: string;
+  tagessatz24h: number;
+  tagessatz8h: number;
+  uebernachtung: number;
+  reihenfolge: number;
+  updatedAt?: string;
+}
+
 function PauschalenTab() {
+  const { showToast } = useToast();
+  const [auslandsListe, setAuslandsListe] = useState<AuslandsPauschaleAdmin[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const loadAusland = async () => {
+    try {
+      const res = await adminFetch('/api/admin/pauschalen-ausland');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      setAuslandsListe(await res.json());
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Auslandspauschalen konnten nicht geladen werden', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAusland();
+  }, []);
+
+  const handleSave = async (eintrag: AuslandsPauschaleAdmin, isNew: boolean) => {
+    try {
+      const url = isNew
+        ? '/api/admin/pauschalen-ausland'
+        : `/api/admin/pauschalen-ausland/${encodeURIComponent(eintrag.landKey)}`;
+      const res = await adminFetch(url, {
+        method: isNew ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(eintrag),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Speichern fehlgeschlagen' }));
+        throw new Error(err.error || 'HTTP ' + res.status);
+      }
+      showToast(isNew ? 'Eintrag angelegt' : 'Eintrag aktualisiert', 'success');
+      setEditingKey(null);
+      setCreating(false);
+      void loadAusland();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Speichern fehlgeschlagen', 'error');
+    }
+  };
+
+  const handleDelete = async (landKey: string) => {
+    if (!confirm(`Auslandspauschale „${landKey}" wirklich löschen?`)) return;
+    try {
+      const res = await adminFetch(`/api/admin/pauschalen-ausland/${encodeURIComponent(landKey)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showToast('Eintrag gelöscht', 'success');
+      void loadAusland();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Löschen fehlgeschlagen', 'error');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="card border border-blue-200 bg-blue-50/40">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
           <div className="text-sm text-credo-700">
-            <strong className="block text-credo-900 mb-1">Pauschalen werden im Code gepflegt</strong>
-            Die hier gezeigten Werte sind eine Anzeige-Kopie der serverseitig hartkodierten
-            Pauschalen (Quelle: <code className="text-xs">backend/src/lib/kmSaetze.ts</code> und
-            <code className="text-xs"> frontend/src/lib/vma.ts</code>). Aenderungen erfolgen per
-            Code-Anpassung — eine UI-Bearbeitung waere irrefuehrend, da die Berechnungen
-            unveraendert weiter mit den Code-Werten laufen wuerden.
+            <strong className="block text-credo-900 mb-1">Inland im Code, Ausland in der Datenbank</strong>
+            Inlandspauschalen (Kilometer, VMA, Mahlzeitenkürzungen) ändern sich praktisch nie und werden
+            im Code gepflegt (<code className="text-xs">frontend/src/lib/vma.ts</code>).
+            <strong> Auslandspauschalen</strong> erscheinen jährlich in einem neuen BMF-Schreiben — sie sind
+            unten editierbar und werden direkt vom Reisekosten-Wizard gelesen.
           </div>
         </div>
       </div>
 
       {/* Inlandspauschalen — read-only */}
       <div className="card">
-        <h3 className="text-lg font-semibold text-credo-900 mb-4">Inlandspauschalen 2026</h3>
+        <h3 className="text-lg font-semibold text-credo-900 mb-4">Inlandspauschalen 2026 (read-only)</h3>
         <div className="space-y-3">
           {INLANDSPAUSCHALEN_2026.map(p => (
             <div key={p.label} className="flex justify-between items-center py-2 border-b border-credo-100 last:border-0">
@@ -997,13 +1064,198 @@ function PauschalenTab() {
           ))}
         </div>
       </div>
+
+      {/* Auslandspauschalen — editierbar */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-credo-900">Auslandspauschalen</h3>
+            <p className="text-xs text-credo-500 mt-0.5">
+              Aktuell: BMF-Schreiben vom 05.12.2025 (gültig ab 01.01.2026). Bei neuem BMF-Schreiben hier aktualisieren.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setCreating(true); setEditingKey(null); }}
+            disabled={creating}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg bg-credo-600 text-white text-sm font-medium hover:bg-credo-700 disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Neuer Eintrag
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8 text-credo-500">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            Lade Auslandspauschalen...
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {/* Header */}
+            <div className="hidden sm:grid grid-cols-[2fr_1fr_1fr_1fr_0.7fr_auto] gap-3 px-3 py-2 text-xs font-medium text-credo-500 uppercase tracking-wider">
+              <span>Land / Stadt</span>
+              <span className="text-right">Tagessatz 24h</span>
+              <span className="text-right">Tagessatz 8h</span>
+              <span className="text-right">Übernachtung</span>
+              <span className="text-right">Sortierung</span>
+              <span></span>
+            </div>
+
+            {/* Neuer Eintrag */}
+            {creating && (
+              <PauschaleZeile
+                eintrag={{ landKey: '', tagessatz24h: 0, tagessatz8h: 0, uebernachtung: 0, reihenfolge: 999 }}
+                isNew
+                onSave={p => handleSave(p, true)}
+                onCancel={() => setCreating(false)}
+              />
+            )}
+
+            {/* Bestehende Eintraege */}
+            {auslandsListe.map(eintrag => (
+              editingKey === eintrag.landKey ? (
+                <PauschaleZeile
+                  key={eintrag.landKey}
+                  eintrag={eintrag}
+                  onSave={p => handleSave(p, false)}
+                  onCancel={() => setEditingKey(null)}
+                />
+              ) : (
+                <div
+                  key={eintrag.landKey}
+                  className="grid grid-cols-2 sm:grid-cols-[2fr_1fr_1fr_1fr_0.7fr_auto] gap-3 px-3 py-3 border border-credo-100 rounded-lg hover:bg-credo-50/40 items-center"
+                >
+                  <span className="font-medium text-credo-800 col-span-2 sm:col-span-1">{eintrag.landKey}</span>
+                  <span className="text-right font-mono text-sm">{eintrag.tagessatz24h.toFixed(2)} €</span>
+                  <span className="text-right font-mono text-sm">{eintrag.tagessatz8h.toFixed(2)} €</span>
+                  <span className="text-right font-mono text-sm">{eintrag.uebernachtung.toFixed(2)} €</span>
+                  <span className="text-right text-xs text-credo-400">{eintrag.reihenfolge}</span>
+                  <div className="flex items-center gap-1 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingKey(eintrag.landKey); setCreating(false); }}
+                      className="p-1.5 text-credo-500 hover:text-credo-700 hover:bg-credo-100 rounded"
+                      aria-label={`${eintrag.landKey} bearbeiten`}
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(eintrag.landKey)}
+                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                      aria-label={`${eintrag.landKey} löschen`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )
+            ))}
+
+            {!loading && auslandsListe.length === 0 && !creating && (
+              <p className="text-sm text-credo-500 text-center py-6">Keine Auslandspauschalen hinterlegt.</p>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-// Auslandspauschalen-Anzeige wurde mit dem Edit-Stub entfernt. Bei Bedarf
-// als read-only-Block ergaenzen (analog Inlandspauschalen oben), wenn die
-// BMF-Werte zur Anzeige im AdminCenter sichtbar sein sollen.
+// Inline-Editor fuer eine Auslandspauschale-Zeile (Edit oder Neu)
+function PauschaleZeile({
+  eintrag,
+  isNew = false,
+  onSave,
+  onCancel,
+}: {
+  eintrag: AuslandsPauschaleAdmin;
+  isNew?: boolean;
+  onSave: (e: AuslandsPauschaleAdmin) => void;
+  onCancel: () => void;
+}) {
+  const [landKey, setLandKey] = useState(eintrag.landKey);
+  const [t24, setT24] = useState(String(eintrag.tagessatz24h));
+  const [t8, setT8] = useState(String(eintrag.tagessatz8h));
+  const [uebern, setUebern] = useState(String(eintrag.uebernachtung));
+  const [reihenfolge, setReihenfolge] = useState(String(eintrag.reihenfolge));
+
+  const submit = () => {
+    const parsed = {
+      landKey: landKey.trim(),
+      tagessatz24h: Number(t24.replace(',', '.')),
+      tagessatz8h: Number(t8.replace(',', '.')),
+      uebernachtung: Number(uebern.replace(',', '.')),
+      reihenfolge: Number(reihenfolge),
+    };
+    if (!parsed.landKey || !Number.isFinite(parsed.tagessatz24h) || !Number.isFinite(parsed.tagessatz8h) || !Number.isFinite(parsed.uebernachtung)) {
+      return;
+    }
+    onSave(parsed);
+  };
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-[2fr_1fr_1fr_1fr_0.7fr_auto] gap-3 px-3 py-3 border-2 border-credo-400 bg-credo-50/30 rounded-lg items-center">
+      <input
+        type="text"
+        className="input-field !py-1.5 col-span-2 sm:col-span-1"
+        placeholder="z.B. Frankreich — Paris"
+        value={landKey}
+        onChange={e => setLandKey(e.target.value)}
+        disabled={!isNew}
+      />
+      <input
+        type="text"
+        inputMode="decimal"
+        className="input-field !py-1.5 text-right font-mono"
+        placeholder="0,00"
+        value={t24}
+        onChange={e => setT24(e.target.value)}
+      />
+      <input
+        type="text"
+        inputMode="decimal"
+        className="input-field !py-1.5 text-right font-mono"
+        placeholder="0,00"
+        value={t8}
+        onChange={e => setT8(e.target.value)}
+      />
+      <input
+        type="text"
+        inputMode="decimal"
+        className="input-field !py-1.5 text-right font-mono"
+        placeholder="0,00"
+        value={uebern}
+        onChange={e => setUebern(e.target.value)}
+      />
+      <input
+        type="number"
+        className="input-field !py-1.5 text-right"
+        value={reihenfolge}
+        onChange={e => setReihenfolge(e.target.value)}
+      />
+      <div className="flex items-center gap-1 justify-end">
+        <button
+          type="button"
+          onClick={submit}
+          className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded"
+          aria-label="Speichern"
+        >
+          <Check className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="p-1.5 text-credo-500 hover:bg-credo-100 rounded"
+          aria-label="Abbrechen"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 // ── Versand Tab ────────────────────────────────────────
 

@@ -93,3 +93,44 @@ export function useKostenstellen(mandantId: string) {
 
   return { kostenstellen, loading, error };
 }
+
+// ── Auslandspauschalen laden (DB-gepflegt im AdminCenter) ──
+
+export interface AuslandsPauschale {
+  landKey: string;
+  tagessatz24h: number;
+  tagessatz8h: number;
+  uebernachtung: number;
+  reihenfolge: number;
+}
+
+export function useAuslandsPauschalen() {
+  const [pauschalen, setPauschalen] = useState<AuslandsPauschale[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<AuslandsPauschale[]>('/pauschalen/ausland')
+      .then((data) => {
+        setPauschalen(data);
+        setError(null);
+      })
+      .catch((err) => {
+        setPauschalen([]);
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Auslandspauschalen konnten nicht geladen werden.',
+        );
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Lookup-Map analog zur frueheren AUSLANDSPAUSCHALEN-Konstante
+  const map = pauschalen.reduce<Record<string, AuslandsPauschale>>((acc, p) => {
+    acc[p.landKey] = p;
+    return acc;
+  }, {});
+
+  return { pauschalen, map, loading, error };
+}
