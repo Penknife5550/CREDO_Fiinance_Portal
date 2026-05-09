@@ -167,6 +167,32 @@
 | 9.3 | Neue Komponente `frontend/src/components/forms/DezimalInput.tsx` mit lokalem String-State + Focus-Tracking | ✅ | 2026-05-07 |
 | 9.4 | Eingesetzt in `ErstattungFormular.tsx`, `ReisekostenFormular.tsx` (2x), `FahrtenListe.tsx` (Desktop + Mobile) | ✅ | 2026-05-07 |
 
+### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
+
+Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 11.1 | **Auslandspauschalen 2026** auf BMF-Schreiben v. 05.12.2025 aktualisiert (Dänemark 58→75, Niederlande 47→58, Belgien 52→59, Österreich 40→50, Schweiz 64→68, Spanien 38→42 etc.) | ✅ | 2026-05-09 |
+| 11.2 | **Stadt-Differenzierung** als separate Einträge: Paris/Rom/London/Genf/Barcelona/Madrid mit eigenen Sätzen | ✅ | 2026-05-09 |
+| 11.3 | **VerpflegungStep Master-Toggle** "Wurde Verpflegung gestellt?" — Default "Nein", bei "Nein" verschwindet die Tabelle, bei "Ja" klappt sie auf. Eliminiert kognitive Last für 80 % der Tagesreisen ohne Buffet | ✅ | 2026-05-09 |
+| 11.4 | **VerpflegungStep <8h-Hinweis** prominent — bei eintägiger Reise unter 8 h nur amber Hinweis-Box, keine Tabelle, direkt "Weiter" | ✅ | 2026-05-09 |
+| 11.5 | **VerpflegungStep mobile Cards** statt 7-Spalten-Tabelle: pro Tag eine Card mit drei großen Pill-Toggles (analog FahrtenListe-Pattern) | ✅ | 2026-05-09 |
+| 11.6 | **Anlass-Mindestlänge 10 → 3 Zeichen** in Reisekosten + Sammelfahrt + Backend-Zod (blockierte zuvor "Praktikum", "Konferenz") | ✅ | 2026-05-09 |
+| 11.7 | **Validierungs-Loch geschlossen**: `validateBisAktuell()` re-validiert in allen 3 Wizards alle Steps bis aktuell + springt zum ersten Fehler. `setErrors({})` aus Zurück-Klick entfernt | ✅ | 2026-05-09 |
+| 11.8 | **Beleg-Pflicht in ErstattungFormular** (mind. 1 Datei) — fachlich korrekt, weniger Rückfragen aus Buchhaltung | ✅ | 2026-05-09 |
+| 11.9 | **Startseite Apple-like Redesign** im CREDO-CI: zentrale Hero-Frage, Cards mit dünnem Akzentstrich (Gelb/Grün/Blau), monochrome Icons in Primärgrau, dezente Schatten + Hover-Lift, Beispielzeilen pro Card, Entscheidungshilfe unter den Cards | ✅ | 2026-05-09 |
+| 11.10 | **Sammelfahrt-Kachel-Text präzisiert**: "Mehrere wiederkehrende Tagesfahrten zusammenfassen — z.B. wöchentliche Praktikumsbesuche. Mind. 2 Fahrten." Verhindert Falsch-Erwartung "die einfachere Variante" | ✅ | 2026-05-09 |
+| 11.11 | **Tests**: 6 neue Cases für AUSLANDSPAUSCHALEN (Vollständigkeit, Stadt-Diff, plausible Verhältnisse, Werte-Verifikation Dänemark/Österreich) | ✅ | 2026-05-09 |
+
+**Steuerrechts-Aktualität:** Inland 14/28 EUR weiter gültig (Wachstumschancengesetz 2024 Erhöhung wurde gestrichen). Mahlzeitenkürzung 20/40/40 vom 24h-Satz weiter korrekt. Pendlerpauschale 0,38 EUR ab 2026 betrifft nicht Dienstreisen (App nicht relevant).
+
+**Bewusst NICHT umgesetzt:** Default-Umkehrung (steuerlich falsch — Default volle Pauschale ist gesetzlich), 4. Kachel "Tagesreise" (Architektur-Schaden — Master-Toggle erreicht dasselbe), Sammelfahrt-Aufweichung (semantischer Schaden), 3-Monats-Frist-Tracking (eigenes Feature im Backlog), Pauschalen aus DB (4h-Refactor, im Backlog).
+
+**Antwort an Schulleiter-Feedback:** Sein Vorschlag (Default = keine Pauschale, Haken = "Erstattung an") wurde **nicht** umgesetzt — wäre steuerrechtlich falsch und marktfremd (alle 7 verglichenen Tools nutzen das aktuelle Pattern). Stattdessen Master-Toggle: bei "Nein, alles selbst bezahlt" verschwindet die Tabelle komplett. Sein eigentlicher Pain ist damit gelöst, gesetzlicher Default bleibt korrekt.
+
+**Verifikation:** Frontend-tsc grün, Backend-tsc grün, Vitest 104/104 grün (98 + 6 neu).
+
 ### Phase 10: Sammelfahrt-Webhook + Versand-Refactor + Härtung (08.05.2026)
 
 | # | Aufgabe | Status | Datum |
@@ -226,6 +252,9 @@
 | 2026-05-08 | Versand-Pipeline in `services/versand.ts` extrahiert | 3× identische ~50-Zeilen-Blöcke ergaben 1× Funktion; künftige Bug-Fixes nur an einer Stelle; `einreichungen.ts` von 738 auf 583 LoC |
 | 2026-05-08 | `webhook-utils.ts` mit pure Functions, getrennt von `webhook.ts` | DB-freier Modul-Load → Unit-Tests ohne DB-Mock möglich |
 | 2026-05-08 | Härtung der n8n-Code-Nodes (esc, Magic-Bytes, belegNr-Fallback) | Defense in depth: HTML-Injection bei intern eingespielten Feldern + kein Versand kaputter PDFs + nie `[undefined].pdf` |
+| 2026-05-09 | Verpflegungs-Master-Toggle statt Default-Umkehrung | Schulleiter-Feedback wollte Default umkehren (steuerlich falsch). Master-Toggle "Verpflegung gestellt? Ja/Nein" mit Default "Nein" eliminiert die Tabelle für 80 % der Lehrer-Reisen ohne Buffet — gesetzlicher Default volle Pauschale bleibt. |
+| 2026-05-09 | Auslandspauschalen mit Stadt-Differenzierung als flat keys | "Frankreich — Paris" als separater Eintrag im Dropdown statt nested-object-Refactor. Pragmatisch, transparent für User, kompatibel mit bestehender Auswahl-Logik. |
+| 2026-05-09 | Apple-like Startseite im CREDO-CI | Monochrome Icons (Primärgrau) statt bunter Backgrounds. Akzent über dünnen Strich oben pro Card in CREDO-Farbe (Gelb/Grün/Blau analog HTML-Mail). Entkoppelt visuelle Hierarchie von Farbsignalen. |
 
 ---
 

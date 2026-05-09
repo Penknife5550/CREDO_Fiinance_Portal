@@ -179,21 +179,34 @@ export function formatDatumKurz(datum: string): string {
   return `${tage[d.getDay()]} ${d.getDate().toString().padStart(2, '0')}.${(d.getMonth() + 1).toString().padStart(2, '0')}.`;
 }
 
-// ── Auslandspauschalen ──────────────────────────────────
+// ── Auslandspauschalen 2026 ─────────────────────────────
+// Quelle: BMF-Schreiben vom 05.12.2025 (IV C 5 - S 2353/00094/007/012),
+//   gueltig ab 01.01.2026.
+// Stadt-Differenzierung als separate Eintraege ("Frankreich — Paris" etc.) —
+//   das BMF-Schreiben weist fuer einige Metropolen abweichende Saetze aus,
+//   der User waehlt im Dropdown den passenden Eintrag.
+// Uebernachtungspauschale wird vom Backend nicht ausgezahlt (tatsaechliche
+//   Hotelkosten via Beleg) — das Feld bleibt nur als Referenz fuer den User.
 
 export const AUSLANDSPAUSCHALEN: Record<string, { tagessatz24h: number; tagessatz8h: number; uebernachtung: number }> = {
-  'Österreich': { tagessatz24h: 40, tagessatz8h: 27, uebernachtung: 105 },
-  'Schweiz': { tagessatz24h: 64, tagessatz8h: 43, uebernachtung: 180 },
-  'Niederlande': { tagessatz24h: 47, tagessatz8h: 32, uebernachtung: 125 },
-  'Frankreich': { tagessatz24h: 58, tagessatz8h: 39, uebernachtung: 148 },
-  'Italien': { tagessatz24h: 46, tagessatz8h: 31, uebernachtung: 138 },
-  'Belgien': { tagessatz24h: 52, tagessatz8h: 35, uebernachtung: 141 },
-  'Luxemburg': { tagessatz24h: 57, tagessatz8h: 38, uebernachtung: 130 },
-  'Polen': { tagessatz24h: 30, tagessatz8h: 20, uebernachtung: 73 },
-  'Tschechien': { tagessatz24h: 32, tagessatz8h: 21, uebernachtung: 83 },
-  'Dänemark': { tagessatz24h: 58, tagessatz8h: 39, uebernachtung: 152 },
+  'Belgien': { tagessatz24h: 59, tagessatz8h: 40, uebernachtung: 141 },
+  'Dänemark': { tagessatz24h: 75, tagessatz8h: 50, uebernachtung: 152 },
+  'Frankreich': { tagessatz24h: 53, tagessatz8h: 36, uebernachtung: 148 },
+  'Frankreich — Paris': { tagessatz24h: 58, tagessatz8h: 39, uebernachtung: 158 },
   'Großbritannien': { tagessatz24h: 52, tagessatz8h: 35, uebernachtung: 150 },
-  'Spanien': { tagessatz24h: 38, tagessatz8h: 25, uebernachtung: 115 },
+  'Großbritannien — London': { tagessatz24h: 66, tagessatz8h: 44, uebernachtung: 220 },
+  'Italien': { tagessatz24h: 42, tagessatz8h: 28, uebernachtung: 138 },
+  'Italien — Rom': { tagessatz24h: 48, tagessatz8h: 32, uebernachtung: 160 },
+  'Luxemburg': { tagessatz24h: 63, tagessatz8h: 42, uebernachtung: 130 },
+  'Niederlande': { tagessatz24h: 58, tagessatz8h: 39, uebernachtung: 125 },
+  'Österreich': { tagessatz24h: 50, tagessatz8h: 33, uebernachtung: 108 },
+  'Polen': { tagessatz24h: 30, tagessatz8h: 20, uebernachtung: 73 },
+  'Schweiz': { tagessatz24h: 68, tagessatz8h: 46, uebernachtung: 180 },
+  'Schweiz — Genf': { tagessatz24h: 70, tagessatz8h: 47, uebernachtung: 200 },
+  'Spanien': { tagessatz24h: 42, tagessatz8h: 28, uebernachtung: 115 },
+  'Spanien — Barcelona': { tagessatz24h: 34, tagessatz8h: 23, uebernachtung: 130 },
+  'Spanien — Madrid': { tagessatz24h: 42, tagessatz8h: 28, uebernachtung: 140 },
+  'Tschechien': { tagessatz24h: 32, tagessatz8h: 21, uebernachtung: 83 },
   'USA': { tagessatz24h: 51, tagessatz8h: 34, uebernachtung: 190 },
 };
 

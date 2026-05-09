@@ -59,7 +59,7 @@ export function SammelfahrtFormular() {
     }
 
     if (step === 1) {
-      if (reiseanlass.trim().length < 10) errs.reiseanlass = 'Mindestens 10 Zeichen';
+      if (reiseanlass.trim().length < 3) errs.reiseanlass = 'Bitte Anlass angeben';
       if (fahrten.length < 2) errs.fahrten = 'Bitte mindestens 2 Fahrten erfassen';
       fahrten.forEach((f, i) => {
         if (!f.datum) errs[`fahrt_${i}_datum`] = 'Pflicht';
@@ -73,11 +73,24 @@ export function SammelfahrtFormular() {
     return Object.keys(errs).length === 0;
   };
 
+  // Re-validiert alle Steps bis einschliesslich currentStep — beim ersten Fehler dorthin springen.
+  // So kann der User nicht ueber unsaubere Vor-Steps hinweg submitten.
+  const validateBisAktuell = (): boolean => {
+    for (let s = 0; s <= currentStep; s++) {
+      if (!validateStep(s)) {
+        if (s !== currentStep) setCurrentStep(s);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleWeiter = () => {
-    if (validateStep(currentStep)) setCurrentStep(currentStep + 1);
+    if (validateBisAktuell()) setCurrentStep(currentStep + 1);
   };
 
   const handleEinreichen = async () => {
+    if (!validateBisAktuell()) return;
     setSubmitting(true);
     try {
       const result = await einreichenSammelfahrt({
@@ -296,7 +309,7 @@ export function SammelfahrtFormular() {
       {/* Navigation */}
       <div className="flex justify-between mt-6">
         <button
-          onClick={() => { setErrors({}); setCurrentStep(Math.max(0, currentStep - 1)); }}
+          onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
           disabled={currentStep === 0}
           className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
         >

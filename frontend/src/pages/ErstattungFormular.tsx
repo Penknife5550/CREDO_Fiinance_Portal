@@ -74,17 +74,33 @@ export function ErstattungFormular() {
         if (!pos.datum) errs[`pos_${i}_datum`] = 'Pflichtfeld';
         if (!pos.betrag || pos.betrag <= 0) errs[`pos_${i}_betrag`] = 'Betrag > 0';
       });
+      if (belege.length === 0) {
+        errs.belege = 'Mindestens ein Beleg (Quittung) erforderlich';
+      }
     }
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
   };
 
+  // Re-validiert alle Steps bis einschliesslich currentStep — beim ersten Fehler dorthin springen.
+  // So kann der User nicht ueber unsaubere Vor-Steps hinweg submitten.
+  const validateBisAktuell = (): boolean => {
+    for (let s = 0; s <= currentStep; s++) {
+      if (!validateStep(s)) {
+        if (s !== currentStep) setCurrentStep(s);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleWeiter = () => {
-    if (validateStep(currentStep)) setCurrentStep(currentStep + 1);
+    if (validateBisAktuell()) setCurrentStep(currentStep + 1);
   };
 
   const handleEinreichen = async () => {
+    if (!validateBisAktuell()) return;
     setSubmitting(true);
     try {
       const result = await einreichenErstattung({
@@ -239,9 +255,10 @@ export function ErstattungFormular() {
               <span className="text-lg font-bold text-credo-900">{formatCurrency(gesamt)}</span>
             </div>
 
-            {/* Belege */}
+            {/* Belege — Pflicht */}
             <div className="border-t border-credo-200 pt-5 mt-2">
-              <BelegUpload dateien={belege} onChange={setBelege} label="Belege hochladen" />
+              <BelegUpload dateien={belege} onChange={setBelege} label="Belege hochladen *" />
+              {errors.belege && <p className="text-xs text-red-500 mt-2">{errors.belege}</p>}
             </div>
 
             {/* § 14 UStG Hinweis */}
@@ -308,7 +325,7 @@ export function ErstattungFormular() {
       {/* Navigation */}
       <div className="flex justify-between mt-6">
         <button
-          onClick={() => { setErrors({}); setCurrentStep(Math.max(0, currentStep - 1)); }}
+          onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
           disabled={currentStep === 0}
           className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
         >

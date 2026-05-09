@@ -94,7 +94,7 @@ export function ReisekostenFormular() {
     }
 
     if (step === 1) {
-      if (reiseanlass.trim().length < 10) errs.reiseanlass = 'Mindestens 10 Zeichen';
+      if (reiseanlass.trim().length < 3) errs.reiseanlass = 'Bitte Anlass angeben';
       if (!reiseziel.trim()) errs.reiseziel = 'Pflichtfeld';
       if (!abfahrtZeit) errs.abfahrtZeit = 'Pflichtfeld';
       if (!rueckkehrZeit) errs.rueckkehrZeit = 'Pflichtfeld';
@@ -114,13 +114,26 @@ export function ReisekostenFormular() {
     return Object.keys(errs).length === 0;
   };
 
+  // Re-validiert alle Steps bis einschliesslich currentStep — beim ersten Fehler dorthin springen.
+  // So kann der User nicht ueber unsaubere Vor-Steps hinweg submitten.
+  const validateBisAktuell = (): boolean => {
+    for (let s = 0; s <= currentStep; s++) {
+      if (!validateStep(s)) {
+        if (s !== currentStep) setCurrentStep(s);
+        return false;
+      }
+    }
+    return true;
+  };
+
   const handleWeiter = () => {
-    if (validateStep(currentStep)) {
+    if (validateBisAktuell()) {
       setCurrentStep(currentStep + 1);
     }
   };
 
   const handleEinreichen = async () => {
+    if (!validateBisAktuell()) return;
     setSubmitting(true);
     try {
       // Reiseziel für 3-Monats-Frist speichern
@@ -536,7 +549,7 @@ export function ReisekostenFormular() {
       {/* Navigation */}
       <div className="flex justify-between mt-6">
         <button
-          onClick={() => { setErrors({}); setCurrentStep(Math.max(0, currentStep - 1)); }}
+          onClick={() => setCurrentStep(Math.max(0, currentStep - 1))}
           disabled={currentStep === 0}
           className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
         >

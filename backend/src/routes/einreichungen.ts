@@ -82,7 +82,7 @@ const persoenlichSchema = z.object({
 const reisekostenBody = z.object({
   typ: z.literal('REISEKOSTEN'),
   persoenlich: persoenlichSchema,
-  reiseanlass: z.string().min(10),
+  reiseanlass: z.string().min(3),
   reiseziel: z.string().min(1),
   abfahrtOrt: z.enum(['WOHNUNG', 'TAETIGKEIT']),
   abfahrtZeit: z.string(),
@@ -130,7 +130,7 @@ const erstattungBody = z.object({
 const sammelfahrtBody = z.object({
   typ: z.literal('SAMMELFAHRT'),
   persoenlich: persoenlichSchema,
-  reiseanlass: z.string().min(10),
+  reiseanlass: z.string().min(3),
   verkehrsmittel: z.enum(['PKW', 'MOTORRAD']),
   fahrten: z.array(z.object({
     datum: z.string(),

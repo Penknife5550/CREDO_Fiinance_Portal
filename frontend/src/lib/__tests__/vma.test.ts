@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { berechneReisetage, berechneVmaTag, berechneKmBetrag, berechneVmaGesamt, berechneVmaTagAusland } from '../vma';
+import { berechneReisetage, berechneVmaTag, berechneKmBetrag, berechneVmaGesamt, berechneVmaTagAusland, AUSLANDSPAUSCHALEN } from '../vma';
 import type { Reisetag } from '../types';
 
 describe('berechneReisetage', () => {
@@ -168,5 +168,54 @@ describe('berechneVmaTagAusland', () => {
     const result = berechneVmaTagAusland({ ...ganzTag, fruehstueckGestellt: true }, 40);
     expect(result.vmaKuerzung).toBe(8); // 40 * 0.20
     expect(result.vmaNetto).toBe(40); // 48 - 8
+  });
+});
+
+describe('AUSLANDSPAUSCHALEN 2026 (BMF v. 05.12.2025)', () => {
+  it('enthaelt alle Stamm-Laender', () => {
+    const erwartet = ['Belgien', 'Dänemark', 'Frankreich', 'Großbritannien', 'Italien',
+                      'Luxemburg', 'Niederlande', 'Österreich', 'Polen', 'Schweiz',
+                      'Spanien', 'Tschechien', 'USA'];
+    erwartet.forEach(land => {
+      expect(AUSLANDSPAUSCHALEN[land]).toBeDefined();
+      expect(AUSLANDSPAUSCHALEN[land].tagessatz24h).toBeGreaterThan(0);
+      expect(AUSLANDSPAUSCHALEN[land].tagessatz8h).toBeGreaterThan(0);
+    });
+  });
+
+  it('enthaelt Stadt-Differenzierung fuer Metropolen', () => {
+    expect(AUSLANDSPAUSCHALEN['Frankreich — Paris']).toBeDefined();
+    expect(AUSLANDSPAUSCHALEN['Italien — Rom']).toBeDefined();
+    expect(AUSLANDSPAUSCHALEN['Großbritannien — London']).toBeDefined();
+    expect(AUSLANDSPAUSCHALEN['Schweiz — Genf']).toBeDefined();
+    expect(AUSLANDSPAUSCHALEN['Spanien — Barcelona']).toBeDefined();
+    expect(AUSLANDSPAUSCHALEN['Spanien — Madrid']).toBeDefined();
+  });
+
+  it('hat plausibles Verhaeltnis 8h ≈ 2/3 des 24h-Satzes', () => {
+    Object.entries(AUSLANDSPAUSCHALEN).forEach(([land, p]) => {
+      const ratio = p.tagessatz8h / p.tagessatz24h;
+      expect(ratio).toBeGreaterThan(0.6); // mind. ~60%
+      expect(ratio).toBeLessThan(0.8);    // hoechstens ~80%
+      expect(p.tagessatz8h, `${land}: 8h ≤ 24h`).toBeLessThan(p.tagessatz24h);
+    });
+  });
+
+  it('Stadt-Variante hat hoeheren oder gleichen Satz als Default-Land', () => {
+    // Paris ≥ Frankreich, Rom ≥ Italien, London ≥ GB, Genf ≥ Schweiz
+    expect(AUSLANDSPAUSCHALEN['Frankreich — Paris'].tagessatz24h)
+      .toBeGreaterThan(AUSLANDSPAUSCHALEN['Frankreich'].tagessatz24h);
+    expect(AUSLANDSPAUSCHALEN['Italien — Rom'].tagessatz24h)
+      .toBeGreaterThan(AUSLANDSPAUSCHALEN['Italien'].tagessatz24h);
+    expect(AUSLANDSPAUSCHALEN['Großbritannien — London'].tagessatz24h)
+      .toBeGreaterThan(AUSLANDSPAUSCHALEN['Großbritannien'].tagessatz24h);
+  });
+
+  it('Daenemark wurde 2026 stark angehoben (75 EUR)', () => {
+    expect(AUSLANDSPAUSCHALEN['Dänemark'].tagessatz24h).toBe(75);
+  });
+
+  it('Oesterreich 2026 ist 50 EUR (+10 vs. alt)', () => {
+    expect(AUSLANDSPAUSCHALEN['Österreich'].tagessatz24h).toBe(50);
   });
 });
