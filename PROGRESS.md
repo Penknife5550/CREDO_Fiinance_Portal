@@ -84,6 +84,12 @@
 | 5.10 | Backend: `as any` Casts entfernt (belegNummer, einreichungen, upload) | ✅ | 2026-03-27 |
 | 5.11 | npm Scripts: lint, format, test | ✅ | 2026-03-27 |
 
+#### Bekannte Lücke (entdeckt 11.05.2026)
+
+- **`land`-Feld nicht im Webhook-Payload**: Bei einer Reisekosten-Auslandsabrechnung speichert das Backend das gewählte Land (z.B. „Frankreich — Paris") in der DB (`einreichungen.ts:202`), gibt es aber nicht im Webhook-`webhookData` weiter (`einreichungen.ts:291–312`). Die DMS-E-Mail enthält daher keinen Hinweis auf Auslandsreise. Buchhaltung sieht nur „Reiseziel: Paris" — nicht „Frankreich — Paris (Tagessatz 53 €/8h, 36 €)".
+  - **Fix-Skizze:** `land: parsed.land || null` in `webhookData` aufnehmen + `WebhookEinreichungData`-Type erweitern + `HTML Reisekosten`-Node im n8n-Workflow um Auslandshinweis ergänzen. ~20 min, ein Commit.
+  - **Status:** im Backlog, kein akuter Bug — PDF-Anhang enthält die Info.
+
 #### Bekannte offene Punkte aus QA-Review (nicht kritisch für internes Netz):
 - [ ] CI/CD-Pipeline (CI/ Ordner ist leer — GitHub Actions Workflow fehlt)
 - [ ] PostgreSQL-Backups automatisieren
