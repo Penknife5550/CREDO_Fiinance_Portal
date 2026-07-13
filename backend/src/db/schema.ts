@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 // ── Enums ──────────────────────────────────────────────
 
@@ -8,9 +8,8 @@ export const emailStatusEnum = pgEnum('email_status', ['AUSSTEHEND', 'GESENDET',
 export const verkehrsmittelEnum = pgEnum('verkehrsmittel', ['PKW', 'MOTORRAD', 'OEPNV', 'BAHN', 'FLUG', 'SONSTIGE']);
 export const abfahrtOrtEnum = pgEnum('abfahrt_ort', ['WOHNUNG', 'TAETIGKEIT']);
 export const reisetagTypEnum = pgEnum('reisetag_typ', ['ANREISE', 'GANZTAG', 'ABREISE', 'EINTAEGIG']);
-export const erstattungKategorieEnum = pgEnum('erstattung_kategorie', [
-  'BUEROMATERIAL', 'FACHLITERATUR', 'LEBENSMITTEL', 'ARBEITSMITTEL', 'FORTBILDUNG', 'SONSTIGES'
-]);
+// Hinweis: Erstattungs-Kategorien sind seit Migration 0009 KEIN Enum mehr, sondern
+// pro Mandant in der Tabelle `erstattung_kategorien` konfigurierbar (varchar-Spalte).
 
 // ── Mandanten ──────────────────────────────────────────
 
@@ -43,6 +42,22 @@ export const kostenstellen = pgTable('kostenstellen', {
   active: boolean('active').notNull().default(true),
 }, (t) => ({
   mandantActiveIdx: index('kostenstellen_mandant_active_idx').on(t.mandantId, t.active),
+}));
+
+// ── Erstattungs-Kategorien (pro Mandant konfigurierbar, im AdminCenter) ─
+// Ersetzt das feste Enum. `key` wird in positionen.kategorie gespeichert und
+// bleibt pro Mandant eindeutig. Dropdown-Reihenfolge ueber `reihenfolge`.
+
+export const erstattungKategorien = pgTable('erstattung_kategorien', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  mandantId: uuid('mandant_id').notNull().references(() => mandanten.id, { onDelete: 'cascade' }),
+  key: varchar('key', { length: 50 }).notNull(),
+  label: varchar('label', { length: 100 }).notNull(),
+  reihenfolge: integer('reihenfolge').notNull().default(0),
+  active: boolean('active').notNull().default(true),
+}, (t) => ({
+  mandantActiveIdx: index('erstattung_kategorien_mandant_active_idx').on(t.mandantId, t.active),
+  mandantKeyUidx: uniqueIndex('erstattung_kategorien_mandant_key_uidx').on(t.mandantId, t.key),
 }));
 
 // ── Einreichungen (Reisekosten + Erstattungen) ─────────
@@ -133,7 +148,7 @@ export const positionen = pgTable('positionen', {
   id: uuid('id').defaultRandom().primaryKey(),
   einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
   beschreibung: varchar('beschreibung', { length: 500 }).notNull(),
-  kategorie: erstattungKategorieEnum('kategorie').notNull(),
+  kategorie: varchar('kategorie', { length: 50 }).notNull(), // Key aus erstattung_kategorien (pro Mandant)
   datum: timestamp('datum').notNull(),
   betrag: decimal('betrag', { precision: 10, scale: 2 }).notNull(),
   belegId: uuid('beleg_id'),

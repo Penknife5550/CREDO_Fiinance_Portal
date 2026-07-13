@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { db, schema } from '../db/index.js';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
+import { ERSTATTUNG_KATEGORIE_DEFAULT_KEYS } from '../lib/constants.js';
 import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
 import { erstelleGesamtPdf } from '../services/pdf.js';
@@ -118,7 +119,9 @@ const erstattungBody = z.object({
   persoenlich: persoenlichSchema,
   positionen: z.array(z.object({
     beschreibung: z.string().min(5),
-    kategorie: z.enum(['BUEROMATERIAL', 'FACHLITERATUR', 'LEBENSMITTEL', 'ARBEITSMITTEL', 'FORTBILDUNG', 'SONSTIGES']),
+    // Kategorie ist jetzt pro Mandant konfigurierbar — der erlaubte Wertebereich
+    // wird nach dem Laden des Mandanten gegen `erstattung_kategorien` geprueft.
+    kategorie: z.string().min(1).max(50),
     datum: z.string(),
     betrag: z.number().positive(),
   })).min(1),
@@ -358,6 +361,24 @@ einreichungenRouter.post('/', async (req, res) => {
       }
       if (parsed.persoenlich.kostenstelleId && !kostenstelle) {
         res.status(400).json({ error: 'Kostenstelle nicht gefunden' });
+        return;
+      }
+
+      // Kategorie-Validierung: gegen die fuer den Mandanten hinterlegten Kategorien.
+      // Fallback auf die Standard-Kategorien, falls der Mandant noch keine gepflegt hat.
+      const mandantKategorien = await db
+        .select({ key: schema.erstattungKategorien.key })
+        .from(schema.erstattungKategorien)
+        .where(and(
+          eq(schema.erstattungKategorien.mandantId, parsed.persoenlich.mandantId),
+          eq(schema.erstattungKategorien.active, true),
+        ));
+      const erlaubteKategorien = mandantKategorien.length > 0
+        ? new Set(mandantKategorien.map(k => k.key))
+        : new Set(ERSTATTUNG_KATEGORIE_DEFAULT_KEYS);
+      const ungueltigeKategorie = parsed.positionen.find(p => !erlaubteKategorien.has(p.kategorie));
+      if (ungueltigeKategorie) {
+        res.status(400).json({ error: `Ungültige Kategorie: ${ungueltigeKategorie.kategorie}` });
         return;
       }
 

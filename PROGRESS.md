@@ -192,6 +192,25 @@
 
 **Verifikation:** Frontend-tsc grün, Backend-tsc grün, Vitest 104/104 grün.
 
+### Phase 13: Konfigurierbare Erstattungs-Kategorien pro Mandant (13.07.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 13.1 | DB: neue Tabelle `erstattung_kategorien` (`mandantId` FK, `key`, `label`, `reihenfolge`, `active`) + Unique-Index (mandant_id, key) | ✅ | 2026-07-13 |
+| 13.2 | Migration `0009_erstattung_kategorien.sql`: Spalte `positionen.kategorie` von pgEnum → varchar(50) (Bestandswerte bleiben), `DROP TYPE erstattung_kategorie`, Seed der 6 Standards für alle Mandanten + „Schulleiterbudget" für M40 | ✅ | 2026-07-13 |
+| 13.3 | Öffentlicher Endpoint `GET /api/kategorien/:mandantId` (aktive Kategorien, nach `reihenfolge`) für den Erstattungs-Wizard | ✅ | 2026-07-13 |
+| 13.4 | Admin-CRUD `GET/POST/PUT/DELETE /api/admin/kategorien` (Key wird serverseitig aus Bezeichnung abgeleitet, bleibt stabil; 409 bei Duplikat) | ✅ | 2026-07-13 |
+| 13.5 | Einreichungs-Validierung: statisches Zod-Enum → dynamische Prüfung gegen die Mandanten-Kategorien (Fallback auf Standards) | ✅ | 2026-07-13 |
+| 13.6 | Frontend-Hook `useKategorien(mandantId)` (analog `useKostenstellen`); `ErstattungFormular` lädt Dropdown dynamisch, Fallback auf 6 Standards | ✅ | 2026-07-13 |
+| 13.7 | AdminCenter: neuer Tab „Kategorien" mit Mandant-Auswahl + Inline-Row-Editor (Anlegen/Bearbeiten/Ein-Ausblenden/Löschen) | ✅ | 2026-07-13 |
+| 13.8 | Seed `seed.ts` seedet Kategorien idempotent (deckt frische Installationen ab, da Mandanten dort erst nach den Migrationen entstehen) | ✅ | 2026-07-13 |
+
+**Was sich für Admins ändert:** Kategorien der Kostenerstattung sind jetzt pro Mandant im AdminCenter unter „Kategorien" pflegbar (kein Code-Deploy mehr). Mandant 40 (Förderverein) hat zusätzlich „Schulleiterbudget".
+
+**Bewusst so gelöst:** Die Kategorie-Spalte bleibt der interne `key` (z.B. `SCHULLEITERBUDGET`); die Anzeige nutzt das `label`. Bestehende Positionen behalten ihre gespeicherte Kategorie. Migration ist rückwärtskompatibel (gleiche Enum-Werte als Strings).
+
+**Verifikation:** Backend-tsc grün, Frontend-tsc grün, Vitest 104/104 grün, ESLint 0 Fehler. Migration gegen echte DB steht noch aus (Docker lokal nicht gestartet) — läuft beim nächsten `npm run db:migrate` / Deploy.
+
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 
 Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.
@@ -280,6 +299,8 @@ Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. 
 | 2026-05-09 | Verpflegungs-Master-Toggle statt Default-Umkehrung | Schulleiter-Feedback wollte Default umkehren (steuerlich falsch). Master-Toggle "Verpflegung gestellt? Ja/Nein" mit Default "Nein" eliminiert die Tabelle für 80 % der Lehrer-Reisen ohne Buffet — gesetzlicher Default volle Pauschale bleibt. |
 | 2026-05-09 | Auslandspauschalen mit Stadt-Differenzierung als flat keys | "Frankreich — Paris" als separater Eintrag im Dropdown statt nested-object-Refactor. Pragmatisch, transparent für User, kompatibel mit bestehender Auswahl-Logik. |
 | 2026-05-09 | Apple-like Startseite im CREDO-CI | Monochrome Icons (Primärgrau) statt bunter Backgrounds. Akzent über dünnen Strich oben pro Card in CREDO-Farbe (Gelb/Grün/Blau analog HTML-Mail). Entkoppelt visuelle Hierarchie von Farbsignalen. |
+| 2026-07-13 | Erstattungs-Kategorien pro Mandant konfigurierbar (DB statt Enum) | Wunsch: Kategorien von Dimitri pflegbar, pro Mandant. pgEnum blockierte neue Werte → Migration auf `varchar` + Tabelle `erstattung_kategorien`. Muster kombiniert aus Auslandspauschalen-CRUD + Kostenstellen-Mandant-Scoping. Key stabil (aus Bezeichnung abgeleitet), Label editierbar. Mandant 40 erhält „Schulleiterbudget". |
+| 2026-07-13 | Plan „PLAN_Aenderungen_2026-07.md" in 3 Teilen (Kategorien → SMTP → Klassenfahrt) | Reihenfolge nach Nutzen/Abhängigkeit. Teil 1 zuerst (kleinster Block, sofort nutzbar). HTML-Prozessdokumente als Abstimmungsgrundlage, adversariale Lückenprüfung vor Umsetzung. |
 
 ---
 

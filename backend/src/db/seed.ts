@@ -22,6 +22,34 @@ async function seed() {
 
   // ── Kostenstellen werden NICHT geseedet (über AdminCenter pflegen) ──
 
+  // ── Erstattungs-Kategorien (Standard für alle + Schulleiterbudget für M40) ──
+  // Idempotent (unique index mandant_id+key). Deckt frische Installationen ab,
+  // da die Migration 0009 seedet, bevor hier die Mandanten existieren.
+  const standardKategorien = [
+    { key: 'BUEROMATERIAL', label: 'Büromaterial', reihenfolge: 10 },
+    { key: 'FACHLITERATUR', label: 'Fachliteratur', reihenfolge: 20 },
+    { key: 'LEBENSMITTEL', label: 'Lebensmittel', reihenfolge: 30 },
+    { key: 'ARBEITSMITTEL', label: 'Arbeitsmittel', reihenfolge: 40 },
+    { key: 'FORTBILDUNG', label: 'Fortbildung', reihenfolge: 50 },
+    { key: 'SONSTIGES', label: 'Sonstiges', reihenfolge: 60 },
+  ];
+  const alleMandanten = await db
+    .select({ id: schema.mandanten.id, mandantNr: schema.mandanten.mandantNr })
+    .from(schema.mandanten);
+  for (const m of alleMandanten) {
+    for (const k of standardKategorien) {
+      await db.insert(schema.erstattungKategorien)
+        .values({ mandantId: m.id, ...k })
+        .onConflictDoNothing();
+    }
+    if (m.mandantNr === 40) {
+      await db.insert(schema.erstattungKategorien)
+        .values({ mandantId: m.id, key: 'SCHULLEITERBUDGET', label: 'Schulleiterbudget', reihenfolge: 55 })
+        .onConflictDoNothing();
+    }
+  }
+  console.log(`  ✓ Erstattungs-Kategorien angelegt (Standard + Schulleiterbudget für M40)`);
+
   // ── Inlandspauschalen 2026 ─────────────────────────
   const pauschalen2026 = [
     { typ: 'KM_PKW', betrag: '0.30', gueltigVon: new Date('2026-01-01'), gueltigBis: new Date('2026-12-31') },

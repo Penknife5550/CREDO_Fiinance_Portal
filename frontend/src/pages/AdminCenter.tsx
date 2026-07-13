@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info } from 'lucide-react';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info, Tags } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 import { useToast } from '@/components/Toast';
 import { VORGANGSTYP_META, istKstAn, type KstField, type MandantAdmin, type Vorgangstyp } from '@/lib/types';
@@ -12,6 +12,7 @@ const KST_DEFAULTS: Record<KstField, boolean> = Object.fromEntries(
 const TABS = [
   { id: 'mandanten', label: 'Mandanten', icon: Building2 },
   { id: 'kostenstellen', label: 'Kostenstellen', icon: Layers },
+  { id: 'kategorien', label: 'Kategorien', icon: Tags },
   { id: 'pauschalen', label: 'Pauschalen', icon: DollarSign },
   { id: 'versand', label: 'Versand & Integration', icon: Mail },
   { id: 'protokoll', label: 'Protokoll', icon: Activity },
@@ -117,6 +118,7 @@ export function AdminCenter() {
 
       {activeTab === 'mandanten' && <MandantenTab />}
       {activeTab === 'kostenstellen' && <KostenstellenTab />}
+      {activeTab === 'kategorien' && <KategorienTab />}
       {activeTab === 'pauschalen' && <PauschalenTab />}
       {activeTab === 'versand' && <VersandTab />}
       {activeTab === 'protokoll' && <ProtokollTab />}
@@ -1250,6 +1252,306 @@ function PauschaleZeile({
           className="p-1.5 text-credo-500 hover:bg-credo-100 rounded"
           aria-label="Abbrechen"
         >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Kategorien Tab (pro Mandant) ───────────────────────
+
+interface KategorieAdmin {
+  id: string;
+  mandantId: string;
+  key: string;
+  label: string;
+  reihenfolge: number;
+  active: boolean;
+}
+
+function KategorienTab() {
+  const { showToast } = useToast();
+  const [mandanten, setMandanten] = useState<MandantAdmin[]>([]);
+  const [selectedMandantId, setSelectedMandantId] = useState('');
+  const [kategorien, setKategorien] = useState<KategorieAdmin[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [katLoading, setKatLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Mandanten laden
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await adminFetch('/api/admin/mandanten');
+        if (!res.ok) throw new Error('Fehler beim Laden');
+        const data: MandantAdmin[] = await res.json();
+        const aktive = data.filter(m => m.active);
+        setMandanten(aktive);
+        if (aktive.length > 0) setSelectedMandantId(aktive[0].id);
+      } catch {
+        showToast('Mandanten konnten nicht geladen werden.', 'error');
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  // Kategorien laden wenn Mandant wechselt — mit AbortController gegen Race Conditions
+  const katAbortRef = useRef<AbortController | null>(null);
+  const loadKategorien = async (mandantId: string) => {
+    if (!mandantId) { setKategorien([]); return; }
+    katAbortRef.current?.abort();
+    const controller = new AbortController();
+    katAbortRef.current = controller;
+    setKatLoading(true);
+    try {
+      const res = await adminFetch(`/api/admin/kategorien/${mandantId}`, { signal: controller.signal });
+      if (controller.signal.aborted) return;
+      if (!res.ok) throw new Error('Fehler');
+      setKategorien(await res.json());
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError' || controller.signal.aborted) return;
+      showToast('Kategorien konnten nicht geladen werden.', 'error');
+    } finally {
+      if (!controller.signal.aborted) setKatLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedMandantId) loadKategorien(selectedMandantId);
+    return () => katAbortRef.current?.abort();
+  }, [selectedMandantId]);
+
+  const handleSave = async (form: { label: string; reihenfolge: number }, id: string | null) => {
+    try {
+      const url = id ? `/api/admin/kategorien/${id}` : '/api/admin/kategorien';
+      const res = await adminFetch(url, {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify(id ? form : { mandantId: selectedMandantId, ...form }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Speichern fehlgeschlagen' }));
+        throw new Error(err.error || 'HTTP ' + res.status);
+      }
+      showToast(id ? 'Kategorie aktualisiert' : 'Kategorie angelegt', 'success');
+      setEditingId(null);
+      setCreating(false);
+      await loadKategorien(selectedMandantId);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Speichern fehlgeschlagen', 'error');
+    }
+  };
+
+  const handleToggleActive = async (kat: KategorieAdmin) => {
+    try {
+      const res = await adminFetch(`/api/admin/kategorien/${kat.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ active: !kat.active }),
+      });
+      if (!res.ok) throw new Error('Fehler');
+      await loadKategorien(selectedMandantId);
+    } catch {
+      showToast('Status konnte nicht geändert werden.', 'error');
+    }
+  };
+
+  const handleDelete = async (kat: KategorieAdmin) => {
+    if (!confirm(`Kategorie „${kat.label}" wirklich löschen?`)) return;
+    try {
+      const res = await adminFetch(`/api/admin/kategorien/${kat.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Fehler');
+      showToast('Kategorie gelöscht', 'success');
+      await loadKategorien(selectedMandantId);
+    } catch {
+      showToast('Kategorie konnte nicht gelöscht werden.', 'error');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12 text-credo-500">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+        Lade...
+      </div>
+    );
+  }
+
+  const naechsteReihenfolge = (kategorien.at(-1)?.reihenfolge ?? 0) + 10;
+
+  return (
+    <div className="space-y-6">
+      <div className="card border border-blue-200 bg-blue-50/40">
+        <div className="flex items-start gap-3">
+          <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="text-sm text-credo-700">
+            <strong className="block text-credo-900 mb-1">Kategorien der Kostenerstattung — pro Mandant</strong>
+            Diese Kategorien erscheinen im Erstattungs-Formular (Schritt „Positionen &amp; Belege"). Sie sind
+            pro Mandant frei pflegbar. Bereits eingereichte Positionen behalten ihre gespeicherte Kategorie.
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-credo-900">Kategorien</h3>
+            <p className="text-sm text-credo-500 mt-0.5">Mandant wählen und Kategorien pflegen.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setCreating(true); setEditingId(null); }}
+            disabled={!selectedMandantId || creating}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg bg-credo-600 text-white text-sm font-medium hover:bg-credo-700 disabled:opacity-50"
+          >
+            <Plus className="w-4 h-4 mr-1.5" />
+            Neue Kategorie
+          </button>
+        </div>
+
+        {/* Mandant-Auswahl */}
+        <div className="mb-4">
+          <label className="label">Mandant</label>
+          <select
+            className="input-field"
+            value={selectedMandantId}
+            onChange={e => { setSelectedMandantId(e.target.value); setCreating(false); setEditingId(null); }}
+          >
+            {mandanten.map(m => (
+              <option key={m.id} value={m.id}>{m.mandantNr} — {m.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {katLoading ? (
+          <div className="flex items-center justify-center py-8 text-credo-500">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            Lade Kategorien...
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {/* Header */}
+            <div className="hidden sm:grid grid-cols-[2fr_0.7fr_auto] gap-3 px-3 py-2 text-xs font-medium text-credo-500 uppercase tracking-wider">
+              <span>Bezeichnung</span>
+              <span className="text-right">Sortierung</span>
+              <span></span>
+            </div>
+
+            {/* Neuer Eintrag */}
+            {creating && (
+              <KategorieZeile
+                eintrag={{ label: '', reihenfolge: naechsteReihenfolge }}
+                isNew
+                onSave={form => handleSave(form, null)}
+                onCancel={() => setCreating(false)}
+              />
+            )}
+
+            {/* Bestehende Eintraege */}
+            {kategorien.map(kat => (
+              editingId === kat.id ? (
+                <KategorieZeile
+                  key={kat.id}
+                  eintrag={{ label: kat.label, reihenfolge: kat.reihenfolge }}
+                  onSave={form => handleSave(form, kat.id)}
+                  onCancel={() => setEditingId(null)}
+                />
+              ) : (
+                <div
+                  key={kat.id}
+                  className={`grid grid-cols-2 sm:grid-cols-[2fr_0.7fr_auto] gap-3 px-3 py-3 border border-credo-100 rounded-lg hover:bg-credo-50/40 items-center ${kat.active ? '' : 'opacity-50'}`}
+                >
+                  <span className="font-medium text-credo-800 col-span-2 sm:col-span-1">
+                    {kat.label}
+                    {!kat.active && <span className="ml-2 text-xs font-normal text-credo-400">(ausgeblendet)</span>}
+                  </span>
+                  <span className="text-right text-xs text-credo-400">{kat.reihenfolge}</span>
+                  <div className="flex items-center gap-1 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleActive(kat)}
+                      className="p-1.5 text-credo-500 hover:text-credo-700 hover:bg-credo-100 rounded"
+                      aria-label={kat.active ? `${kat.label} ausblenden` : `${kat.label} einblenden`}
+                    >
+                      {kat.active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setEditingId(kat.id); setCreating(false); }}
+                      className="p-1.5 text-credo-500 hover:text-credo-700 hover:bg-credo-100 rounded"
+                      aria-label={`${kat.label} bearbeiten`}
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(kat)}
+                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                      aria-label={`${kat.label} löschen`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )
+            ))}
+
+            {!katLoading && kategorien.length === 0 && !creating && (
+              <p className="text-sm text-credo-500 text-center py-6">Keine Kategorien für diesen Mandanten. Legen Sie die erste an.</p>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Inline-Editor fuer eine Kategorie-Zeile (Edit oder Neu). Nur Bezeichnung + Reihenfolge;
+// der interne Key wird serverseitig aus der Bezeichnung abgeleitet und bleibt stabil.
+function KategorieZeile({
+  eintrag,
+  isNew = false,
+  onSave,
+  onCancel,
+}: {
+  eintrag: { label: string; reihenfolge: number };
+  isNew?: boolean;
+  onSave: (form: { label: string; reihenfolge: number }) => void;
+  onCancel: () => void;
+}) {
+  const [label, setLabel] = useState(eintrag.label);
+  const [reihenfolge, setReihenfolge] = useState(String(eintrag.reihenfolge));
+
+  const submit = () => {
+    const trimmed = label.trim();
+    const rf = Number(reihenfolge);
+    if (!trimmed || !Number.isFinite(rf)) return;
+    onSave({ label: trimmed, reihenfolge: rf });
+  };
+
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-[2fr_0.7fr_auto] gap-3 px-3 py-3 border-2 border-credo-400 bg-credo-50/30 rounded-lg items-center">
+      <input
+        type="text"
+        className="input-field !py-1.5 col-span-2 sm:col-span-1"
+        placeholder="z.B. Schulleiterbudget"
+        value={label}
+        onChange={e => setLabel(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+        autoFocus={isNew}
+      />
+      <input
+        type="number"
+        className="input-field !py-1.5 text-right"
+        value={reihenfolge}
+        onChange={e => setReihenfolge(e.target.value)}
+      />
+      <div className="flex items-center gap-1 justify-end">
+        <button type="button" onClick={submit} className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded" aria-label="Speichern">
+          <Check className="w-4 h-4" />
+        </button>
+        <button type="button" onClick={onCancel} className="p-1.5 text-credo-500 hover:bg-credo-100 rounded" aria-label="Abbrechen">
           <X className="w-4 h-4" />
         </button>
       </div>

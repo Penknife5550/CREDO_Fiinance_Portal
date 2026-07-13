@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { mandantenRouter } from './routes/mandanten.js';
 import { kostenstellenRouter } from './routes/kostenstellen.js';
+import { kategorienRouter } from './routes/kategorien.js';
 import { einreichungenRouter } from './routes/einreichungen.js';
 import { pauschalenRouter } from './routes/pauschalen.js';
 import { adminRouter } from './routes/admin.js';
@@ -101,6 +102,7 @@ app.get('/api/health', (_req, res) => {
 // Self-Service (kein Login)
 app.use('/api/mandanten', mandantenRouter);
 app.use('/api/kostenstellen', kostenstellenRouter);
+app.use('/api/kategorien', kategorienRouter);
 app.use('/api/pauschalen', pauschalenRouter);
 app.post('/api/einreichungen/belege', uploadLimiter);
 // Eigentlicher Submit (Reisekosten + Erstattungen) zusätzlich gedrosselt

@@ -135,6 +135,14 @@ export interface SammelfahrtFormData {
 
 // ── Kategorien ─────────────────────────────────────────
 
+// Erstattungs-Kategorie, wie sie GET /api/kategorien/:mandantId zurückgibt.
+export interface ErstattungKategorie {
+  key: string;
+  label: string;
+  reihenfolge: number;
+}
+
+// Fallback, falls für einen Mandanten (noch) keine Kategorien gepflegt sind.
 export const ERSTATTUNG_KATEGORIEN = [
   { value: 'BUEROMATERIAL', label: 'Büromaterial' },
   { value: 'FACHLITERATUR', label: 'Fachliteratur' },
@@ -143,6 +151,13 @@ export const ERSTATTUNG_KATEGORIEN = [
   { value: 'FORTBILDUNG', label: 'Fortbildung' },
   { value: 'SONSTIGES', label: 'Sonstiges' },
 ] as const;
+
+// Fallback-Liste im {key,label}-Format der API (für den Wizard, wenn keine DB-Kategorien vorliegen).
+export const ERSTATTUNG_KATEGORIEN_FALLBACK: ErstattungKategorie[] = ERSTATTUNG_KATEGORIEN.map((k, i) => ({
+  key: k.value,
+  label: k.label,
+  reihenfolge: (i + 1) * 10,
+}));
 
 export const VERKEHRSMITTEL = [
   { value: 'PKW', label: 'PKW' },

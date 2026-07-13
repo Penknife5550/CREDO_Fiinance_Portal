@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { Mandant, Kostenstelle } from './types';
+import type { Mandant, Kostenstelle, ErstattungKategorie } from './types';
 import { apiFetch } from './utils';
 
 // ── Warnung bei Datenverlust (beforeunload) ────────────
@@ -92,6 +92,41 @@ export function useKostenstellen(mandantId: string) {
   }, [mandantId]);
 
   return { kostenstellen, loading, error };
+}
+
+// ── Erstattungs-Kategorien laden (abhängig von Mandant) ─
+
+export function useKategorien(mandantId: string) {
+  const [kategorien, setKategorien] = useState<ErstattungKategorie[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!mandantId) {
+      setKategorien([]);
+      setError(null);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    apiFetch<ErstattungKategorie[]>(`/kategorien/${mandantId}`)
+      .then((data) => {
+        setKategorien(data);
+        setError(null);
+      })
+      .catch((err) => {
+        setKategorien([]);
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Kategorien konnten nicht geladen werden. API nicht erreichbar.',
+        );
+      })
+      .finally(() => setLoading(false));
+  }, [mandantId]);
+
+  return { kategorien, loading, error };
 }
 
 // ── Auslandspauschalen laden (DB-gepflegt im AdminCenter) ──

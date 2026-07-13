@@ -64,6 +64,13 @@
       "when": 1778083200000,
       "tag": "0008_pauschalen_ausland",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778601600000,
+      "tag": "0009_erstattung_kategorien",
+      "breakpoints": true
     }
   ]
 }

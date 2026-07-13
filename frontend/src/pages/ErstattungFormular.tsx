@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useUnsavedWarning } from '@/lib/hooks';
+import { useState } from 'react';
+import { useUnsavedWarning, useKategorien } from '@/lib/hooks';
 import { ArrowLeft, ArrowRight, Check, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useToast } from '@/components/Toast';
@@ -10,7 +10,7 @@ import { DezimalInput } from '@/components/forms/DezimalInput';
 import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenErstattung } from '@/lib/api';
 import type { PersoenlicheDaten, ErstattungPosition } from '@/lib/types';
-import { ERSTATTUNG_KATEGORIEN } from '@/lib/types';
+import { ERSTATTUNG_KATEGORIEN_FALLBACK } from '@/lib/types';
 
 const STEPS = ['Persönliche Daten', 'Positionen & Belege', 'Zusammenfassung'];
 
@@ -37,6 +37,10 @@ export function ErstattungFormular() {
   const [unterschrift, setUnterschrift] = useState<string | undefined>();
 
   const gesamt = positionen.reduce((sum, p) => sum + (p.betrag || 0), 0);
+
+  // Kategorien des gewählten Mandanten (Fallback auf Standard, falls keine gepflegt)
+  const { kategorien } = useKategorien(persoenlich.mandantId);
+  const kategorieOptionen = kategorien.length > 0 ? kategorien : ERSTATTUNG_KATEGORIEN_FALLBACK;
 
   // Warnung bei Datenverlust (Browser-Reload / Schliessen)
   const hasData = !!(persoenlich.vorname || persoenlich.nachname || positionen.some(p => p.beschreibung));
@@ -205,8 +209,8 @@ export function ErstattungFormular() {
                         onChange={e => updatePosition(index, 'kategorie', e.target.value)}
                       >
                         <option value="">Wählen...</option>
-                        {ERSTATTUNG_KATEGORIEN.map(k => (
-                          <option key={k.value} value={k.value}>{k.label}</option>
+                        {kategorieOptionen.map(k => (
+                          <option key={k.key} value={k.key}>{k.label}</option>
                         ))}
                       </select>
                       {errors[`pos_${index}_kategorie`] && (
@@ -291,7 +295,7 @@ export function ErstattungFormular() {
                   <div>
                     <span className="text-credo-700">{pos.beschreibung || `Position ${i + 1}`}</span>
                     <span className="text-xs text-credo-500 ml-2">
-                      {ERSTATTUNG_KATEGORIEN.find(k => k.value === pos.kategorie)?.label}
+                      {kategorieOptionen.find(k => k.key === pos.kategorie)?.label}
                     </span>
                   </div>
                   <span className="font-medium">{formatCurrency(pos.betrag || 0)}</span>

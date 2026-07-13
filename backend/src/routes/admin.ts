@@ -184,6 +184,117 @@ adminRouter.delete('/kostenstellen/:id', async (req, res) => {
   }
 });
 
+// ── Erstattungs-Kategorien CRUD (pro Mandant) ──────────
+
+/** Leitet aus einer Bezeichnung einen stabilen, DB-tauglichen Key ab. */
+function kategorieKeyAusLabel(label: string): string {
+  return label
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 50);
+}
+
+// GET /api/admin/kategorien/:mandantId — alle Kategorien (inkl. inaktive) eines Mandanten
+adminRouter.get('/kategorien/:mandantId', async (req, res) => {
+  try {
+    const result = await db
+      .select()
+      .from(schema.erstattungKategorien)
+      .where(eq(schema.erstattungKategorien.mandantId, req.params.mandantId))
+      .orderBy(schema.erstattungKategorien.reihenfolge, schema.erstattungKategorien.label);
+    res.json(result);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Fehler beim Laden der Kategorien' });
+  }
+});
+
+// POST /api/admin/kategorien — neue Kategorie (Key wird aus der Bezeichnung abgeleitet)
+adminRouter.post('/kategorien', async (req, res) => {
+  try {
+    const body = z.object({
+      mandantId: z.string().uuid(),
+      label: z.string().min(1).max(100),
+      reihenfolge: z.number().int().nonnegative().default(0),
+    }).parse(req.body);
+
+    const key = kategorieKeyAusLabel(body.label);
+    if (!key) {
+      res.status(400).json({ error: 'Aus der Bezeichnung konnte kein gültiger Schlüssel gebildet werden' });
+      return;
+    }
+
+    const result = await db.insert(schema.erstattungKategorien).values({
+      mandantId: body.mandantId,
+      key,
+      label: body.label,
+      reihenfolge: body.reihenfolge,
+    }).returning();
+    res.status(201).json(result[0]);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else if (error instanceof Error && error.message.includes('duplicate')) {
+      res.status(409).json({ error: 'Eine Kategorie mit dieser Bezeichnung existiert bereits für diesen Mandanten' });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Kategorie konnte nicht angelegt werden' });
+    }
+  }
+});
+
+// PUT /api/admin/kategorien/:id — Bezeichnung/Reihenfolge/Sichtbarkeit (Key bleibt stabil)
+adminRouter.put('/kategorien/:id', async (req, res) => {
+  try {
+    const body = z.object({
+      label: z.string().min(1).max(100).optional(),
+      reihenfolge: z.number().int().nonnegative().optional(),
+      active: z.boolean().optional(),
+    }).parse(req.body);
+
+    const result = await db
+      .update(schema.erstattungKategorien)
+      .set(body)
+      .where(eq(schema.erstattungKategorien.id, req.params.id))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Kategorie nicht gefunden' });
+      return;
+    }
+    res.json(result[0]);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Kategorie konnte nicht aktualisiert werden' });
+    }
+  }
+});
+
+// DELETE /api/admin/kategorien/:id
+adminRouter.delete('/kategorien/:id', async (req, res) => {
+  try {
+    const result = await db
+      .delete(schema.erstattungKategorien)
+      .where(eq(schema.erstattungKategorien.id, req.params.id))
+      .returning();
+
+    if (result.length === 0) {
+      res.status(404).json({ error: 'Kategorie nicht gefunden' });
+      return;
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Kategorie konnte nicht gelöscht werden' });
+  }
+});
+
 // ── Auslandspauschalen ─────────────────────────────────
 // Editierbar im AdminCenter (PauschalenTab). Quelle: BMF-Schreiben (jaehrlich).
 
