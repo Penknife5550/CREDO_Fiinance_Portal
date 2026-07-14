@@ -71,6 +71,13 @@
       "when": 1778601600000,
       "tag": "0009_erstattung_kategorien",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778688000000,
+      "tag": "0010_smtp_email_log",
+      "breakpoints": true
     }
   ]
 }

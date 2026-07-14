@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info, Tags } from 'lucide-react';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info, Tags, RefreshCw } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 import { useToast } from '@/components/Toast';
 import { VORGANGSTYP_META, istKstAn, type KstField, type MandantAdmin, type Vorgangstyp } from '@/lib/types';
@@ -1593,35 +1593,150 @@ const AUTH_TYPE_LABELS: Record<string, string> = {
   HEADER: 'Header Auth',
 };
 
-function VersandTab() {
-  const [versandMethode, setVersandMethode] = useState('WEBHOOK');
+interface EmailConfigForm {
+  versandMethode: string;
+  smtpServer: string;
+  smtpPort: number | '';
+  smtpUser: string;
+  smtpPasswort: string;
+  absenderName: string;
+  absenderEmail: string;
+  maxVersuche: number;
+  fehlerEmail: string;
+}
 
+const LEERE_CONFIG: EmailConfigForm = {
+  versandMethode: 'SMTP',
+  smtpServer: '',
+  smtpPort: 587,
+  smtpUser: '',
+  smtpPasswort: '',
+  absenderName: 'CREDO Finanzportal',
+  absenderEmail: '',
+  maxVersuche: 3,
+  fehlerEmail: '',
+};
+
+function VersandTab() {
+  const { showToast } = useToast();
+  const [form, setForm] = useState<EmailConfigForm>(LEERE_CONFIG);
+  const [hasPassword, setHasPassword] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [methodeSaving, setMethodeSaving] = useState(false);
+  const [testEmail, setTestEmail] = useState('');
+  const [testing, setTesting] = useState(false);
+
+  const set = <K extends keyof EmailConfigForm>(key: K, value: EmailConfigForm[K]) =>
+    setForm(f => ({ ...f, [key]: value }));
 
   useEffect(() => {
     adminFetch('/api/admin/email-config')
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.versandMethode) setVersandMethode(data.versandMethode); })
-      .catch(() => {});
+      .then(data => {
+        if (data) {
+          setForm({
+            versandMethode: data.versandMethode || 'SMTP',
+            smtpServer: data.smtpServer || '',
+            smtpPort: data.smtpPort ?? 587,
+            smtpUser: data.smtpUser || '',
+            smtpPasswort: '',
+            absenderName: data.absenderName || 'CREDO Finanzportal',
+            absenderEmail: data.absenderEmail || '',
+            maxVersuche: data.maxVersuche ?? 3,
+            fehlerEmail: data.fehlerEmail || '',
+          });
+          setHasPassword(data.smtpPasswortEncrypted === '***');
+          setTestEmail(data.fehlerEmail || '');
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
+  // Versandmethode wird sofort gespeichert (Schnellumschalter, wie zuvor).
   const handleMethodeChange = async (methode: string) => {
-    const previous = versandMethode;
-    setVersandMethode(methode);
-    setSaving(true);
+    const previous = form.versandMethode;
+    set('versandMethode', methode);
+    setMethodeSaving(true);
     try {
       const res = await adminFetch('/api/admin/email-config', {
         method: 'PUT',
         body: JSON.stringify({ versandMethode: methode }),
       });
       if (!res.ok) throw new Error('Speichern fehlgeschlagen');
+      showToast(methode === 'SMTP' ? 'Versand: eigener SMTP-Server' : 'Versand: n8n-Webhook', 'success');
     } catch {
-      setVersandMethode(previous);
-      alert('Versandmethode konnte nicht gespeichert werden.');
+      set('versandMethode', previous);
+      showToast('Versandmethode konnte nicht gespeichert werden.', 'error');
+    } finally {
+      setMethodeSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const body = {
+        smtpServer: form.smtpServer || null,
+        smtpPort: form.smtpPort === '' ? null : Number(form.smtpPort),
+        smtpUser: form.smtpUser || null,
+        // '' + vorhandenes Passwort → '***' (unveraendert); sonst neuer Wert.
+        smtpPasswort: form.smtpPasswort !== '' ? form.smtpPasswort : (hasPassword ? '***' : ''),
+        absenderName: form.absenderName,
+        absenderEmail: form.absenderEmail,
+        maxVersuche: form.maxVersuche,
+        fehlerEmail: form.fehlerEmail || null,
+      };
+      const res = await adminFetch('/api/admin/email-config', {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Speichern fehlgeschlagen' }));
+        throw new Error(err.error || 'HTTP ' + res.status);
+      }
+      if (form.smtpPasswort !== '') setHasPassword(true);
+      set('smtpPasswort', '');
+      showToast('E-Mail-Konfiguration gespeichert', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Speichern fehlgeschlagen', 'error');
     } finally {
       setSaving(false);
     }
   };
+
+  const handleTest = async () => {
+    if (!testEmail) { showToast('Bitte eine Test-E-Mail-Adresse eintragen.', 'error'); return; }
+    setTesting(true);
+    try {
+      const res = await adminFetch('/api/admin/email-config/test', {
+        method: 'POST',
+        body: JSON.stringify({ testEmail }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        showToast(`Test-E-Mail gesendet (${data.durationMs} ms). Bitte Postfach prüfen.`, 'success');
+      } else {
+        showToast(`Test fehlgeschlagen: ${data?.error || 'Unbekannter Fehler'}`, 'error');
+      }
+    } catch {
+      showToast('Test konnte nicht durchgeführt werden.', 'error');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="text-center py-12 text-credo-500">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+        Lade...
+      </div>
+    );
+  }
+
+  const smtpAktiv = form.versandMethode === 'SMTP';
 
   return (
     <div className="space-y-6">
@@ -1632,79 +1747,329 @@ function VersandTab() {
             <label className="label">Wie sollen Einreichungen versendet werden?</label>
             <select
               className="input-field"
-              value={versandMethode}
+              value={form.versandMethode}
               onChange={e => handleMethodeChange(e.target.value)}
-              disabled={saving}
+              disabled={methodeSaving}
             >
-              <option value="WEBHOOK">Webhook (n8n / Outlook)</option>
-              <option value="SMTP">SMTP (direkter Mailserver)</option>
-              <option value="MS365">Microsoft 365 (Graph API)</option>
+              <option value="SMTP">SMTP (eigener Mailserver — empfohlen)</option>
+              <option value="WEBHOOK">Webhook (n8n / Outlook — Fallback)</option>
             </select>
-            {versandMethode === 'WEBHOOK' && (
-              <p className="mt-2 text-sm text-gray-500">
-                E-Mails werden per Webhook an n8n gesendet. n8n übernimmt den Versand inkl. PDF-Anhang über Outlook.
-              </p>
-            )}
+            <p className="mt-2 text-sm text-gray-500">
+              {smtpAktiv
+                ? 'Das Finanzportal versendet direkt per SMTP an die DMS-Adresse — E-Mail (Zusammenfassung) inkl. PDF-Anhang (Deckblatt mit QR).'
+                : 'E-Mails werden per Webhook an n8n gesendet. n8n übernimmt den Versand inkl. PDF-Anhang über Outlook.'}
+            </p>
           </div>
         </div>
       </div>
 
-      {versandMethode !== 'WEBHOOK' && (
+      {/* SMTP-Konfig immer sichtbar — so laesst sie sich im WEBHOOK-Modus vorab
+          konfigurieren + testen, bevor live auf SMTP umgeschaltet wird (kein Cutover-Loch). */}
+      {(
         <>
           <div className="card">
-            <h3 className="text-lg font-semibold text-credo-900 mb-4">E-Mail-Konfiguration</h3>
+            <h3 className="text-lg font-semibold text-credo-900 mb-4">SMTP-Konfiguration</h3>
+            {!smtpAktiv && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm text-amber-800">
+                <Info className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>SMTP ist aktuell <strong>nicht</strong> der aktive Kanal. Hier vorab konfigurieren, speichern und per Test-E-Mail prüfen — dann oben auf „SMTP" umschalten. So entsteht beim Umstieg keine Zustelllücke.</span>
+              </div>
+            )}
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">SMTP-Server</label>
-                  <input type="text" className="input-field" placeholder="smtp.office365.com" />
+                  <input type="text" className="input-field" placeholder="smtp.office365.com"
+                    value={form.smtpServer} onChange={e => set('smtpServer', e.target.value)} />
                 </div>
                 <div>
                   <label className="label">Port</label>
-                  <input type="number" className="input-field" placeholder="587" />
+                  <input type="number" className="input-field" placeholder="587"
+                    value={form.smtpPort} onChange={e => set('smtpPort', e.target.value === '' ? '' : Number(e.target.value))} />
+                  <p className="mt-1 text-xs text-credo-400">465 = SSL, 587 = STARTTLS</p>
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">Benutzer</label>
-                  <input type="text" className="input-field" placeholder="finanzportal@credo.de" />
+                  <input type="text" className="input-field" placeholder="finanzportal@credo.de" autoComplete="off"
+                    value={form.smtpUser} onChange={e => set('smtpUser', e.target.value)} />
                 </div>
                 <div>
-                  <label className="label">Passwort</label>
-                  <input type="password" className="input-field" placeholder="••••••••" />
+                  <label className="label">Passwort {hasPassword && <span className="text-xs text-green-600">(gesetzt)</span>}</label>
+                  <input type="password" className="input-field" autoComplete="new-password"
+                    placeholder={hasPassword ? '•••••••• (unverändert lassen)' : 'Passwort eingeben'}
+                    value={form.smtpPasswort} onChange={e => set('smtpPasswort', e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="label">Absender-Name</label>
-                  <input type="text" className="input-field" defaultValue="CREDO Finanzportal" />
+                  <input type="text" className="input-field"
+                    value={form.absenderName} onChange={e => set('absenderName', e.target.value)} />
                 </div>
                 <div>
                   <label className="label">Absender-E-Mail</label>
-                  <input type="email" className="input-field" defaultValue="finanzportal@credo.de" />
+                  <input type="email" className="input-field" placeholder="finanzportal@credo.de"
+                    value={form.absenderEmail} onChange={e => set('absenderEmail', e.target.value)} />
                 </div>
               </div>
-              <button className="btn-primary text-sm py-2">Test-E-Mail senden</button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Max. Versuche</label>
+                  <input type="number" min={1} max={10} className="input-field"
+                    value={form.maxVersuche} onChange={e => set('maxVersuche', Number(e.target.value) || 1)} />
+                </div>
+                <div>
+                  <label className="label">Fehler-Benachrichtigung an</label>
+                  <input type="email" className="input-field" placeholder="admin@credo.de"
+                    value={form.fehlerEmail} onChange={e => set('fehlerEmail', e.target.value)} />
+                </div>
+              </div>
+              <button onClick={handleSave} disabled={saving} className="btn-primary text-sm py-2 inline-flex items-center">
+                {saving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Save className="w-4 h-4 mr-1.5" />}
+                Konfiguration speichern
+              </button>
             </div>
           </div>
 
           <div className="card">
-            <h3 className="text-lg font-semibold text-credo-900 mb-4">Retry & Fehlerbehandlung</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="label">Max. Versuche</label>
-                <input type="number" className="input-field" defaultValue="3" />
+            <h3 className="text-lg font-semibold text-credo-900 mb-1">Verbindung testen</h3>
+            <p className="text-sm text-credo-500 mb-4">Sendet eine Test-E-Mail mit der aktuell gespeicherten SMTP-Konfiguration.</p>
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+              <div className="flex-1">
+                <label className="label">Test-Empfänger</label>
+                <input type="email" className="input-field" placeholder="ich@credo.de"
+                  value={testEmail} onChange={e => setTestEmail(e.target.value)} />
               </div>
-              <div>
-                <label className="label">Fehler-Benachrichtigung an</label>
-                <input type="email" className="input-field" placeholder="admin@credo.de" />
-              </div>
+              <button onClick={handleTest} disabled={testing} className="btn-secondary text-sm py-2 inline-flex items-center justify-center">
+                {testing ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
+                Test-E-Mail senden
+              </button>
             </div>
           </div>
         </>
       )}
 
+      <FehlgeschlageneVersaende />
+      <VersandProtokoll />
       <WebhookSection />
+    </div>
+  );
+}
+
+// ── Fehlgeschlagene Versände (manueller Requeue, Befund G) ─────────
+
+interface FehlversandRow {
+  id: string;
+  belegNr: string;
+  typ: string;
+  emailStatus: string;
+  emailVersuche: number;
+  emailLetzterFehler: string | null;
+  submittedAt: string;
+  hatPdf: boolean;
+  mandantName: string | null;
+  dmsEmail: string | null;
+}
+
+function FehlgeschlageneVersaende() {
+  const { showToast } = useToast();
+  const [rows, setRows] = useState<FehlversandRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const laden = async () => {
+    setLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/versand/fehlgeschlagen');
+      if (res.ok) setRows(await res.json());
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { laden(); }, []);
+
+  const handleResend = async (row: FehlversandRow) => {
+    setResendingId(row.id);
+    try {
+      const res = await adminFetch(`/api/admin/einreichungen/${row.id}/resend`, { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.erfolg) {
+        showToast(`${row.belegNr} erfolgreich versendet.`, 'success');
+        await laden();
+      } else {
+        showToast(`Erneuter Versand fehlgeschlagen: ${data?.fehler || 'Unbekannter Fehler'}`, 'error');
+      }
+    } catch {
+      showToast('Erneuter Versand fehlgeschlagen.', 'error');
+    } finally {
+      setResendingId(null);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-credo-900">Fehlgeschlagene Versände</h3>
+          <p className="text-sm text-credo-500 mt-0.5">Offene/fehlerhafte Zustellungen erneut anstoßen.</p>
+        </div>
+        <button onClick={laden} className="btn-secondary text-sm py-1.5 inline-flex items-center">
+          <RefreshCw className="w-4 h-4 mr-1.5" />
+          Aktualisieren
+        </button>
+      </div>
+
+      {loading && <p className="text-credo-500 text-sm">Lade...</p>}
+
+      {!loading && rows.length === 0 && (
+        <div className="text-center py-8 border-2 border-dashed border-credo-200 rounded-lg">
+          <CheckCircle className="w-8 h-8 text-green-400 mx-auto mb-2" />
+          <p className="text-credo-500 text-sm">Keine offenen Versände — alles zugestellt.</p>
+        </div>
+      )}
+
+      {!loading && rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-credo-200 text-left text-credo-500">
+                <th className="p-2 font-medium">Beleg-Nr</th>
+                <th className="p-2 font-medium">Mandant / DMS</th>
+                <th className="p-2 font-medium">Status</th>
+                <th className="p-2 font-medium">Letzter Fehler</th>
+                <th className="p-2 font-medium text-right">Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className="border-b border-credo-100 align-top">
+                  <td className="p-2 font-medium text-credo-800 whitespace-nowrap">{r.belegNr}</td>
+                  <td className="p-2 text-credo-600">
+                    <div>{r.mandantName || '—'}</div>
+                    <div className="text-xs text-credo-400">{r.dmsEmail || '—'}</div>
+                  </td>
+                  <td className="p-2 whitespace-nowrap">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${r.emailStatus === 'FEHLER' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {r.emailStatus} ({r.emailVersuche})
+                    </span>
+                  </td>
+                  <td className="p-2 text-xs text-credo-500 max-w-xs truncate" title={r.emailLetzterFehler || ''}>
+                    {r.emailLetzterFehler || '—'}
+                  </td>
+                  <td className="p-2 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => handleResend(r)}
+                      disabled={resendingId === r.id || !r.hatPdf}
+                      title={r.hatPdf ? 'Erneut versenden' : 'Kein PDF vorhanden'}
+                      className="btn-secondary text-xs py-1 px-2 inline-flex items-center disabled:opacity-50"
+                    >
+                      {resendingId === r.id ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+                      Erneut senden
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Versandprotokoll (email_log) ───────────────────────────────────
+
+interface EmailLogRow {
+  id: string;
+  belegNr: string | null;
+  kanal: string;
+  status: string;
+  empfaenger: string | null;
+  betreff: string | null;
+  fehler: string | null;
+  versuche: number;
+  istTest: boolean;
+  createdAt: string;
+}
+
+function VersandProtokoll() {
+  const [rows, setRows] = useState<EmailLogRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const laden = async () => {
+    setLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/email-log');
+      if (res.ok) setRows(await res.json());
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  useEffect(() => { laden(); }, []);
+
+  const statusFarbe = (status: string) =>
+    status === 'SENT' ? 'bg-green-50 text-green-700'
+    : status === 'FAILED' ? 'bg-red-50 text-red-700'
+    : 'bg-credo-100 text-credo-600';
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-credo-900">Versandprotokoll</h3>
+          <p className="text-sm text-credo-500 mt-0.5">Letzte 100 Zustellversuche (SMTP &amp; Webhook).</p>
+        </div>
+        <button onClick={laden} className="btn-secondary text-sm py-1.5 inline-flex items-center">
+          <RefreshCw className="w-4 h-4 mr-1.5" />
+          Aktualisieren
+        </button>
+      </div>
+
+      {loading && <p className="text-credo-500 text-sm">Lade...</p>}
+
+      {!loading && rows.length === 0 && (
+        <div className="text-center py-8 border-2 border-dashed border-credo-200 rounded-lg">
+          <Activity className="w-8 h-8 text-credo-300 mx-auto mb-2" />
+          <p className="text-credo-500 text-sm">Noch keine Versände protokolliert.</p>
+        </div>
+      )}
+
+      {!loading && rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-credo-200 text-left text-credo-500">
+                <th className="p-2 font-medium">Zeitpunkt</th>
+                <th className="p-2 font-medium">Beleg-Nr</th>
+                <th className="p-2 font-medium">Kanal</th>
+                <th className="p-2 font-medium">Status</th>
+                <th className="p-2 font-medium">Empfänger</th>
+                <th className="p-2 font-medium">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className="border-b border-credo-100 align-top">
+                  <td className="p-2 text-credo-500 whitespace-nowrap text-xs">{new Date(r.createdAt).toLocaleString('de-DE')}</td>
+                  <td className="p-2 font-medium text-credo-800 whitespace-nowrap">
+                    {r.belegNr || '—'}{r.istTest && <span className="ml-1 text-xs text-credo-400">(Test)</span>}
+                  </td>
+                  <td className="p-2 text-credo-600 whitespace-nowrap">{r.kanal}</td>
+                  <td className="p-2 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusFarbe(r.status)}`}>{r.status}</span>
+                  </td>
+                  <td className="p-2 text-credo-500 text-xs max-w-[12rem] truncate" title={r.empfaenger || ''}>{r.empfaenger || '—'}</td>
+                  <td className="p-2 text-credo-500 text-xs max-w-xs truncate" title={r.fehler || r.betreff || ''}>
+                    {r.fehler || r.betreff || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

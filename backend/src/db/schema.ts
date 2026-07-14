@@ -215,11 +215,14 @@ export const pauschalenAusland = pgTable('pauschalen_ausland', {
 
 export const emailConfig = pgTable('email_config', {
   id: uuid('id').defaultRandom().primaryKey(),
-  versandMethode: varchar('versand_methode', { length: 10 }).notNull().default('SMTP'), // SMTP oder MS365
+  // SMTP = eigener Direktversand (Standard), WEBHOOK = n8n-Fallback.
+  // 'MS365' wurde entfernt (war toter Code) — Legacy-Werte migriert Migration 0010 auf 'SMTP'.
+  versandMethode: varchar('versand_methode', { length: 10 }).notNull().default('SMTP'),
   smtpServer: varchar('smtp_server', { length: 255 }),
   smtpPort: integer('smtp_port'),
   smtpUser: varchar('smtp_user', { length: 255 }),
-  smtpPasswortEncrypted: text('smtp_passwort_encrypted'),
+  smtpPasswortEncrypted: text('smtp_passwort_encrypted'), // enc:v1: (crypto.ts) oder Legacy-Klartext
+  // ms365*-Spalten bleiben (ungenutzt) fuer Datenerhalt; kein OAuth-Versand implementiert.
   ms365TenantId: varchar('ms365_tenant_id', { length: 255 }),
   ms365ClientId: varchar('ms365_client_id', { length: 255 }),
   ms365ClientSecretEncrypted: text('ms365_client_secret_encrypted'),
@@ -229,6 +232,32 @@ export const emailConfig = pgTable('email_config', {
   fehlerEmail: varchar('fehler_email', { length: 255 }),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+// ── Versandprotokoll (jeder Zustellversuch, Kanal-uebergreifend) ────
+// Blaupause: HR-Portal EmailLog. Protokolliert jeden SMTP-/Webhook-Versuch
+// (SENT/FAILED/SKIPPED) fuer Nachvollziehbarkeit (IKS) und die Admin-Ansicht.
+// FK auf die Einreichung ist optional (ON DELETE SET NULL) — Testmails haben
+// keine Einreichung, und geloeschte Einreichungen sollen das Protokoll nicht mitnehmen.
+// beleg_nr wird denormalisiert mitgeschrieben, damit die Zeile ohne Join lesbar bleibt.
+
+export const emailLog = pgTable('email_log', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  einreichungId: uuid('einreichung_id').references(() => einreichungen.id, { onDelete: 'set null' }),
+  belegNr: varchar('beleg_nr', { length: 20 }),
+  kanal: varchar('kanal', { length: 10 }).notNull(),   // SMTP | WEBHOOK
+  status: varchar('status', { length: 10 }).notNull(), // SENT | FAILED | SKIPPED
+  empfaenger: varchar('empfaenger', { length: 255 }),
+  betreff: varchar('betreff', { length: 500 }),
+  messageId: varchar('message_id', { length: 255 }),
+  fehler: text('fehler'),
+  versuche: integer('versuche').notNull().default(0),
+  istTest: boolean('ist_test').notNull().default(false),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+}, (t) => ({
+  einreichungIdx: index('email_log_einreichung_idx').on(t.einreichungId),
+  createdAtIdx: index('email_log_created_at_idx').on(t.createdAt),
+  statusIdx: index('email_log_status_idx').on(t.status),
+}));
 
 // ── Webhook-Konfiguration (AdminCenter) ────────────────
 

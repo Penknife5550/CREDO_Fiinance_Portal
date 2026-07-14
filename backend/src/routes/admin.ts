@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { db, schema } from '../db/index.js';
-import { eq } from 'drizzle-orm';
+import { eq, desc, and, or, lt } from 'drizzle-orm';
 import { z } from 'zod';
 import { sendeTestWebhook, assertSafeWebhookUrl, UnsafeWebhookUrlError } from '../services/webhook.js';
 import { encryptSecret, isEncryptionConfigured, decryptSecretIfNeeded } from '../services/crypto.js';
+import { testSmtpVerbindung } from '../services/email.js';
+import { versendeErneut } from '../services/versand.js';
 import { TYP_FILTER_VALUES } from '../lib/constants.js';
 
 class EncryptionConfigError extends Error {
@@ -430,32 +432,158 @@ adminRouter.get('/email-config', async (_req, res) => {
   }
 });
 
-// PUT /api/admin/email-config — Versandmethode aktualisieren
+// PUT /api/admin/email-config — E-Mail-Konfiguration aktualisieren (Teilupdate).
+// Nur uebergebene Felder werden geaendert. Das Passwort wird verschluesselt abgelegt;
+// der Sentinel '***' bedeutet „unveraendert" (wie bei den Webhook-Secrets).
 adminRouter.put('/email-config', async (req, res) => {
   try {
     const body = z.object({
-      versandMethode: z.enum(['WEBHOOK', 'SMTP', 'MS365']),
+      versandMethode: z.enum(['WEBHOOK', 'SMTP']).optional(),
+      smtpServer: z.string().max(255).nullable().optional(),
+      smtpPort: z.number().int().positive().max(65535).nullable().optional(),
+      smtpUser: z.string().max(255).nullable().optional(),
+      smtpPasswort: z.string().max(500).nullable().optional(), // Klartext rein; '***' = unveraendert
+      absenderName: z.string().min(1).max(255).optional(),
+      absenderEmail: z.string().email().max(255).optional(),
+      maxVersuche: z.number().int().min(1).max(10).optional(),
+      fehlerEmail: z.union([z.string().email().max(255), z.literal('')]).nullable().optional(),
     }).parse(req.body);
 
-    const [existing] = await db.select().from(schema.emailConfig).limit(1);
-    if (!existing) {
-      res.status(404).json({ error: 'Keine E-Mail-Konfiguration vorhanden' });
-      return;
+    // Nur gesetzte Felder in den Patch uebernehmen.
+    const patch: Partial<typeof schema.emailConfig.$inferInsert> = { updatedAt: new Date() };
+    if (body.versandMethode !== undefined) patch.versandMethode = body.versandMethode;
+    if (body.smtpServer !== undefined) patch.smtpServer = body.smtpServer;
+    if (body.smtpPort !== undefined) patch.smtpPort = body.smtpPort;
+    if (body.smtpUser !== undefined) patch.smtpUser = body.smtpUser;
+    if (body.absenderName !== undefined) patch.absenderName = body.absenderName;
+    if (body.absenderEmail !== undefined) patch.absenderEmail = body.absenderEmail;
+    if (body.maxVersuche !== undefined) patch.maxVersuche = body.maxVersuche;
+    if (body.fehlerEmail !== undefined) patch.fehlerEmail = body.fehlerEmail || null;
+    // Passwort: '***' oder undefined → unveraendert; '' → loeschen; sonst verschluesseln.
+    if (body.smtpPasswort !== undefined && body.smtpPasswort !== '***') {
+      patch.smtpPasswortEncrypted = body.smtpPasswort === '' ? null : encryptOrPassthrough(body.smtpPasswort) ?? null;
     }
 
-    const [updated] = await db.update(schema.emailConfig)
-      .set({ versandMethode: body.versandMethode, updatedAt: new Date() })
-      .where(eq(schema.emailConfig.id, existing.id))
-      .returning();
+    const [existing] = await db.select().from(schema.emailConfig).limit(1);
+    let saved;
+    if (existing) {
+      [saved] = await db.update(schema.emailConfig)
+        .set(patch)
+        .where(eq(schema.emailConfig.id, existing.id))
+        .returning();
+    } else {
+      // Fallback: es existiert (noch) keine Zeile — mit sinnvollen Defaults anlegen.
+      [saved] = await db.insert(schema.emailConfig).values({
+        versandMethode: patch.versandMethode ?? 'SMTP',
+        absenderName: patch.absenderName ?? 'CREDO Finanzportal',
+        absenderEmail: patch.absenderEmail ?? 'finanzportal@credo.de',
+        maxVersuche: patch.maxVersuche ?? 3,
+        ...patch,
+      }).returning();
+    }
 
-    res.json(updated);
+    // Passwort nie zuruecksenden.
+    res.json({
+      ...saved,
+      smtpPasswortEncrypted: saved.smtpPasswortEncrypted ? '***' : null,
+      ms365ClientSecretEncrypted: saved.ms365ClientSecretEncrypted ? '***' : null,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
+    } else if (error instanceof EncryptionConfigError) {
+      res.status(400).json({ error: error.message });
     } else {
       console.error('Fehler:', error);
       res.status(500).json({ error: 'Fehler beim Aktualisieren der E-Mail-Konfiguration' });
     }
+  }
+});
+
+// POST /api/admin/email-config/test — Test-E-Mail ueber die aktuelle SMTP-Config senden
+adminRouter.post('/email-config/test', async (req, res) => {
+  try {
+    const { testEmail } = z.object({ testEmail: z.string().email() }).parse(req.body);
+    const result = await testSmtpVerbindung(testEmail);
+    res.json(result);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Bitte eine gueltige Test-E-Mail-Adresse angeben' });
+    } else {
+      console.error('Fehler:', error);
+      res.status(500).json({ error: 'Test konnte nicht durchgefuehrt werden' });
+    }
+  }
+});
+
+// GET /api/admin/email-log — Versandprotokoll (letzte 100 Zustellversuche)
+adminRouter.get('/email-log', async (_req, res) => {
+  try {
+    const rows = await db.select().from(schema.emailLog)
+      .orderBy(desc(schema.emailLog.createdAt))
+      .limit(100);
+    res.json(rows);
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Fehler beim Laden des Versandprotokolls' });
+  }
+});
+
+// GET /api/admin/versand/fehlgeschlagen — offene/fehlgeschlagene Zustellungen (fuer Requeue).
+// FEHLER immer; AUSSTEHEND nur, wenn aelter als das Retry-Fenster — sonst wuerde ein
+// gerade laufender Erstversand (fire-and-forget) angeboten und ein Requeue-Klick liefe
+// parallel dazu → Doppelzustellung ans DMS (Review-Befund R1).
+adminRouter.get('/versand/fehlgeschlagen', async (_req, res) => {
+  try {
+    const inFlightCutoff = new Date(Date.now() - 10 * 60 * 1000); // 10 min > max. Retry-Fenster (~90 s + Timeouts)
+    const rows = await db.select({
+      id: schema.einreichungen.id,
+      belegNr: schema.einreichungen.belegNr,
+      typ: schema.einreichungen.typ,
+      status: schema.einreichungen.status,
+      emailStatus: schema.einreichungen.emailStatus,
+      emailVersuche: schema.einreichungen.emailVersuche,
+      emailLetzterFehler: schema.einreichungen.emailLetzterFehler,
+      submittedAt: schema.einreichungen.submittedAt,
+      pdfDateipfad: schema.einreichungen.pdfDateipfad,
+      mandantName: schema.mandanten.name,
+      dmsEmail: schema.mandanten.dmsEmail,
+    })
+      .from(schema.einreichungen)
+      .leftJoin(schema.mandanten, eq(schema.einreichungen.mandantId, schema.mandanten.id))
+      .where(or(
+        eq(schema.einreichungen.emailStatus, 'FEHLER'),
+        and(
+          eq(schema.einreichungen.emailStatus, 'AUSSTEHEND'),
+          lt(schema.einreichungen.submittedAt, inFlightCutoff),
+        ),
+      ))
+      .orderBy(desc(schema.einreichungen.submittedAt))
+      .limit(100);
+
+    res.json(rows.map(r => ({
+      ...r,
+      hatPdf: !!r.pdfDateipfad,
+      pdfDateipfad: undefined,
+    })));
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Fehler beim Laden der fehlgeschlagenen Versaende' });
+  }
+});
+
+// POST /api/admin/einreichungen/:id/resend — manueller Requeue eines Versands
+adminRouter.post('/einreichungen/:id/resend', async (req, res) => {
+  try {
+    const result = await versendeErneut(req.params.id);
+    if (result.erfolg) {
+      res.json({ erfolg: true, versuche: result.versuche });
+    } else {
+      res.status(400).json({ erfolg: false, fehler: result.fehler });
+    }
+  } catch (error) {
+    console.error('Fehler:', error);
+    res.status(500).json({ error: 'Erneuter Versand fehlgeschlagen' });
   }
 });
 

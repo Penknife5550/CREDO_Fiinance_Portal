@@ -62,6 +62,16 @@ Wir kombinieren zwei existierende, bewährte Muster:
 
 ## Teil 2 — Eigener SMTP-Versand statt n8n (kritische Prüfung des vorhandenen Codes)
 
+> **✅ UMGESETZT am 2026-07-14.** Backend+Frontend `tsc` grün, `vite build` grün, **132 Vitest** (davon ~28 neu), ESLint 0 Fehler. Migration `0010_smtp_email_log` (+ Journal-Eintrag) läuft beim nächsten `npm run db:migrate`.
+>
+> **Entscheidungen dieser Session:** MS365 aus Enum/UI entfernt (Legacy → SMTP migriert) · Requeue **manuell** (Admin-Button, kein Cron) · eigene **`email_log`**-Tabelle (Versandprotokoll, wie HR) · Extras = Attachment-Limit + `env`-Validierung; **CC/BCC & QR-Swiss→EPC bewusst NICHT** (QR/CI = Teil 3).
+>
+> **Umgesetzt:** A (email.ts liest DB, ENV-Fallback, Passwort entschlüsselt) · E/I (gecachter Pool-Transporter, harte Timeouts, secure aus Port) · B/C (Kanal eindeutig `WEBHOOK\|SMTP`, Default SMTP) · G (email_log + Admin-Sektionen „Fehlgeschlagene Versände"/„Versandprotokoll", manuelles Resend) · H (fehlerEmail-Alarm) · J (Status-Guard). **Neu ggü. A–M gefunden:** Admin-PUT persistierte nur `versandMethode` + Frontend-SMTP-Felder waren tote Platzhalter → beides voll verdrahtet inkl. Test-Endpoint. Pure-Helper in `services/email-utils.ts`.
+>
+> **Adversariale Lückenprüfung (4 Linsen + Verify, 7/7 bestätigt) → behoben:** (R1) Requeue-Race gegen laufenden Erstversand → atomarer CAS-Claim + frische `AUSSTEHEND` (< 10 min) aus der Liste ausgeschlossen; (R2) Requeue war kanal-blind (immer SMTP) → jetzt kanalbewusst (WEBHOOK requeued via n8n); (C) Cutover-Falle → SMTP-Konfig/Test jetzt auch im WEBHOOK-Modus vorab konfigurier-/testbar; (B1) TLS `rejectUnauthorized` jetzt Default-streng + `requireTLS` bei Port ≠ 465, Abschwächung nur via `SMTP_ALLOW_SELF_SIGNED`.
+>
+> **Offen/dokumentiert (bewusst nicht gebaut):** `email_log.betreff` enthält Mitarbeiter-Klarnamen — **Retention/Löschjob** (analog Teil-3-90-Tage-Job) nachziehen und beim künftigen Einreichungs-Löschpfad die `email_log`-Zeilen mitlöschen (FK ist `ON DELETE SET NULL`). MS365-DB-Spalten bleiben ungenutzt liegen (Datenerhalt). QR-Swiss→EPC/GiroCode + Mandanten-CI im PDF = Teil 3.
+
 ### Was du willst
 - Weg von der n8n-Abhängigkeit, hin zu eigenem SMTP-Versand — so wie im **HR-Portal** umgesetzt.
 - Anhänge (PDF mit Belegen), QR-Code und CREDO-CI sollen wie bisher mitgehen.
