@@ -1765,7 +1765,6 @@ function VersandTab() {
 
       {/* SMTP-Konfig immer sichtbar — so laesst sie sich im WEBHOOK-Modus vorab
           konfigurieren + testen, bevor live auf SMTP umgeschaltet wird (kein Cutover-Loch). */}
-      {(
         <>
           <div className="card">
             <h3 className="text-lg font-semibold text-credo-900 mb-4">SMTP-Konfiguration</h3>
@@ -1849,7 +1848,6 @@ function VersandTab() {
             </div>
           </div>
         </>
-      )}
 
       <FehlgeschlageneVersaende />
       <VersandProtokoll />

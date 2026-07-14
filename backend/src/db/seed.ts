@@ -83,8 +83,9 @@ async function seed() {
   console.log(`  ✓ Admin-Zugang angelegt (admin@credo.de)`);
 
   // ── E-Mail-Konfiguration (Platzhalter) ─────────────
+  // SMTP ist der primaere (und einzige regulaere) Versandweg; n8n/Webhook nur optionaler Notnagel.
   await db.insert(schema.emailConfig).values({
-    versandMethode: 'WEBHOOK',
+    versandMethode: 'SMTP',
     absenderName: 'CREDO Finanzportal',
     absenderEmail: 'finanzportal@credo.de',
     maxVersuche: 3,

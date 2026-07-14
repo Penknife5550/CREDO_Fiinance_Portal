@@ -47,7 +47,8 @@ export interface EmailOptions {
 
 export type SendResult =
   | { ok: true; messageId?: string; accepted: string[] }
-  | { ok: false; error: string };
+  // permanent = erneuter Versuch zwecklos (z.B. Anhang zu gross/unlesbar) → Retry abbrechen
+  | { ok: false; error: string; permanent?: boolean };
 
 export interface RetryResult {
   erfolg: boolean;
@@ -173,15 +174,15 @@ export async function sendEmailDetailed(options: EmailOptions): Promise<SendResu
         contentType: 'application/pdf',
       });
     } catch (err) {
-      return { ok: false, error: `Anhang konnte nicht gelesen werden: ${err instanceof Error ? err.message : String(err)}` };
+      return { ok: false, error: `Anhang konnte nicht gelesen werden: ${err instanceof Error ? err.message : String(err)}`, permanent: true };
     }
   }
 
-  // Groessenpruefung (Befund F).
+  // Groessenpruefung (Befund F) — einzige Stelle; ein zu grosser Anhang ist permanent.
   const gesamtBytes = attachments.reduce((sum, a) => sum + a.content.length, 0);
   if (gesamtBytes > 0) {
     const check = pruefeAnhangGroesse(gesamtBytes);
-    if (!check.ok) return { ok: false, error: check.fehler! };
+    if (!check.ok) return { ok: false, error: check.fehler!, permanent: true };
   }
 
   try {
@@ -215,19 +216,18 @@ export async function sendEmailDetailed(options: EmailOptions): Promise<SendResu
 }
 
 /**
- * Versand mit Retry. Liest den PDF-Anhang einmal (Groessencheck vorab), damit ein
- * zu grosser Anhang nicht dreimal erfolglos versucht wird. Wirft niemals.
+ * Versand mit Retry. Liest den PDF-Anhang einmal (statt bei jedem Versuch neu).
+ * Die Groessengrenze prueft sendEmailDetailed einmalig; permanente Fehler
+ * (Anhang zu gross/unlesbar) brechen die Schleife sofort ab. Wirft niemals.
  */
 export async function sendeAnDmsMitRetry(options: EmailOptions, maxVersuche = 3): Promise<RetryResult> {
   const wartezeiten = [0, 30000, 60000]; // 0s, 30s, 60s
 
-  // PDF-Anhang einmal lesen + pruefen (statt bei jedem Versuch neu).
+  // PDF-Anhang einmal lesen (statt bei jedem Versuch neu).
   let attachments: MailAttachment[] | undefined = options.attachments;
   if (options.pdfDateipfad) {
     try {
       const buffer = await fs.promises.readFile(options.pdfDateipfad);
-      const check = pruefeAnhangGroesse(buffer.length);
-      if (!check.ok) return { erfolg: false, versuche: 0, fehler: check.fehler };
       attachments = [
         ...(options.attachments ?? []),
         { filename: options.pdfDateiname || 'Dokument.pdf', content: buffer, contentType: 'application/pdf' },
@@ -249,8 +249,10 @@ export async function sendeAnDmsMitRetry(options: EmailOptions, maxVersuche = 3)
 
   const anzahl = maxVersuche > 0 ? maxVersuche : 3;
   let letzterFehler = 'Unbekannter Fehler';
+  let versucht = 0;
 
   for (let versuch = 1; versuch <= anzahl; versuch++) {
+    versucht = versuch;
     if (versuch > 1) {
       await new Promise((r) => setTimeout(r, wartezeiten[Math.min(versuch - 1, wartezeiten.length - 1)]));
     }
@@ -260,9 +262,10 @@ export async function sendeAnDmsMitRetry(options: EmailOptions, maxVersuche = 3)
     }
     letzterFehler = result.error;
     console.error(`[Mailer] Versuch ${versuch}/${anzahl} fehlgeschlagen: ${letzterFehler}`);
+    if (result.permanent) break; // Anhang zu gross/unlesbar → erneuter Versuch zwecklos
   }
 
-  return { erfolg: false, versuche: anzahl, fehler: letzterFehler };
+  return { erfolg: false, versuche: versucht, fehler: letzterFehler };
 }
 
 // =============================================

@@ -93,6 +93,13 @@ async function benachrichtigeFehlerEmail(
   }
 }
 
+/** Deutsche Fehlermeldung fuer einen nicht (vollstaendig) zugestellten Webhook-Versand. */
+function webhookFehlerText(wh: { konfiguriert: number; fehlgeschlagen: number }): string {
+  return wh.konfiguriert === 0
+    ? 'Versandmethode WEBHOOK, aber kein aktiver Webhook fuer diesen Vorgang konfiguriert.'
+    : `${wh.fehlgeschlagen} von ${wh.konfiguriert} Webhook-Ziel(en) nicht erreichbar.`;
+}
+
 /** Versendet eine Einreichung entweder via n8n-Webhook oder direkt per SMTP — abhaengig
  *  von emailConfig.versandMethode. Identische Pipeline fuer Reisekosten/Erstattung/Sammelfahrt. */
 export async function versendeEinreichung(opts: VersandOptions): Promise<void> {
@@ -106,15 +113,30 @@ export async function versendeEinreichung(opts: VersandOptions): Promise<void> {
 
   if (kanal === 'WEBHOOK') {
     try {
-      await sendeWebhook('eingereicht', webhookData, dmsEmail, pdfPfad);
-      await aktualisiereVersandStatus(einreichungId, belegNr, {
-        emailStatus: 'GESENDET',
-        status: 'GESENDET',
-      });
-      await schreibeEmailLog({
-        einreichungId, belegNr, kanal, status: 'SENT',
-        empfaenger: dmsEmail, betreff: smtpBetreff, versuche: 1,
-      });
+      const wh = await sendeWebhook('eingereicht', webhookData, dmsEmail, pdfPfad);
+      if (wh.konfiguriert > 0 && wh.fehlgeschlagen === 0) {
+        await aktualisiereVersandStatus(einreichungId, belegNr, {
+          emailStatus: 'GESENDET',
+          status: 'GESENDET',
+        });
+        await schreibeEmailLog({
+          einreichungId, belegNr, kanal, status: 'SENT',
+          empfaenger: dmsEmail, betreff: smtpBetreff, versuche: wh.konfiguriert,
+        });
+      } else {
+        // Webhook wirft nicht bei HTTP-Fehlern → aus der Bilanz erkennen (Review-Fund #1).
+        const fehler = webhookFehlerText(wh);
+        await aktualisiereVersandStatus(einreichungId, belegNr, {
+          emailStatus: 'FEHLER',
+          status: 'FEHLER',
+          emailLetzterFehler: fehler,
+        }, { nurWennNichtGesendet: true });
+        await schreibeEmailLog({
+          einreichungId, belegNr, kanal, status: 'FAILED',
+          empfaenger: dmsEmail, betreff: smtpBetreff, fehler, versuche: wh.konfiguriert,
+        });
+        if (fehlerEmail) await benachrichtigeFehlerEmail(fehlerEmail, belegNr, dmsEmail, fehler);
+      }
     } catch (err) {
       const fehler = err instanceof Error ? err.message : String(err);
       console.error(`[${belegNr}] Webhook-Versand fehlgeschlagen:`, err);
@@ -283,9 +305,14 @@ export async function versendeErneut(einreichungId: string): Promise<ResendResul
       kontoinhaber: einreichung.bankKontoinhaber,
     };
     try {
-      await sendeWebhook('eingereicht', webhookData, mandant.dmsEmail, einreichung.pdfDateipfad);
-      await erfolgVermerken(1);
-      return { erfolg: true, versuche: 1 };
+      const wh = await sendeWebhook('eingereicht', webhookData, mandant.dmsEmail, einreichung.pdfDateipfad);
+      if (wh.konfiguriert > 0 && wh.fehlgeschlagen === 0) {
+        await erfolgVermerken(wh.konfiguriert);
+        return { erfolg: true, versuche: wh.konfiguriert };
+      }
+      const fehler = webhookFehlerText(wh);
+      await fehlerVermerken(fehler, wh.konfiguriert);
+      return { erfolg: false, versuche: wh.konfiguriert, fehler };
     } catch (err) {
       const fehler = err instanceof Error ? err.message : String(err);
       await fehlerVermerken(fehler, 1);

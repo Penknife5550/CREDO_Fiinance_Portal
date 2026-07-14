@@ -121,9 +121,23 @@ async function postMitRetry(url: string, body: string, headers: Record<string, s
   return { ok: false, status: letzterStatus, fehler: letzterFehler.substring(0, 500) };
 }
 
-/** Sendet Webhook an alle aktiven Konfigurationen */
-export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookEinreichungData, an: string, pdfDateipfad?: string) {
+/** Zustell-Bilanz eines Webhook-Versands ueber alle passenden Konfigurationen. */
+export interface WebhookVersandErgebnis {
+  /** Anzahl aktiver Ziel-Webhooks, die auf Typ + Event passen. */
+  konfiguriert: number;
+  /** Davon erfolgreich zugestellt (HTTP 2xx). */
+  zugestellt: number;
+  /** Davon endgueltig fehlgeschlagen. */
+  fehlgeschlagen: number;
+}
+
+/** Sendet Webhook an alle aktiven Konfigurationen. Liefert eine Zustell-Bilanz, damit
+ *  der Aufrufer Erfolg/Fehler unterscheiden kann — postMitRetry wirft NICHT bei HTTP-Fehlern. */
+export async function sendeWebhook(event: WebhookPayload['event'], data: WebhookEinreichungData, an: string, pdfDateipfad?: string): Promise<WebhookVersandErgebnis> {
   const configs = await db.select().from(schema.webhookConfig);
+  let konfiguriert = 0;
+  let zugestellt = 0;
+  let fehlgeschlagen = 0;
 
   // PDF als Base64 lesen (einmal für alle Webhooks)
   let pdfBase64: string | undefined;
@@ -197,13 +211,18 @@ export async function sendeWebhook(event: WebhookPayload['event'], data: Webhook
 
     console.log(`  Webhook senden → ${config.url} [${event}] (${Math.round(body.length / 1024)} KB, hasPdf=${!!pdfBase64}, signed=${!!signature})`);
 
+    konfiguriert++;
     const result = await postMitRetry(config.url, body, headers);
     if (result.ok) {
+      zugestellt++;
       console.log(`  Webhook erfolgreich → ${config.url} [${event}] (${result.status})`);
     } else {
+      fehlgeschlagen++;
       console.error(`  Webhook fehlgeschlagen (${config.url}): HTTP ${result.status ?? 'n/a'} ${result.fehler}`);
     }
   }
+
+  return { konfiguriert, zugestellt, fehlgeschlagen };
 }
 
 /** Sendet einen Test-Webhook an eine spezifische URL */
