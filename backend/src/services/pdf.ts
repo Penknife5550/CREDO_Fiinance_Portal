@@ -422,74 +422,7 @@ export async function erstelleGesamtPdf(
   drawText('Dieses Dokument wurde digital erstellt.', 50, 8);
 
   // ── Belege als Folgeseiten einbetten ─────────────────
-
-  for (let i = 0; i < belegDateipfade.length; i++) {
-    const pfad = belegDateipfade[i];
-    const ext = path.extname(pfad).toLowerCase();
-
-    try {
-      if (ext === '.pdf') {
-        // PDF-Belege: Seiten direkt kopieren
-        const belegBytes = await fs.promises.readFile(pfad);
-        const belegDoc = await PDFDocument.load(belegBytes);
-        const pages = await doc.copyPages(belegDoc, belegDoc.getPageIndices());
-        for (const p of pages) {
-          doc.addPage(p);
-        }
-      } else {
-        // Bilder: Auf A4-Seite skalieren
-        let imageBytes: Buffer;
-
-        if (ext === '.heic') {
-          // HEIC → PNG konvertieren
-          imageBytes = await sharp(pfad).png().toBuffer();
-        } else {
-          // JPG/PNG: Optimieren auf max 2000px
-          imageBytes = await sharp(pfad)
-            .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
-            .jpeg({ quality: 85 })
-            .toBuffer();
-        }
-
-        const imagePage = doc.addPage([595, 842]);
-
-        // Anlage-Header
-        imagePage.drawText(`Anlage ${i + 1}: ${path.basename(pfad)}`, {
-          x: 50, y: 820, size: 9, font, color: rgb(0.4, 0.4, 0.4),
-        });
-
-        // Bild einbetten
-        let image;
-        if (ext === '.png' || ext === '.heic') {
-          image = await doc.embedPng(imageBytes);
-        } else {
-          image = await doc.embedJpg(imageBytes);
-        }
-
-        const maxW = 495; // A4 - 2x50 Rand
-        const maxH = 740; // A4 - Header - Footer
-        const scale = Math.min(maxW / image.width, maxH / image.height, 1);
-        const w = image.width * scale;
-        const h = image.height * scale;
-
-        imagePage.drawImage(image, {
-          x: 50 + (maxW - w) / 2,
-          y: 50 + (maxH - h) / 2,
-          width: w,
-          height: h,
-        });
-      }
-    } catch (err) {
-      // Bei Fehler: Platzhalter-Seite
-      const errorPage = doc.addPage([595, 842]);
-      errorPage.drawText(`Anlage ${i + 1}: ${path.basename(pfad)}`, {
-        x: 50, y: 800, size: 10, font: fontBold, color: rgb(0.8, 0.2, 0.2),
-      });
-      errorPage.drawText('Beleg konnte nicht eingebettet werden.', {
-        x: 50, y: 780, size: 10, font, color: rgb(0.5, 0.5, 0.5),
-      });
-    }
-  }
+  await haengeBelegeAn(doc, belegDateipfade, font, fontBold);
 
   // ── PDF speichern ────────────────────────────────────
 
@@ -499,7 +432,321 @@ export async function erstelleGesamtPdf(
   await fs.promises.writeFile(outputPfad, pdfBytes);
 }
 
+/** Haengt Belege als Folgeseiten an (PDF-Seiten kopieren, Bilder auf A4 skalieren).
+ *  Von allen Vorgangstypen gemeinsam genutzt. */
+async function haengeBelegeAn(
+  doc: PDFDocument,
+  belegDateipfade: string[],
+  font: PDFFont,
+  fontBold: PDFFont,
+): Promise<void> {
+  for (let i = 0; i < belegDateipfade.length; i++) {
+    const pfad = belegDateipfade[i];
+    const ext = path.extname(pfad).toLowerCase();
+
+    try {
+      if (ext === '.pdf') {
+        const belegBytes = await fs.promises.readFile(pfad);
+        const belegDoc = await PDFDocument.load(belegBytes);
+        const pages = await doc.copyPages(belegDoc, belegDoc.getPageIndices());
+        for (const p of pages) doc.addPage(p);
+      } else {
+        let imageBytes: Buffer;
+        if (ext === '.heic' || ext === '.heif') {
+          imageBytes = await sharp(pfad).png().toBuffer();
+        } else {
+          imageBytes = await sharp(pfad)
+            .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+        }
+
+        const imagePage = doc.addPage([595, 842]);
+        imagePage.drawText(`Anlage ${i + 1}: ${path.basename(pfad)}`, {
+          x: 50, y: 820, size: 9, font, color: rgb(0.4, 0.4, 0.4),
+        });
+
+        const image = ext === '.png' || ext === '.heic' || ext === '.heif'
+          ? await doc.embedPng(imageBytes)
+          : await doc.embedJpg(imageBytes);
+
+        const maxW = 495;
+        const maxH = 740;
+        const scale = Math.min(maxW / image.width, maxH / image.height, 1);
+        const w = image.width * scale;
+        const h = image.height * scale;
+        imagePage.drawImage(image, {
+          x: 50 + (maxW - w) / 2,
+          y: 50 + (maxH - h) / 2,
+          width: w,
+          height: h,
+        });
+      }
+    } catch {
+      const errorPage = doc.addPage([595, 842]);
+      errorPage.drawText(`Anlage ${i + 1}: ${path.basename(pfad)}`, {
+        x: 50, y: 800, size: 10, font: fontBold, color: rgb(0.8, 0.2, 0.2),
+      });
+      errorPage.drawText('Beleg konnte nicht eingebettet werden.', {
+        x: 50, y: 780, size: 10, font, color: rgb(0.5, 0.5, 0.5),
+      });
+    }
+  }
+}
+
+// ── Klassenfahrt-PDF (eigener Zweig: Deckblatt mit Auszahlungstabelle je Konto,
+//    Zeichnungsfeldern und reinem DMS-QR über die Belegnummer) ──────────────────
+
+export interface KlassenfahrtPdfKlasse {
+  bezeichnung?: string;
+  schueler: number;
+  begleiter: number;
+  empfaenger: string;
+  iban: string;
+  kostenanteil: number;
+  zuschuss: number;
+}
+
+export interface KlassenfahrtPdfKostenzeile {
+  oberkategorie: string;
+  bezeichnung: string;
+  modus: 'PROPORTIONAL' | 'DIREKT';
+  betrag: number;
+}
+
+export interface KlassenfahrtPdfData {
+  belegNr: string;
+  mandantName: string;
+  mandantNr: number;
+  anlass: string;
+  ziel?: string;
+  zeitraumVon: string;
+  zeitraumBis: string;
+  einreicherName: string;
+  klassen: KlassenfahrtPdfKlasse[];
+  kostenzeilen: KlassenfahrtPdfKostenzeile[];
+  gesamtZuschuss: number;
+  unterschriftBild?: string;
+}
+
+const OBERKATEGORIE_LABEL: Record<string, string> = {
+  FAHRTKOSTEN: 'Fahrtkosten',
+  UNTERKUNFT: 'Unterkunft',
+  AKTIVITAETEN: 'Aktivitäten',
+  SONSTIGES: 'Sonstiges',
+};
+
+export async function erstelleKlassenfahrtPdf(
+  data: KlassenfahrtPdfData,
+  belegDateipfade: string[],
+  outputPfad: string,
+): Promise<void> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+
+  const firstPage = doc.addPage([595, 842]);
+  const { width, height } = firstPage.getSize();
+  const ctx: PageContext = { doc, page: firstPage, y: height - 50, width, height, font, fontBold };
+
+  const drawText = (text: string, x: number, size = 10, bold = false) => {
+    checkPageBreak(ctx);
+    ctx.page.drawText(text, { x, y: ctx.y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
+  };
+  const drawTextAt = (text: string, x: number, yPos: number, size = 10, bold = false) => {
+    ctx.page.drawText(text, { x, y: yPos, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
+  };
+  const drawLine = () => {
+    checkPageBreak(ctx);
+    ctx.page.drawLine({ start: { x: 50, y: ctx.y }, end: { x: width - 50, y: ctx.y }, thickness: 0.5, color: rgb(0.7, 0.7, 0.7) });
+  };
+  const drawTextClipped = (text: string, x: number, yPos: number, maxX: number, size = 10, bold = false) => {
+    const f = bold ? fontBold : font;
+    let display = text;
+    while (f.widthOfTextAtSize(display, size) > maxX - x && display.length > 1) {
+      display = display.slice(0, -2) + '…';
+    }
+    ctx.page.drawText(display, { x, y: yPos, size, font: f, color: rgb(0.1, 0.1, 0.1) });
+  };
+
+  // ── DMS-QR (reine Zuordnung über die Belegnummer, KEIN Zahlungs-QR/Swiss-QR) ──
+  const qrDatum = new Date().toLocaleDateString('de-DE');
+  const qrPayload = [
+    'CREDO-DMS',
+    'TYP:KLASSENFAHRT',
+    `MNR:${data.mandantNr}`,
+    `BNR:${data.belegNr}`,
+    `DAT:${qrDatum}`,
+    `BET:${formatEur(data.gesamtZuschuss)}`,
+  ].join('\n');
+  let qrImage: Awaited<ReturnType<typeof doc.embedPng>> | null = null;
+  try {
+    const qrPng = await QRCode.toBuffer(qrPayload, { type: 'png', width: 260, margin: 0, errorCorrectionLevel: 'M' });
+    qrImage = await doc.embedPng(qrPng);
+  } catch (qrErr) {
+    console.error('QR-Code konnte nicht erstellt werden:', qrErr);
+  }
+
+  // Header
+  const titel = 'KLASSENFAHRT-ABRECHNUNG';
+  drawText('CREDO', 50, 14, true);
+  drawTextAt(titel, width - 50 - fontBold.widthOfTextAtSize(titel, 14), ctx.y, 14, true);
+  ctx.y -= 25;
+  drawLine();
+  ctx.y -= 20;
+
+  // Meta (links) + QR (rechts)
+  const qrSize = 110;
+  const qrX = width - 50 - qrSize;
+  const qrY = ctx.y - qrSize + 10;
+  const textMaxX = qrX - 15;
+
+  const summeS = data.klassen.reduce((s, k) => s + k.schueler, 0);
+  const summeB = data.klassen.reduce((s, k) => s + k.begleiter, 0);
+
+  drawText(`Beleg-Nr: ${data.belegNr}`, 50, 10, true);
+  drawTextClipped(`Datum: ${qrDatum}`, 250, ctx.y, textMaxX);
+  ctx.y -= 15;
+  drawTextClipped(`Mandant: ${data.mandantName} (${data.mandantNr})`, 50, ctx.y, textMaxX);
+  ctx.y -= 15;
+  drawTextClipped(`Anlass: ${data.anlass}`, 50, ctx.y, textMaxX);
+  ctx.y -= 15;
+  if (data.ziel) {
+    drawTextClipped(`Ziel: ${data.ziel}`, 50, ctx.y, textMaxX);
+    ctx.y -= 15;
+  }
+  drawText(`Zeitraum: ${formatDatumKurz(data.zeitraumVon)} – ${formatDatumKurz(data.zeitraumBis)}`, 50);
+  ctx.y -= 15;
+  drawTextClipped(`Einreicher: ${data.einreicherName}`, 50, ctx.y, textMaxX);
+  ctx.y -= 15;
+  drawText(`Klassen: ${data.klassen.length}  ·  Schüler: ${summeS}  ·  Begleiter: ${formatDezimal(summeB)}`, 50);
+
+  if (qrImage) {
+    ctx.page.drawRectangle({ x: qrX - 5, y: qrY - 5, width: qrSize + 10, height: qrSize + 10, borderColor: rgb(0.8, 0.8, 0.8), borderWidth: 0.5, color: rgb(1, 1, 1) });
+    ctx.page.drawImage(qrImage, { x: qrX, y: qrY, width: qrSize, height: qrSize });
+    drawTextAt('DMS-Beleg (QR)', qrX + qrSize / 2 - fontBold.widthOfTextAtSize('DMS-Beleg (QR)', 7) / 2, qrY - 12, 7, true);
+  }
+
+  ctx.y = Math.min(ctx.y, qrY - 18) - 10;
+  drawLine();
+  ctx.y -= 22;
+
+  // Gesamt-Zuschuss (Hervorhebung)
+  checkPageBreak(ctx);
+  ctx.page.drawRectangle({ x: 48, y: ctx.y - 6, width: width - 96, height: 32, color: rgb(0.95, 0.95, 0.95) });
+  drawText('GESAMT-ZUSCHUSS FÖRDERVEREIN:', 55, 12, true);
+  drawTextAt(formatEur(data.gesamtZuschuss), width - 50 - fontBold.widthOfTextAtSize(formatEur(data.gesamtZuschuss), 12), ctx.y, 12, true);
+  ctx.y -= 40;
+
+  // Auszahlungstabelle je Klassenkonto
+  checkPageBreak(ctx);
+  drawText('AUSZAHLUNG JE KLASSENKONTO', 50, 11, true);
+  ctx.y -= 18;
+  drawText('Klasse', 50, 9, true);
+  drawTextAt('Empfänger', 120, ctx.y, 9, true);
+  drawTextAt('S', 330, ctx.y, 9, true);
+  drawTextAt('B', 360, ctx.y, 9, true);
+  drawTextAt('Kosten', 400, ctx.y, 9, true);
+  drawTextAt('Zuschuss', 480, ctx.y, 9, true);
+  ctx.y -= 12;
+  drawLine();
+  ctx.y -= 14;
+
+  data.klassen.forEach((k, i) => {
+    checkPageBreak(ctx);
+    const label = k.bezeichnung || `Klasse ${i + 1}`;
+    drawText(label, 50, 9, true);
+    drawTextClipped(k.empfaenger, 120, ctx.y, 325, 9);
+    drawTextAt(String(k.schueler), 330, ctx.y, 9);
+    drawTextAt(formatDezimal(k.begleiter), 360, ctx.y, 9);
+    drawTextAt(formatEur(k.kostenanteil), 400, ctx.y, 9);
+    drawTextAt(formatEur(k.zuschuss), 480, ctx.y, 9, true);
+    ctx.y -= 12;
+    ctx.page.drawText(`IBAN: ${formatIbanDisplay(k.iban)}`, { x: 120, y: ctx.y, size: 8, font, color: rgb(0.45, 0.45, 0.45) });
+    ctx.y -= 15;
+  });
+
+  drawLine();
+  ctx.y -= 14;
+  drawText('Gesamt', 50, 10, true);
+  drawTextAt(formatEur(data.gesamtZuschuss), 480, ctx.y, 10, true);
+  ctx.y -= 24;
+  drawLine();
+  ctx.y -= 20;
+
+  // Kostendetails
+  checkPageBreak(ctx);
+  drawText('KOSTENDETAILS', 50, 11, true);
+  ctx.y -= 18;
+  for (const z of data.kostenzeilen) {
+    checkPageBreak(ctx);
+    const kat = OBERKATEGORIE_LABEL[z.oberkategorie] || z.oberkategorie;
+    const modus = z.modus === 'PROPORTIONAL' ? 'proportional' : 'direkt';
+    drawTextClipped(`${kat}: ${z.bezeichnung}  (${modus})`, 50, ctx.y, 440, 9);
+    drawTextAt(formatEur(z.betrag), 480, ctx.y, 9);
+    ctx.y -= 14;
+  }
+  ctx.y -= 10;
+  drawLine();
+  ctx.y -= 20;
+
+  // Unterschrift
+  if (data.unterschriftBild) {
+    checkPageBreak(ctx);
+    drawText('DIGITALE UNTERSCHRIFT (Einreicher)', 50, 11, true);
+    ctx.y -= 18;
+    try {
+      const sigData = data.unterschriftBild.replace(/^data:image\/\w+;base64,/, '');
+      const sigBytes = Buffer.from(sigData, 'base64');
+      const sigImage = await doc.embedPng(sigBytes);
+      const sigDims = sigImage.scale(0.3);
+      checkPageBreak(ctx);
+      ctx.page.drawImage(sigImage, { x: 50, y: ctx.y - sigDims.height, width: sigDims.width, height: sigDims.height });
+      ctx.y -= sigDims.height + 5;
+    } catch {
+      drawText('(Unterschrift konnte nicht eingebettet werden)', 50);
+      ctx.y -= 15;
+    }
+    drawText(`${data.einreicherName}, ${new Date().toLocaleString('de-DE')}`, 50);
+    ctx.y -= 25;
+  }
+
+  // Interne Freigabe (Verein) — leere Zeichnungsfelder (offline abzeichnen)
+  checkPageBreak(ctx);
+  if (ctx.y < 150) { ctx.page = doc.addPage([595, 842]); ctx.y = height - 60; }
+  drawText('INTERNE FREIGABE (Förderverein)', 50, 11, true);
+  ctx.y -= 40;
+  const felder = ['Geprüft', 'Freigegeben', 'Überwiesen'];
+  felder.forEach((label, i) => {
+    const x = 50 + i * 165;
+    ctx.page.drawLine({ start: { x, y: ctx.y }, end: { x: x + 145, y: ctx.y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6) });
+    ctx.page.drawText(label, { x, y: ctx.y - 12, size: 8, font, color: rgb(0.45, 0.45, 0.45) });
+    ctx.page.drawText('(Datum / Unterschrift)', { x, y: ctx.y - 22, size: 7, font, color: rgb(0.6, 0.6, 0.6) });
+  });
+  ctx.y -= 40;
+
+  // Footer
+  checkPageBreak(ctx);
+  drawLine();
+  ctx.y -= 15;
+  drawText(`Erstellt am ${new Date().toLocaleString('de-DE')} | ${data.belegNr}`, 50, 8);
+  ctx.y -= 12;
+  drawText('Dieses Dokument wurde digital erstellt.', 50, 8);
+
+  // Belege anhängen
+  await haengeBelegeAn(doc, belegDateipfade, font, fontBold);
+
+  const pdfBytes = await doc.save();
+  const dir = path.dirname(outputPfad);
+  await fs.promises.mkdir(dir, { recursive: true });
+  await fs.promises.writeFile(outputPfad, pdfBytes);
+}
+
 // ── Hilfsfunktionen ────────────────────────────────────
+
+function formatDezimal(n: number): string {
+  return (Number.isInteger(n) ? String(n) : n.toFixed(2).replace('.', ',')).replace(/,00$/, '');
+}
 
 function formatEur(betrag: number): string {
   return `${betrag.toFixed(2).replace('.', ',')} EUR`;

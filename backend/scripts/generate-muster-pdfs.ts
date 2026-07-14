@@ -4,7 +4,8 @@
  */
 
 import path from 'path';
-import { erstelleGesamtPdf } from '../src/services/pdf.js';
+import { erstelleGesamtPdf, erstelleKlassenfahrtPdf } from '../src/services/pdf.js';
+import { berechneKlassenfahrt } from '../src/lib/klassenfahrt.js';
 
 const OUTPUT_DIR = path.resolve(import.meta.dirname, '../../muster_pdfs');
 
@@ -102,7 +103,65 @@ async function main() {
   );
 
   console.log(`✓ Erstattung-Muster erstellt: ${erstattungPfad}`);
-  console.log(`\nBeide Muster-PDFs liegen in: ${OUTPUT_DIR}`);
+
+  // ── Muster 3: Klassenfahrt (3-Klassen-Beispiel = 281,80 €) ─────────
+  const klassenfahrtPfad = path.join(OUTPUT_DIR, 'MUSTER_Klassenfahrt_KF-2026-00001.pdf');
+
+  type MusterRow = { oberkategorie: string; bezeichnung: string; modus: 'PROPORTIONAL' | 'DIREKT'; betrag: number; anteile?: number[] };
+  const kfKlassenInput = [
+    { schueler: 27, begleiter: 2 },
+    { schueler: 25, begleiter: 2 },
+    { schueler: 24, begleiter: 2 },
+  ];
+  const rows: MusterRow[] = [
+    { oberkategorie: 'FAHRTKOSTEN', bezeichnung: 'Bus (Maranatha GmbH)', modus: 'PROPORTIONAL', betrag: 580 },
+    { oberkategorie: 'UNTERKUNFT', bezeichnung: 'Christl. Gästehäuser Willingen', modus: 'PROPORTIONAL', betrag: 4793.2 },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Sommerrodelbahn', modus: 'DIREKT', betrag: 450, anteile: [250, 0, 200] },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Bogenschießen', modus: 'DIREKT', betrag: 510, anteile: [270, 0, 240] },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Kartfahren', modus: 'DIREKT', betrag: 528.94, anteile: [285.6, 0, 243.34] },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Bowling', modus: 'DIREKT', betrag: 147, anteile: [83.7, 0, 63.3] },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Schwimmbad', modus: 'PROPORTIONAL', betrag: 171 },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Ettelsberg-Seilbahn', modus: 'PROPORTIONAL', betrag: 36 },
+    { oberkategorie: 'AKTIVITAETEN', bezeichnung: 'Klettern', modus: 'PROPORTIONAL', betrag: 500 },
+  ];
+  const kfErgebnis = berechneKlassenfahrt(
+    kfKlassenInput,
+    rows.map(r => ({ modus: r.modus, betrag: r.betrag, anteile: r.anteile })),
+  );
+  const kfKonten = [
+    { bezeichnung: 'Klasse 6a', empfaenger: 'Klassenkasse 6a', iban: 'DE12500105170648489890' },
+    { bezeichnung: 'Klasse 6b', empfaenger: 'Klassenkasse 6b', iban: 'DE02120300000000202051' },
+    { bezeichnung: 'Klasse 6c', empfaenger: 'Klassenkasse 6c', iban: 'DE89370400440532013000' },
+  ];
+
+  await erstelleKlassenfahrtPdf(
+    {
+      belegNr: 'KF-2026-00001',
+      mandantName: 'Christlicher Schulverein Minden e.V.',
+      mandantNr: 40,
+      anlass: 'Jahrgangsfahrt Klasse 6',
+      ziel: 'Willingen (Sauerland)',
+      zeitraumVon: '2026-05-12',
+      zeitraumBis: '2026-05-14',
+      einreicherName: 'J. Pulverich',
+      klassen: kfKlassenInput.map((k, i) => ({
+        bezeichnung: kfKonten[i].bezeichnung,
+        schueler: k.schueler,
+        begleiter: k.begleiter,
+        empfaenger: kfKonten[i].empfaenger,
+        iban: kfKonten[i].iban,
+        kostenanteil: kfErgebnis.klassen[i].kostenanteil,
+        zuschuss: kfErgebnis.klassen[i].zuschuss,
+      })),
+      kostenzeilen: rows.map(r => ({ oberkategorie: r.oberkategorie, bezeichnung: r.bezeichnung, modus: r.modus, betrag: r.betrag })),
+      gesamtZuschuss: kfErgebnis.gesamtZuschuss,
+    },
+    [],
+    klassenfahrtPfad,
+  );
+
+  console.log(`✓ Klassenfahrt-Muster erstellt: ${klassenfahrtPfad} (Gesamt-Zuschuss ${kfErgebnis.gesamtZuschuss.toFixed(2)} €)`);
+  console.log(`\nAlle Muster-PDFs liegen in: ${OUTPUT_DIR}`);
 }
 
 main().catch(err => {
