@@ -301,8 +301,8 @@ export async function versendeErneut(einreichungId: string): Promise<ResendResul
         personalNr: einreichung.mitarbeiterPersonalNr,
       },
       gesamtbetrag: String(einreichung.gesamtbetrag),
-      iban: einreichung.bankIban,
-      kontoinhaber: einreichung.bankKontoinhaber,
+      iban: einreichung.bankIban ?? '',
+      kontoinhaber: einreichung.bankKontoinhaber ?? '',
     };
     try {
       const wh = await sendeWebhook('eingereicht', webhookData, mandant.dmsEmail, einreichung.pdfDateipfad);

@@ -1,18 +1,20 @@
 import { db } from '../db/index.js';
 import { sql } from 'drizzle-orm';
 
-export type EinreichungTyp = 'REISEKOSTEN' | 'ERSTATTUNG' | 'SAMMELFAHRT';
+export type EinreichungTyp = 'REISEKOSTEN' | 'ERSTATTUNG' | 'SAMMELFAHRT' | 'KLASSENFAHRT';
 
 const PREFIX_BY_TYP: Record<EinreichungTyp, string> = {
   REISEKOSTEN: 'RK',
   ERSTATTUNG: 'KE',
   SAMMELFAHRT: 'SF',
+  KLASSENFAHRT: 'KF',
 };
 
 const LOCK_OFFSET_BY_TYP: Record<EinreichungTyp, number> = {
   REISEKOSTEN: 1,
   ERSTATTUNG: 2,
   SAMMELFAHRT: 3,
+  KLASSENFAHRT: 4,
 };
 
 export async function generateBelegNr(typ: EinreichungTyp): Promise<string> {

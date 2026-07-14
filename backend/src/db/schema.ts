@@ -2,7 +2,7 @@ import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgE
 
 // ── Enums ──────────────────────────────────────────────
 
-export const einreichungTypEnum = pgEnum('einreichung_typ', ['REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT']);
+export const einreichungTypEnum = pgEnum('einreichung_typ', ['REISEKOSTEN', 'ERSTATTUNG', 'SAMMELFAHRT', 'KLASSENFAHRT']);
 export const einreichungStatusEnum = pgEnum('einreichung_status', ['EINGEREICHT', 'GESENDET', 'FEHLER']);
 export const emailStatusEnum = pgEnum('email_status', ['AUSSTEHEND', 'GESENDET', 'FEHLER']);
 export const verkehrsmittelEnum = pgEnum('verkehrsmittel', ['PKW', 'MOTORRAD', 'OEPNV', 'BAHN', 'FLUG', 'SONSTIGE']);
@@ -74,8 +74,9 @@ export const einreichungen = pgTable('einreichungen', {
   mitarbeiterVorname: varchar('mitarbeiter_vorname', { length: 100 }).notNull(),
   mitarbeiterNachname: varchar('mitarbeiter_nachname', { length: 100 }).notNull(),
   mitarbeiterPersonalNr: varchar('mitarbeiter_personal_nr', { length: 20 }).notNull(),
-  bankIban: varchar('bank_iban', { length: 34 }).notNull(),
-  bankKontoinhaber: varchar('bank_kontoinhaber', { length: 200 }).notNull(),
+  // Persoenliches Auszahlungskonto — bei KLASSENFAHRT leer (Konten liegen je Klasse), daher nullable.
+  bankIban: varchar('bank_iban', { length: 34 }),
+  bankKontoinhaber: varchar('bank_kontoinhaber', { length: 200 }),
 
   // Nur bei REISEKOSTEN
   reiseanlass: text('reiseanlass'),
@@ -102,6 +103,8 @@ export const einreichungen = pgTable('einreichungen', {
   emailStatus: emailStatusEnum('email_status').notNull().default('AUSSTEHEND'),
   emailVersuche: integer('email_versuche').notNull().default(0),
   emailLetzterFehler: text('email_letzter_fehler'),
+  // Idempotenz gegen Doppel-Submit (verlorene Response): ein Key pro Formular-Instanz.
+  idempotenzKey: varchar('idempotenz_key', { length: 64 }),
 
   createdAt: timestamp('created_at').notNull().defaultNow(),
   submittedAt: timestamp('submitted_at').notNull().defaultNow(),
@@ -110,6 +113,7 @@ export const einreichungen = pgTable('einreichungen', {
   statusIdx: index('einreichungen_status_idx').on(t.status),
   emailStatusIdx: index('einreichungen_email_status_idx').on(t.emailStatus),
   createdAtIdx: index('einreichungen_created_at_idx').on(t.createdAt),
+  idempotenzKeyUidx: uniqueIndex('einreichungen_idempotenz_key_uidx').on(t.idempotenzKey),
 }));
 
 // ── Reisetage (tagesweise VMA-Erfassung) ───────────────
@@ -184,6 +188,48 @@ export const weitereKosten = pgTable('weitere_kosten', {
   belegId: uuid('beleg_id').references(() => belege.id, { onDelete: 'set null' }),
 }, (t) => ({
   einreichungIdx: index('weitere_kosten_einreichung_idx').on(t.einreichungId),
+}));
+
+// ── Klassenfahrt (nur Mandant 40 = Christlicher Schulverein Minden e.V.) ──
+// Die gemeinsame `einreichungen`-Zeile ist der Kopf (typ=KLASSENFAHRT): reiseanlass = Anlass,
+// abfahrtZeit/rueckkehrZeit = Zeitraum, gesamtbetrag = FV-Gesamtzuschuss. Die Auszahlung
+// erfolgt getrennt je Klasse auf ein eigenes Klassenkonto (IBAN im Klartext, interner Betrieb).
+
+export const klassenfahrtKlassen = pgTable('klassenfahrt_klassen', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
+  reihenfolge: integer('reihenfolge').notNull().default(0),
+  bezeichnung: varchar('bezeichnung', { length: 100 }), // z.B. "Klasse 6a" (optional)
+  schueler: integer('schueler').notNull(),
+  begleiter: decimal('begleiter', { precision: 5, scale: 2 }).notNull(), // Dezimal erlaubt (z.B. 1,5)
+  empfaenger: varchar('empfaenger', { length: 200 }).notNull(),
+  iban: varchar('iban', { length: 34 }).notNull(), // Klartext (interner Betrieb, wie Bestand)
+  zuschuss: decimal('zuschuss', { precision: 10, scale: 2 }).notNull(), // server-berechnete Auszahlung
+}, (t) => ({
+  einreichungIdx: index('klassenfahrt_klassen_einreichung_idx').on(t.einreichungId),
+}));
+
+export const klassenfahrtKostenzeilen = pgTable('klassenfahrt_kostenzeilen', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  einreichungId: uuid('einreichung_id').notNull().references(() => einreichungen.id, { onDelete: 'cascade' }),
+  reihenfolge: integer('reihenfolge').notNull().default(0),
+  oberkategorie: varchar('oberkategorie', { length: 30 }).notNull(), // FAHRTKOSTEN|UNTERKUNFT|AKTIVITAETEN|SONSTIGES
+  bezeichnung: varchar('bezeichnung', { length: 200 }).notNull(),
+  modus: varchar('modus', { length: 12 }).notNull(), // PROPORTIONAL | DIREKT
+  betrag: decimal('betrag', { precision: 10, scale: 2 }).notNull(), // PROP: Gesamt; DIREKT: Summe der Anteile (negativ erlaubt)
+}, (t) => ({
+  einreichungIdx: index('klassenfahrt_kostenzeilen_einreichung_idx').on(t.einreichungId),
+}));
+
+// Betrag je Klasse fuer DIREKT-Zeilen — ohne diese Ablage waere der Server-Recompute
+// der DIREKT-Verteilung nicht rekonstruierbar (Lueckenpruefung-Befund).
+export const klassenfahrtKostenzeileAnteil = pgTable('klassenfahrt_kostenzeile_anteil', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  kostenzeileId: uuid('kostenzeile_id').notNull().references(() => klassenfahrtKostenzeilen.id, { onDelete: 'cascade' }),
+  klasseReihenfolge: integer('klasse_reihenfolge').notNull(), // 0-basiert, verweist auf klassenfahrt_klassen.reihenfolge
+  betrag: decimal('betrag', { precision: 10, scale: 2 }).notNull(),
+}, (t) => ({
+  kostenzeileIdx: index('klassenfahrt_anteil_kostenzeile_idx').on(t.kostenzeileId),
 }));
 
 // ── Pauschalen ─────────────────────────────────────────
