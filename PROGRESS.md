@@ -259,6 +259,14 @@ Neuer Vorgangstyp `KLASSENFAHRT` (nur Mandant 40 = Christlicher Schulverein Mind
 
 **Verifikation 15.7:** Backend-tsc grün, 147 Vitest grün, ESLint 0. HEIC-Fix end-to-end geprüft (gecraftete HEIC-Magic-Bytes werden erkannt und NICHT gelöscht; JPEG ok; Garbage weiter gelöscht + Fehler). Bug 2 (Biometrie-Löschung ERSTATTUNG/SAMMELFAHRT) identisch zum bewährten REISEKOSTEN-Pfad.
 
+**End-to-End-Test 15.5 gegen echte DB (15.07.2026):** Dev-DB `credo-finanz-db` von Migration 0000 auf 0011 gebracht (0001–0011 laufen sauber durch; Enum/`klassenfahrt_*`/`idempotenz_key`/`bank_iban` nullable verifiziert). Realer HTTP-Durchlauf der KF-Route:
+- POST 3-Klassen-Golden-Master → **201, KF-2026-00001, gesamt=281,80**; DB: Kopf (pdf gesetzt, `unterschrift_bild` NULL, `bank_iban` NULL, idempotenz-Key), 3 Klassen (Zuschuss 105,15/74,08/102,57 + IBAN je Konto), 9 Kostenzeilen, 12 Anteil-Rows, 1 Beleg. **DIREKT-Rekonstruktion:** `SUM(anteile)==kostenzeile.betrag` für alle 4 DIREKT-Zeilen.
+- Idempotenz: gleicher Key → **200 `idempotent:true`**, weiterhin genau 1 KF-Zeile.
+- M40-Gate fremder Mandant → **403**; ungültiges Datum → **400**; leere Belege → **400**.
+- Route-PDF visuell = Muster (Aufteilungsmatrix korrekt).
+
+**Querschnitt-Bug beim E2E gefunden + behoben (betrifft ALLE Vorgänge): PNG-Belege wurden nie eingebettet.** In `pdf.ts:haengeBelegeAn` wurde ein `.png`-Beleg von sharp nach JPEG konvertiert, aber via `embedPng` eingebettet → warf → statt des Belegs landete eine „Beleg konnte nicht eingebettet werden"-Fehlerseite im DMS-PDF. Fix: Embed richtet sich nach dem erzeugten Format (heic/heif→PNG, sonst JPEG); zusätzlich `flatten({background:'#ffffff'})` (transparente PNGs → weiß). E2E gegengeprüft: PNG **und** JPEG betten jetzt korrekt ein, keine Fehlerseite.
+
 **Nachtrag 15.4 (Wunsch Dimitri, 15.07.2026): PDF-Aufteilungsmatrix.** Das KF-Deckblatt zeigt jetzt eine Sektion „KOSTENAUFTEILUNG JE KLASSE": je Kostenzeile der auf jede Klasse entfallende Anteil (proportional aus Schülerzahl bzw. direkt erfasst; DIREKT-Null als „–"), darunter die Herleitung Spaltensumme = Kostenanteil K → ÷ Personen (S+B) → = FV-Zuschuss je Klasse. Damit ist auf einen Blick nachvollziehbar, wie sich der Zuschuss ergibt (ersetzt die frühere flache „Kostendetails"-Liste). Datenquelle: `berechneKlassenfahrt` liefert neu die Matrix `verteilung[zeile][klasse]` (Single Source; Golden-Master um Matrix-Zellen + Spaltensummen-Konsistenz erweitert). Dynamische Spaltenbreiten (1–5 Klassen), negative Gutschriften und dezimale Begleiter visuell verifiziert (3- und 5-Klassen-Muster gerendert). Backend-tsc grün, 147 Vitest grün, ESLint 0.
 
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)

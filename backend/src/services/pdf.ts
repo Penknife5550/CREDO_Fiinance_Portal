@@ -455,8 +455,11 @@ async function haengeBelegeAn(
         if (ext === '.heic' || ext === '.heif') {
           imageBytes = await sharp(pfad).png().toBuffer();
         } else {
+          // Alles andere (inkl. PNG) → JPEG. flatten: transparente PNGs bekommen einen
+          // weißen statt schwarzen Hintergrund.
           imageBytes = await sharp(pfad)
             .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+            .flatten({ background: '#ffffff' })
             .jpeg({ quality: 85 })
             .toBuffer();
         }
@@ -466,7 +469,10 @@ async function haengeBelegeAn(
           x: 50, y: 820, size: 9, font, color: rgb(0.4, 0.4, 0.4),
         });
 
-        const image = ext === '.png' || ext === '.heic' || ext === '.heif'
+        // Embed muss zum erzeugten Format passen: heic/heif liefern PNG-Bytes, alles
+        // andere (inkl. .png-Eingaben) liefert JPEG-Bytes. Vorher wurde .png faelschlich
+        // via embedPng auf JPEG-Bytes eingebettet → Beleg landete als Fehlerseite im PDF.
+        const image = ext === '.heic' || ext === '.heif'
           ? await doc.embedPng(imageBytes)
           : await doc.embedJpg(imageBytes);
 
