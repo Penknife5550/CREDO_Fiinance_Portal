@@ -44,6 +44,21 @@ describe('berechneKlassenfahrt — Golden Master gegen Excel', () => {
 
     // Gesamt = Summe der gerundeten Auszahlungen
     expect(r.gesamtZuschuss).toBeCloseTo(281.8, 2);
+
+    // Aufteilungs-Matrix (PDF-Transparenz): Anteil je Kostenzeile × Klasse.
+    // Fahrtkosten proportional: 580/76 × {27,25,24}
+    expect(r.verteilung[0][0]).toBeCloseTo(206.05, 2);
+    expect(r.verteilung[0][1]).toBeCloseTo(190.79, 2);
+    expect(r.verteilung[0][2]).toBeCloseTo(183.16, 2);
+    // Unterkunft proportional, Klasse 1: 4793,20/76 × 27
+    expect(r.verteilung[1][0]).toBeCloseTo(1702.85, 2);
+    // Sommerrodelbahn DIREKT: exakt die eingetragenen Anteile
+    expect(r.verteilung[2]).toEqual([250, 0, 200]);
+    // Spaltensumme je Klasse == deren Kostenanteil K (Selbstkonsistenz der Matrix)
+    for (let k = 0; k < 3; k++) {
+      const spaltensumme = r.verteilung.reduce((s, zeile) => s + zeile[k], 0);
+      expect(spaltensumme).toBeCloseTo(r.klassen[k].kostenanteil, 2);
+    }
   });
 
   it('KF 2 Klassen3 / Einzelbuchung (48 S, 4 B, 3066,30 €) → 58,97 EUR', () => {

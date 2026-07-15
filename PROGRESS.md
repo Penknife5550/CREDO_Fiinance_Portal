@@ -257,6 +257,8 @@ Neuer Vorgangstyp `KLASSENFAHRT` (nur Mandant 40 = Christlicher Schulverein Mind
 
 **Bewusst akzeptiert (LOW):** belegNr-Kollisionsfenster ist durch „PDF vor Commit" breiter (Verlierer bekommt heilbares 500; pre-existing Eigenschaft von `generateBelegNr`, KF-Volumen minimal, echter Fix gehört mandantenübergreifend in den Nummerngenerator). Verwaiste PDF-Datei auf dem Rollback-Verlierer-Pfad → vom geplanten Retention-Job mit abgeräumt.
 
+**Nachtrag 15.4 (Wunsch Dimitri, 15.07.2026): PDF-Aufteilungsmatrix.** Das KF-Deckblatt zeigt jetzt eine Sektion „KOSTENAUFTEILUNG JE KLASSE": je Kostenzeile der auf jede Klasse entfallende Anteil (proportional aus Schülerzahl bzw. direkt erfasst; DIREKT-Null als „–"), darunter die Herleitung Spaltensumme = Kostenanteil K → ÷ Personen (S+B) → = FV-Zuschuss je Klasse. Damit ist auf einen Blick nachvollziehbar, wie sich der Zuschuss ergibt (ersetzt die frühere flache „Kostendetails"-Liste). Datenquelle: `berechneKlassenfahrt` liefert neu die Matrix `verteilung[zeile][klasse]` (Single Source; Golden-Master um Matrix-Zellen + Spaltensummen-Konsistenz erweitert). Dynamische Spaltenbreiten (1–5 Klassen), negative Gutschriften und dezimale Begleiter visuell verifiziert (3- und 5-Klassen-Muster gerendert). Backend-tsc grün, 147 Vitest grün, ESLint 0.
+
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 
 Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.

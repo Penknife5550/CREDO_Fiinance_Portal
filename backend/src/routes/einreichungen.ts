@@ -791,11 +791,12 @@ einreichungenRouter.post('/', async (req, res) => {
           kostenanteil: ergebnis.klassen[i].kostenanteil,
           zuschuss: ergebnis.klassen[i].zuschuss,
         })),
-        kostenzeilen: normKostenzeilen.map(z => ({
+        kostenzeilen: normKostenzeilen.map((z, i) => ({
           oberkategorie: z.oberkategorie,
           bezeichnung: z.bezeichnung,
           modus: z.modus,
           betrag: zeilenBetrag(z),
+          anteileJeKlasse: ergebnis.verteilung[i],
         })),
         gesamtZuschuss: ergebnis.gesamtZuschuss,
         unterschriftBild: parsed.unterschriftBild,

@@ -47,6 +47,13 @@ export interface KfErgebnis {
   klassen: KfKlasseErgebnis[];
   /** Summe der (gerundeten) Klassen-Zuschuesse. */
   gesamtZuschuss: number;
+  /**
+   * Aufteilungs-Matrix in voller Praezision: verteilung[zeileIndex][klasseIndex] =
+   * der auf diese Klasse entfallende Anteil dieser Kostenzeile. Spaltensumme je Klasse
+   * = deren Kostenanteil K. Basis fuer die transparente Aufteilungstabelle im PDF
+   * (nachvollziehbar, wie K und damit der Zuschuss zustande kommen).
+   */
+  verteilung: number[][];
 }
 
 /** Fachlicher Berechnungsfehler mit deutscher Meldung (fuer 400-Antwort bzw. Client-Guard). */
@@ -79,23 +86,26 @@ export function berechneKlassenfahrt(
 
   const sigmaSchueler = klassen.reduce((s, k) => s + k.schueler, 0);
 
-  // Kostenanteil je Klasse in voller Praezision aufsummieren.
+  // Kostenanteil je Klasse in voller Praezision aufsummieren; je Zeile den
+  // Klassenanteil festhalten (Aufteilungs-Matrix fuer die PDF-Transparenz).
   const kProKlasse = klassen.map(() => 0);
+  const verteilung: number[][] = [];
   for (const zeile of kostenzeilen) {
+    let zeileAnteile: number[];
     if (zeile.modus === 'PROPORTIONAL') {
       if (sigmaSchueler <= 0) {
         throw new KlassenfahrtBerechnungsfehler(
           'Proportional verteilte Kosten sind ohne erfasste Schueler nicht moeglich.',
         );
       }
-      for (let i = 0; i < klassen.length; i++) {
-        kProKlasse[i] += zeile.betrag * (klassen[i].schueler / sigmaSchueler);
-      }
+      zeileAnteile = klassen.map(k => zeile.betrag * (k.schueler / sigmaSchueler));
     } else {
       const anteile = zeile.anteile ?? [];
-      for (let i = 0; i < klassen.length; i++) {
-        kProKlasse[i] += anteile[i] ?? 0;
-      }
+      zeileAnteile = klassen.map((_, i) => anteile[i] ?? 0);
+    }
+    verteilung.push(zeileAnteile);
+    for (let i = 0; i < klassen.length; i++) {
+      kProKlasse[i] += zeileAnteile[i];
     }
   }
 
@@ -116,5 +126,5 @@ export function berechneKlassenfahrt(
   // Gesamt = Summe der bereits gerundeten Auszahlungen (selbstkonsistent mit der Tabelle).
   const gesamtZuschuss = rundeAufCent(klassenErg.reduce((s, e) => s + e.zuschuss, 0));
 
-  return { klassen: klassenErg, gesamtZuschuss };
+  return { klassen: klassenErg, gesamtZuschuss, verteilung };
 }

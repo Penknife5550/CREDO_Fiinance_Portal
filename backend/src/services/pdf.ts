@@ -512,6 +512,8 @@ export interface KlassenfahrtPdfKostenzeile {
   bezeichnung: string;
   modus: 'PROPORTIONAL' | 'DIREKT';
   betrag: number;
+  /** Aufteilung dieser Zeile je Klasse (Index = Klassenindex). Volle Präzision, Anzeige gerundet. */
+  anteileJeKlasse: number[];
 }
 
 export interface KlassenfahrtPdfData {
@@ -674,19 +676,76 @@ export async function erstelleKlassenfahrtPdf(
   drawLine();
   ctx.y -= 20;
 
-  // Kostendetails
-  checkPageBreak(ctx);
-  drawText('KOSTENDETAILS', 50, 11, true);
-  ctx.y -= 18;
+  // ── Kostenaufteilung je Klasse (Transparenz-Matrix) ──
+  //    Zeigt für jede Kostenzeile den auf jede Klasse entfallenden Anteil; die
+  //    Spaltensumme ist der Kostenanteil K, geteilt durch die Personenzahl der
+  //    FV-Zuschuss. So ist auf einen Blick nachvollziehbar, wie die Zahlen entstehen.
+  const nK = data.klassen.length;
+  // Genügend Platz für Überschrift + Kopf + ein paar Zeilen? Sonst neue Seite.
+  if (ctx.y < 200) { ctx.page = doc.addPage([595, 842]); ctx.y = height - 60; }
+
+  const numCols = nK + 1; // Gesamt + je Klasse
+  const colW = Math.min(80, Math.max(52, (width - 100 - 140) / numCols));
+  const numAreaRight = width - 50;
+  const numAreaX = numAreaRight - colW * numCols;
+  const labelRight = numAreaX - 6;
+
+  // Rechte Kante der Spalte c (0 = Gesamt, 1..nK = Klasse), 4pt Innenabstand.
+  const colRight = (c: number) => numAreaX + colW * (c + 1) - 4;
+  const drawNumRight = (text: string, c: number, size = 8, bold = false) => {
+    const f = bold ? fontBold : font;
+    drawTextAt(text, colRight(c) - f.widthOfTextAtSize(text, size), ctx.y, size, bold);
+  };
+  const fmtBetrag = (n: number) => n.toFixed(2).replace('.', ',');
+  const zellText = (n: number) => (Math.abs(n) < 0.005 ? '–' : fmtBetrag(n));
+
+  drawText('KOSTENAUFTEILUNG JE KLASSE', 50, 11, true);
+  drawTextAt('(Beträge in EUR)', numAreaRight - font.widthOfTextAtSize('(Beträge in EUR)', 8), ctx.y, 8);
+  ctx.y -= 16;
+
+  // Kopfzeile
+  drawText('Kostenzeile', 50, 8, true);
+  drawNumRight('Gesamt', 0, 8, true);
+  data.klassen.forEach((k, i) => {
+    const label = k.bezeichnung || `Kl. ${i + 1}`;
+    drawNumRight(passtInSpalte(label, colW - 6, fontBold), i + 1, 8, true);
+  });
+  ctx.y -= 11;
+  drawLine();
+  ctx.y -= 13;
+
+  // Datenzeilen
   for (const z of data.kostenzeilen) {
     checkPageBreak(ctx);
     const kat = OBERKATEGORIE_LABEL[z.oberkategorie] || z.oberkategorie;
-    const modus = z.modus === 'PROPORTIONAL' ? 'proportional' : 'direkt';
-    drawTextClipped(`${kat}: ${z.bezeichnung}  (${modus})`, 50, ctx.y, 440, 9);
-    drawTextAt(formatEur(z.betrag), 480, ctx.y, 9);
-    ctx.y -= 14;
+    const modus = z.modus === 'PROPORTIONAL' ? 'anteilig' : 'direkt';
+    drawTextClipped(`${kat}: ${z.bezeichnung} · ${modus}`, 50, ctx.y, labelRight, 8);
+    drawNumRight(fmtBetrag(z.betrag), 0, 8);
+    for (let i = 0; i < nK; i++) {
+      drawNumRight(zellText(z.anteileJeKlasse[i] ?? 0), i + 1, 8);
+    }
+    ctx.y -= 12;
   }
-  ctx.y -= 10;
+
+  ctx.y -= 2;
+  drawLine();
+  ctx.y -= 13;
+
+  // Abschluss: Kostenanteil K → ÷ Personen → = Zuschuss (die eigentliche Herleitung)
+  const gesamtKosten = data.klassen.reduce((s, k) => s + k.kostenanteil, 0);
+  drawText('Summe Kostenanteil (K)', 50, 8, true);
+  drawNumRight(fmtBetrag(gesamtKosten), 0, 8, true);
+  data.klassen.forEach((k, i) => drawNumRight(fmtBetrag(k.kostenanteil), i + 1, 8, true));
+  ctx.y -= 12;
+
+  drawText('÷ Personen (Schüler + Begleiter)', 50, 8);
+  data.klassen.forEach((k, i) => drawNumRight(formatDezimal(k.schueler + k.begleiter), i + 1, 8));
+  ctx.y -= 12;
+
+  drawText('= FV-Zuschuss je Klasse', 50, 8, true);
+  drawNumRight(formatEur(data.gesamtZuschuss), 0, 8, true);
+  data.klassen.forEach((k, i) => drawNumRight(fmtBetrag(k.zuschuss), i + 1, 8, true));
+  ctx.y -= 8;
   drawLine();
   ctx.y -= 20;
 
@@ -769,4 +828,14 @@ function formatDatumKurz(datum: string): string {
 
 function kuerzeText(text: string, maxLen: number): string {
   return text.length <= maxLen ? text : text.slice(0, maxLen - 1) + '…';
+}
+
+/** Kürzt einen Text font-genau mit „…", bis er in maxWidth passt (für schmale Tabellenspalten). */
+function passtInSpalte(text: string, maxWidth: number, font: PDFFont, size = 8): string {
+  if (font.widthOfTextAtSize(text, size) <= maxWidth) return text;
+  let display = text;
+  while (display.length > 1 && font.widthOfTextAtSize(display + '…', size) > maxWidth) {
+    display = display.slice(0, -1);
+  }
+  return display + '…';
 }

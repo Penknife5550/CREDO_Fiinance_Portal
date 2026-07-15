@@ -153,7 +153,7 @@ async function main() {
         kostenanteil: kfErgebnis.klassen[i].kostenanteil,
         zuschuss: kfErgebnis.klassen[i].zuschuss,
       })),
-      kostenzeilen: rows.map(r => ({ oberkategorie: r.oberkategorie, bezeichnung: r.bezeichnung, modus: r.modus, betrag: r.betrag })),
+      kostenzeilen: rows.map((r, i) => ({ oberkategorie: r.oberkategorie, bezeichnung: r.bezeichnung, modus: r.modus, betrag: r.betrag, anteileJeKlasse: kfErgebnis.verteilung[i] })),
       gesamtZuschuss: kfErgebnis.gesamtZuschuss,
     },
     [],
