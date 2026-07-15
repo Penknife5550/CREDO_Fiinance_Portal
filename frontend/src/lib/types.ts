@@ -174,3 +174,51 @@ export const WEITERE_KOSTEN_TYPEN = [
   { value: 'MAUT', label: 'Maut' },
   { value: 'SONSTIGE', label: 'Sonstige Nebenkosten' },
 ] as const;
+
+// ── Klassenfahrt (nur Mandant 40 = Förderverein) ───────
+
+export type KfOberkategorie = 'FAHRTKOSTEN' | 'UNTERKUNFT' | 'AKTIVITAETEN' | 'SONSTIGES';
+export type KfVerteilmodus = 'PROPORTIONAL' | 'DIREKT';
+
+export const KF_OBERKATEGORIEN: { value: KfOberkategorie; label: string }[] = [
+  { value: 'FAHRTKOSTEN', label: 'Fahrtkosten' },
+  { value: 'UNTERKUNFT', label: 'Unterkunft' },
+  { value: 'AKTIVITAETEN', label: 'Aktivitäten' },
+  { value: 'SONSTIGES', label: 'Sonstiges' },
+];
+
+export const KF_MAX_KLASSEN = 5;
+export const KF_MAX_KOSTENZEILEN = 50;
+
+export interface KfEinreicher {
+  vorname: string;
+  nachname: string;
+  personalNr: string;
+}
+
+export interface KfKlasseForm {
+  bezeichnung: string;
+  schueler: number;
+  begleiter: number;
+  empfaenger: string;
+  iban: string;
+}
+
+export interface KfKostenzeileForm {
+  oberkategorie: KfOberkategorie;
+  bezeichnung: string;
+  modus: KfVerteilmodus;
+  betrag: number;      // PROPORTIONAL: Gesamt; DIREKT: informativ (= Summe der Anteile)
+  anteile: number[];   // je Klasse (nur bei DIREKT genutzt); Länge = Anzahl Klassen
+}
+
+export interface KlassenfahrtFormData {
+  einreicher: KfEinreicher;
+  anlass: string;
+  ziel: string;
+  zeitraumVon: string;
+  zeitraumBis: string;
+  klassen: KfKlasseForm[];
+  kostenzeilen: KfKostenzeileForm[];
+  unterschriftBild?: string;
+}

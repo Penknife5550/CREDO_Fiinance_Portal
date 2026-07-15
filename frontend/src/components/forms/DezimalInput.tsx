@@ -10,6 +10,8 @@ function formatGerman(n: number): string {
 interface Props extends Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type' | 'inputMode'> {
   value: number;
   onChange: (n: number) => void;
+  /** Erlaubt ein führendes Minus (z.B. Gutschriften/Rabatte bei Klassenfahrt-Kostenzeilen). */
+  allowNegative?: boolean;
 }
 
 /**
@@ -20,9 +22,10 @@ interface Props extends Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'o
  * Externer Wert wird nur synchronisiert, solange das Feld unfokussiert ist;
  * beim Blur wird der String aus dem Number normalisiert.
  */
-export function DezimalInput({ value, onChange, ...rest }: Props) {
+export function DezimalInput({ value, onChange, allowNegative = false, ...rest }: Props) {
   const [text, setText] = useState(() => formatGerman(value));
   const focused = useRef(false);
+  const erlaubt = allowNegative ? /^-?[\d.,\s]*$/ : /^[\d.,\s]*$/;
 
   useEffect(() => {
     if (!focused.current) setText(formatGerman(value));
@@ -42,7 +45,7 @@ export function DezimalInput({ value, onChange, ...rest }: Props) {
       }}
       onChange={e => {
         const v = e.target.value;
-        if (v !== '' && !/^[\d.,\s]*$/.test(v)) return;
+        if (v !== '' && !erlaubt.test(v)) return;
         setText(v);
         onChange(parseGermanDecimal(v));
       }}

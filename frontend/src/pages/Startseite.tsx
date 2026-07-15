@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Car, Receipt, MapPin, type LucideIcon } from 'lucide-react';
+import { Car, Receipt, MapPin, Tent, type LucideIcon } from 'lucide-react';
 
 interface KartenAuswahl {
   pfad: string;
@@ -34,6 +34,14 @@ const KARTEN: KartenAuswahl[] = [
     beschreibung: 'Mehrere wiederkehrende Tagesfahrten zusammenfassen — nur Kilometerpauschale, ohne Verpflegung. Mindestens zwei Fahrten.',
     beispiel: 'z. B. wöchentliche Praktikumsbesuche',
     akzent: '#009AC6', // CREDO-Blau
+  },
+  {
+    pfad: '/klassenfahrt',
+    icon: Tent,
+    titel: 'Klassenfahrt',
+    beschreibung: 'Klassenfahrt abrechnen und den Förderverein-Zuschuss je Klasse berechnen — Auszahlung getrennt je Klassenkonto.',
+    beispiel: 'z. B. Jahrgangsfahrt Klasse 6 nach Willingen',
+    akzent: '#DC2626', // CREDO-Rot
   },
 ];
 

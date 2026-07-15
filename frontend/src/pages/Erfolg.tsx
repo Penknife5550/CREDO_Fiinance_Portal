@@ -1,8 +1,11 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useLocation, Link } from 'react-router-dom';
 import { CheckCircle, ArrowLeft } from 'lucide-react';
 
 export function Erfolg() {
   const { belegNr } = useParams();
+  const location = useLocation();
+  const typ = (location.state as { typ?: string } | null)?.typ;
+  const istKlassenfahrt = typ === 'klassenfahrt';
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
@@ -14,14 +17,29 @@ export function Erfolg() {
         Erfolgreich eingereicht!
       </h2>
 
-      <p className="text-credo-500 mb-2 max-w-md">
-        Ihre Einreichung wurde an die zuständige Buchhaltung weitergeleitet
-        und wird dort bearbeitet.
-      </p>
-      <p className="text-sm text-credo-600 mb-6 max-w-md">
-        Ihre Einreichung wird in der Regel innerhalb von 5 Werktagen bearbeitet.
-        Bei Fragen wenden Sie sich bitte an die Buchhaltung.
-      </p>
+      {istKlassenfahrt ? (
+        <>
+          <p className="text-credo-500 mb-2 max-w-md">
+            Ihre Klassenfahrt-Abrechnung wurde an die Buchhaltung des Fördervereins
+            weitergeleitet und wird dort geprüft.
+          </p>
+          <p className="text-sm text-credo-600 mb-6 max-w-md">
+            Nach der Freigabe zahlt der Förderverein den Zuschuss getrennt auf die
+            jeweiligen Klassenkonten aus. Bei Fragen wenden Sie sich bitte an die Verwaltung.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-credo-500 mb-2 max-w-md">
+            Ihre Einreichung wurde an die zuständige Buchhaltung weitergeleitet
+            und wird dort bearbeitet.
+          </p>
+          <p className="text-sm text-credo-600 mb-6 max-w-md">
+            Ihre Einreichung wird in der Regel innerhalb von 5 Werktagen bearbeitet.
+            Bei Fragen wenden Sie sich bitte an die Buchhaltung.
+          </p>
+        </>
+      )}
 
       <div className="card inline-block mb-8">
         <p className="text-sm text-credo-500 mb-1">Ihre Belegnummer</p>

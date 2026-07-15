@@ -160,6 +160,72 @@ export async function einreichenSammelfahrt(payload: SammelfahrtPayload): Promis
   return { belegNr: data.belegNr };
 }
 
+// ── Klassenfahrt einreichen (nur Mandant 40) ────────────
+
+interface KlassenfahrtPayload {
+  mandantId: string;
+  einreicher: { vorname: string; nachname: string; personalNr: string };
+  anlass: string;
+  ziel: string;
+  zeitraumVon: string;
+  zeitraumBis: string;
+  klassen: Array<{ bezeichnung: string; schueler: number; begleiter: number; empfaenger: string; iban: string }>;
+  kostenzeilen: Array<{ oberkategorie: string; bezeichnung: string; modus: 'PROPORTIONAL' | 'DIREKT'; betrag: number; anteile: number[] }>;
+  unterschriftBild?: string;
+  belege: File[];
+  /** Einmal pro Formular-Instanz erzeugt (crypto.randomUUID) — Schutz gegen Doppel-Submit. */
+  idempotenzKey: string;
+}
+
+export async function einreichenKlassenfahrt(payload: KlassenfahrtPayload): Promise<{ belegNr: string }> {
+  const belegDateipfade = await uploadBelege(payload.belege);
+
+  const res = await fetch(`${API}/einreichungen`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      typ: 'KLASSENFAHRT',
+      mandantId: payload.mandantId,
+      einreicher: {
+        vorname: payload.einreicher.vorname,
+        nachname: payload.einreicher.nachname,
+        personalNr: payload.einreicher.personalNr,
+      },
+      anlass: payload.anlass,
+      ziel: payload.ziel || undefined,
+      zeitraumVon: payload.zeitraumVon,
+      zeitraumBis: payload.zeitraumBis,
+      klassen: payload.klassen.map(k => ({
+        bezeichnung: k.bezeichnung || undefined,
+        schueler: k.schueler,
+        begleiter: k.begleiter,
+        empfaenger: k.empfaenger,
+        iban: k.iban.replace(/\s/g, '').toUpperCase(),
+      })),
+      // DIREKT liefert die Anteile je Klasse; PROPORTIONAL braucht sie nicht.
+      kostenzeilen: payload.kostenzeilen.map(z => ({
+        oberkategorie: z.oberkategorie,
+        bezeichnung: z.bezeichnung,
+        modus: z.modus,
+        betrag: z.betrag,
+        anteile: z.modus === 'DIREKT' ? z.anteile : undefined,
+      })),
+      unterschriftBild: payload.unterschriftBild,
+      belegDateipfade,
+      idempotenzKey: payload.idempotenzKey,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
+    const msg = err.detail ? `${err.error}: ${err.detail}` : (err.error || `Fehler ${res.status}`);
+    throw new Error(msg);
+  }
+
+  const data = await res.json();
+  return { belegNr: data.belegNr };
+}
+
 export async function einreichenErstattung(payload: ErstattungPayload): Promise<{ belegNr: string }> {
   const belegDateipfade = await uploadBelege(payload.belege);
 
