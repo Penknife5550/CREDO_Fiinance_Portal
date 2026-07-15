@@ -485,8 +485,9 @@ einreichungenRouter.post('/', async (req, res) => {
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
 
+      // pdfDateipfad speichern + Unterschrift-Biometrie löschen (DSGVO — sie ist im PDF persistiert).
       await db.update(schema.einreichungen)
-        .set({ pdfDateipfad: pdfPfad })
+        .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
       const webhookDataE = {
@@ -623,8 +624,9 @@ einreichungenRouter.post('/', async (req, res) => {
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
 
+      // pdfDateipfad speichern + Unterschrift-Biometrie löschen (DSGVO — sie ist im PDF persistiert).
       await db.update(schema.einreichungen)
-        .set({ pdfDateipfad: pdfPfad })
+        .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
         .where(eq(schema.einreichungen.id, einreichung.id));
 
       const webhookDataS = {
