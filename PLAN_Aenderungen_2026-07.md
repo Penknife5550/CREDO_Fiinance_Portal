@@ -135,6 +135,10 @@ Entscheidung 2026-07-13: Die SMTP-Config bleibt **global** — ein Absender-Post
 
 ## Teil 3 — Klassenfahrten-Abrechnung im Portal (nur Mandant 40)
 
+> **🔧 IN UMSETZUNG (ab 14.07.2026).** Plandokument (CREDO-CI-Artifact) + adversariale Lückenprüfung (40/40 bestätigt) liegen vor. **Gebaut:** Berechnungsmodul `lib/klassenfahrt.ts` + Golden-Master (Commit `8761627`), DB-Fundament (Enum/Migration 0011/`kf_*`-Tabellen/IBAN nullable/Idempotenz-Key/belegNummer KF, Commit `d0ffbd1`), KF-PDF-Renderer + Muster (Commit `edeb8e3`). **Offen:** Backend-Route (M40-Gate, Recompute, Idempotenz, Transaktion, Beleg-Pflicht) · Frontend-Wizard (+ Berechnungs-Zwilling, `IbanFeld`, `DezimalInput allowNegative`, Startseiten-Kachel, Erfolg-Seite, DSGVO-Hinweis) · Querschnitt-Bugs (HEIC, Unterschrift-Löschung KE/SF). Details je Schritt: PROGRESS.md Phase 15.
+>
+> **Rundungs-Korrektur (bestätigt 14.07.2026):** Zielwert des 3-Klassen-Beispiels ist **281,80 €** (Summe der cent-gerundeten Auszahlungen je Konto), NICHT die Excel-Anzeige 281,79 € (Summe der ungerundeten, einmal gerundet). Regel: Zwischenwerte in voller Präzision, Zuschuss je Klasse einmal cent-runden, dann summieren. Golden-Master testet 281,80 €.
+
 ### Ziel
 Der Prozess soll von **Lehrern** im Finanzportal ausgefüllt werden. Das Portal bildet die Excel-Abrechnung ab: Kosten erfassen → auf Klassen verteilen → **Förderverein-Zuschuss berechnen** (= Kosten für 1 Begleitperson je Klasse) → PDF/Versand.
 

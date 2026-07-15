@@ -211,6 +211,44 @@
 
 **Verifikation:** Backend-tsc grün, Frontend-tsc grün, Vitest 104/104 grün, ESLint 0 Fehler. Migration gegen echte DB steht noch aus (Docker lokal nicht gestartet) — läuft beim nächsten `npm run db:migrate` / Deploy.
 
+### Phase 14: Eigener SMTP-Versand statt n8n — Teil 2 (14.07.2026)
+
+Ziel: SMTP wird der primäre (und einzige reguläre) Versandweg; n8n/Webhook bleibt nur optionaler Notnagel. Zuvor war die AdminCenter-`email_config` eine Fassade — `email.ts` las ausschließlich ENV.
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 14.1 | `email.ts` DB-getrieben: liest `email_config` (ENV nur Fallback), Passwort via `crypto.ts` entschlüsselt; gecachter Pool-Transporter mit harten Timeouts; Pure-Helper in `services/email-utils.ts` (testbar) | ✅ | 2026-07-14 |
+| 14.2 | TLS-Härtung: `rejectUnauthorized` standardmäßig streng, `requireTLS` bei Port ≠ 465, Abschwächung nur via `SMTP_ALLOW_SELF_SIGNED`; env-Validierung (`SMTP_PORT`, `MAIL_FROM_*`) | ✅ | 2026-07-14 |
+| 14.3 | Admin-`PUT /email-config` persistiert **alle** SMTP-Felder (Passwort verschlüsselt, `'***'`-Sentinel); `POST /email-config/test` (Verbindungstest) | ✅ | 2026-07-14 |
+| 14.4 | Neue Tabelle `email_log` (Versandprotokoll SENT/FAILED/SKIPPED, Kanal-übergreifend) + Migration `0010_smtp_email_log`; Admin `GET /email-log` | ✅ | 2026-07-14 |
+| 14.5 | Manueller Requeue: `GET /versand/fehlgeschlagen` (frische in-flight-`AUSSTEHEND` < 10 min ausgeschlossen) + `POST /einreichungen/:id/resend` (atomarer CAS-Claim, kanalbewusst) | ✅ | 2026-07-14 |
+| 14.6 | `fehlerEmail`-Alarm bei endgültigem Fehler, Status-Guard (GESENDET nicht überschreibbar), Attachment-Größenlimit (25 MB, base64-bewusst) | ✅ | 2026-07-14 |
+| 14.7 | MS365 (toter Code) aus Enum/UI entfernt (Legacy → SMTP migriert); Frontend `VersandTab` voll verdrahtet inkl. Cutover-Sicherung (SMTP vorab konfigurier-/testbar) | ✅ | 2026-07-14 |
+| 14.8 | Adversariale 4-Linsen-Prüfung (7/7 bestätigt) → Fixes: Requeue-Race, kanal-blinder Requeue, Cutover-Falle, TLS-Default | ✅ | 2026-07-14 |
+| 14.9 | `/code-review`-Fixes: `sendeWebhook` liefert Zustell-Bilanz (kein Falsch-„gesendet"), permanente Fehler brechen Retry ab; **Seed-Default `versandMethode` → SMTP** | ✅ | 2026-07-14 |
+
+**Verifikation:** Backend+Frontend-tsc grün, 132 Vitest, ESLint 0 Fehler. Commits `cfa5beb`, `f9872f4`.
+
+**Offen:** Prod-DB steht noch auf `WEBHOOK` (Migration 0004) → im AdminCenter auf SMTP umschalten (Config + Test zuerst). Retention/Löschjob für `email_log` (Klarnamen im Betreff) — mit dem Teil-3-Löschjob koppeln.
+
+### Phase 15: Klassenfahrt-Abrechnung — Teil 3 (in Umsetzung, ab 14.07.2026)
+
+Neuer Vorgangstyp `KLASSENFAHRT` (nur Mandant 40 = Christlicher Schulverein Minden e.V.). Lehrkräfte rechnen ab; berechnet wird der **FV-Zuschuss je Klasse** (= 1 Personen-Quote), Auszahlung getrennt je Klassenkonto.
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 15.1 | Plandokument (CREDO-CI-Artifact, Mockups + durchgerechnetes Beispiel) + adversariale Lückenprüfung gegen echten Code (40/40 Befunde bestätigt) | ✅ | 2026-07-14 |
+| 15.2 | Berechnungsmodul `backend/src/lib/klassenfahrt.ts` (proportional/direkt, Zuschuss = K/(S+B) je Klasse cent-gerundet ≥ 0, Div-0-Guard) + **Golden-Master** gegen 3 Excel-Dateien (**281,80 €**) | ✅ | 2026-07-14 |
+| 15.3 | DB-Fundament: `KLASSENFAHRT`-Enum + Migration `0011_klassenfahrt`; Tabellen `klassenfahrt_klassen`/`_kostenzeilen`/`_kostenzeile_anteil`; `bank_iban/bank_kontoinhaber` nullable; `idempotenz_key` (unique); belegNummer `KF`/Offset 4 | ✅ | 2026-07-14 |
+| 15.4 | KF-PDF-Renderer `erstelleKlassenfahrtPdf` (Deckblatt: DMS-QR, Eckdaten, Auszahlungstabelle je Konto, Zeichnungsfelder Geprüft/Freigegeben/Überwiesen) + Muster `MUSTER_Klassenfahrt_KF-2026-00001.pdf`; Belege-Einbettung in gemeinsamen Helfer extrahiert | ✅ | 2026-07-15 |
+| 15.5 | **Backend-Route:** KF-Branch in `einreichungen.ts` — M40-Gate, Server-Recompute über das Modul, Idempotenz-Check, Multi-Tabellen-Insert in einer Transaktion, Beleg-Pflicht serverseitig | ⏳ | offen |
+| 15.6 | **Frontend-Wizard** (6 Schritte) + Berechnungs-Zwilling `frontend/src/lib/klassenfahrt.ts`, `IbanFeld`-Komponente je Klasse, `DezimalInput allowNegative`, Ganzzahl-Schüler, 4. Startseiten-Kachel (M40-only, CREDO-Rot), Erfolg-Seite parametrisiert, DSGVO-Art.13-Hinweis | ⏳ | offen |
+| 15.7 | Querschnitt-Bestands-Bugs (betreffen alle Vorgänge): HEIC in `ALLOWED_MIME_TYPES`, Unterschrift-Biometrie bei ERSTATTUNG/SAMMELFAHRT löschen | ⏳ | offen |
+
+**Getroffene Entscheidungen:** Gesamt = **281,80 €** (Summe der cent-gerundeten Auszahlungen, nicht Excel-Anzeige 281,79); `bankIban/bankKontoinhaber` nullable + Konten je Klasse in eigener Tabelle; Startseiten-Kachel immer sichtbar, Mandant im KF-Formular fest auf M40 + harter Server-Gate; QR = reine DMS-Zuordnung über die Belegnummer (kein Swiss-QR/CHF); Freigabe offline über leere Zeichnungsfelder aufs Deckblatt.
+
+**Verifikation (bis 15.4):** Backend-tsc grün, 147 Vitest (inkl. 15 Golden-Master). Commits `8761627`, `d0ffbd1`, `edeb8e3`.
+
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 
 Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.
