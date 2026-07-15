@@ -241,13 +241,21 @@ Neuer Vorgangstyp `KLASSENFAHRT` (nur Mandant 40 = Christlicher Schulverein Mind
 | 15.2 | Berechnungsmodul `backend/src/lib/klassenfahrt.ts` (proportional/direkt, Zuschuss = K/(S+B) je Klasse cent-gerundet ≥ 0, Div-0-Guard) + **Golden-Master** gegen 3 Excel-Dateien (**281,80 €**) | ✅ | 2026-07-14 |
 | 15.3 | DB-Fundament: `KLASSENFAHRT`-Enum + Migration `0011_klassenfahrt`; Tabellen `klassenfahrt_klassen`/`_kostenzeilen`/`_kostenzeile_anteil`; `bank_iban/bank_kontoinhaber` nullable; `idempotenz_key` (unique); belegNummer `KF`/Offset 4 | ✅ | 2026-07-14 |
 | 15.4 | KF-PDF-Renderer `erstelleKlassenfahrtPdf` (Deckblatt: DMS-QR, Eckdaten, Auszahlungstabelle je Konto, Zeichnungsfelder Geprüft/Freigegeben/Überwiesen) + Muster `MUSTER_Klassenfahrt_KF-2026-00001.pdf`; Belege-Einbettung in gemeinsamen Helfer extrahiert | ✅ | 2026-07-15 |
-| 15.5 | **Backend-Route:** KF-Branch in `einreichungen.ts` — M40-Gate, Server-Recompute über das Modul, Idempotenz-Check, Multi-Tabellen-Insert in einer Transaktion, Beleg-Pflicht serverseitig | ⏳ | offen |
+| 15.5 | **Backend-Route:** KF-Branch in `einreichungen.ts` — M40-Gate (mandantNr 40 serverseitig aufgelöst), Server-Recompute über das Modul (Inputs cent-normalisiert), Idempotenz (Vorprüfung + Unique-Index-Guard), **PDF vor dem Commit** → Multi-Tabellen-Insert in einer Transaktion (Kopf+Klassen+Kostenzeilen+Anteile+Belege), Beleg-Pflicht serverseitig; `erstelleKlassenfahrtEmailText` | ✅ | 2026-07-15 |
 | 15.6 | **Frontend-Wizard** (6 Schritte) + Berechnungs-Zwilling `frontend/src/lib/klassenfahrt.ts`, `IbanFeld`-Komponente je Klasse, `DezimalInput allowNegative`, Ganzzahl-Schüler, 4. Startseiten-Kachel (M40-only, CREDO-Rot), Erfolg-Seite parametrisiert, DSGVO-Art.13-Hinweis | ⏳ | offen |
 | 15.7 | Querschnitt-Bestands-Bugs (betreffen alle Vorgänge): HEIC in `ALLOWED_MIME_TYPES`, Unterschrift-Biometrie bei ERSTATTUNG/SAMMELFAHRT löschen | ⏳ | offen |
 
 **Getroffene Entscheidungen:** Gesamt = **281,80 €** (Summe der cent-gerundeten Auszahlungen, nicht Excel-Anzeige 281,79); `bankIban/bankKontoinhaber` nullable + Konten je Klasse in eigener Tabelle; Startseiten-Kachel immer sichtbar, Mandant im KF-Formular fest auf M40 + harter Server-Gate; QR = reine DMS-Zuordnung über die Belegnummer (kein Swiss-QR/CHF); Freigabe offline über leere Zeichnungsfelder aufs Deckblatt.
 
 **Verifikation (bis 15.4):** Backend-tsc grün, 147 Vitest (inkl. 15 Golden-Master). Commits `8761627`, `d0ffbd1`, `edeb8e3`.
+
+**Verifikation 15.5:** Backend-tsc grün, Frontend-tsc n/a, 147 Vitest grün, ESLint 0. Adversariale 4-Linsen-Prüfung (correctness/security/edge-cases/CREDO-Konsistenz, je Befund einzeln verifiziert) → **8 bestätigte Befunde (4 distinkt)**, alle behoben:
+- **(MAJOR) Idempotenz maskierte Nicht-Zustellung:** Kopf wurde MIT `idempotenzKey` VOR der PDF-Erzeugung committet → PDF-Fehler (nicht-WinAnsi-Zeichen im Freitext, Platte voll, Neustart) ergab eine committete, aber nie versendete Zeile, die ein Retry als Erfolg meldete und die per Requeue (kein PDF) nicht heilbar war. **Fix:** PDF wird jetzt VOR der Transaktion erzeugt; der Kopf wird nur mit gesetztem `pdfDateipfad` committet (Biometrie-Unterschrift landet nie in der DB), sodass ein PDF-Fehler abbricht ohne Commit und jede committete Zeile requeue-fähig ist.
+- **(MINOR) DIREKT-Anteile roh gespeichert** (decimal(10,2)-Rundung) → `SUM(Anteile)` divergierte vom Zeilen-/Auszahlbetrag. **Fix:** alle Geldwerte + `begleiter` werden vorab cent-normalisiert (Recompute, Speicherung, PDF, Mail nutzen dieselben Werte → IKS-konsistent).
+- **(MINOR) `belegDateipfade` ohne Längenlimit** → Hash/PDF-Amplifikation. **Fix:** `.max(20)` (= `upload.array('belege', 20)`).
+- **(MINOR) Unparsebare `zeitraum`-Daten** umgingen die Plausibilitätsprüfung → 500 statt 400. **Fix:** Zod-`refine` auf beide Datumsfelder.
+
+**Bewusst akzeptiert (LOW):** belegNr-Kollisionsfenster ist durch „PDF vor Commit" breiter (Verlierer bekommt heilbares 500; pre-existing Eigenschaft von `generateBelegNr`, KF-Volumen minimal, echter Fix gehört mandantenübergreifend in den Nummerngenerator). Verwaiste PDF-Datei auf dem Rollback-Verlierer-Pfad → vom geplanten Retention-Job mit abgeräumt.
 
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 

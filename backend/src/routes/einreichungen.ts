@@ -5,23 +5,24 @@ import { z } from 'zod';
 import { ERSTATTUNG_KATEGORIE_DEFAULT_KEYS } from '../lib/constants.js';
 import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
-import { erstelleGesamtPdf } from '../services/pdf.js';
+import { erstelleGesamtPdf, erstelleKlassenfahrtPdf } from '../services/pdf.js';
 import { resolveAndValidateBelegPfade as resolveBelegPfadeImpl } from '../services/uploadResolve.js';
-import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSammelfahrtEmailText } from '../services/emailTexte.js';
+import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSammelfahrtEmailText, erstelleKlassenfahrtEmailText } from '../services/emailTexte.js';
 import { versendeEinreichung } from '../services/versand.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
+import { berechneKlassenfahrt, KlassenfahrtBerechnungsfehler, rundeAufCent as rundeAufCentKf } from '../lib/klassenfahrt.js';
 import path from 'path';
 
 export const einreichungenRouter = Router();
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.resolve('uploads');
 
-/** Speichert hochgeladene Beleg-Dateien für eine Einreichung als Bulk-Insert. */
-async function speichereBelege(einreichungId: string, validatedBelegPfade: string[]): Promise<void> {
-  if (validatedBelegPfade.length === 0) return;
-  const rows = await Promise.all(
+/** Baut die Beleg-Insert-Zeilen (inkl. SHA256-Hash) ohne einreichungId. Das Hashen
+ *  ist Datei-I/O und laeuft daher bewusst VOR einer DB-Transaktion, damit die
+ *  Transaktion (Klassenfahrt) die Verbindung nicht waehrend des Lesens haelt. */
+async function baueBelegBasisRows(validatedBelegPfade: string[]) {
+  return Promise.all(
     validatedBelegPfade.map(async pfad => ({
-      einreichungId,
       dateiname: path.basename(pfad),
       dateityp: path.extname(pfad).replace('.', '').toUpperCase(),
       dateigroesse: 0,
@@ -29,7 +30,19 @@ async function speichereBelege(einreichungId: string, validatedBelegPfade: strin
       sha256Hash: await berechneHash(pfad),
     })),
   );
-  await db.insert(schema.belege).values(rows);
+}
+
+/** Speichert hochgeladene Beleg-Dateien für eine Einreichung als Bulk-Insert. */
+async function speichereBelege(einreichungId: string, validatedBelegPfade: string[]): Promise<void> {
+  if (validatedBelegPfade.length === 0) return;
+  const basis = await baueBelegBasisRows(validatedBelegPfade);
+  await db.insert(schema.belege).values(basis.map(b => ({ ...b, einreichungId })));
+}
+
+/** Erkennt eine PostgreSQL-Unique-Verletzung (z.B. paralleler Idempotenz-Zweitversand). */
+function istUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err
+    && (err as { code?: string }).code === '23505';
 }
 
 /** Wrapper, bindet die in services/uploadResolve.ts implementierte Logik an UPLOAD_DIR. */
@@ -146,6 +159,42 @@ const sammelfahrtBody = z.object({
   gesamtbetrag: z.number().positive(),
   unterschriftBild: z.string().optional(),
   belegDateipfade: z.array(z.string()),
+});
+
+// Klassenfahrt (nur Mandant 40). Betraege duerfen negativ sein (Gutschriften/Rabatte);
+// der Server rechnet den FV-Zuschuss je Klasse ueber lib/klassenfahrt.ts neu und traut
+// keinem Client-Wert. `anteile` ist bei DIREKT die Betragsverteilung je Klasse.
+const klassenfahrtBody = z.object({
+  typ: z.literal('KLASSENFAHRT'),
+  mandantId: z.string().uuid(),
+  einreicher: z.object({
+    vorname: z.string().min(1).max(100),
+    nachname: z.string().min(1).max(100),
+    personalNr: z.string().max(20).optional().default(''),
+  }),
+  anlass: z.string().min(3).max(500),
+  ziel: z.string().max(500).optional().or(z.literal('')),
+  // Datum-Strings serverseitig auf Parsebarkeit pruefen — sonst schluegen ungueltige
+  // Werte ("", "2026-13-45") erst beim Timestamp-Insert als unklares 500 fehl.
+  zeitraumVon: z.string().refine(s => !Number.isNaN(Date.parse(s)), 'Ungültiges Datum'),
+  zeitraumBis: z.string().refine(s => !Number.isNaN(Date.parse(s)), 'Ungültiges Datum'),
+  klassen: z.array(z.object({
+    bezeichnung: z.string().max(100).optional().or(z.literal('')),
+    schueler: z.number().int().min(0),
+    begleiter: z.number().min(1).max(999), // Pflicht >= 1, Dezimal erlaubt (z.B. 1,5)
+    empfaenger: z.string().min(1).max(200),
+    iban: z.string().regex(/^DE\d{20}$/),
+  })).min(1).max(5),
+  kostenzeilen: z.array(z.object({
+    oberkategorie: z.enum(['FAHRTKOSTEN', 'UNTERKUNFT', 'AKTIVITAETEN', 'SONSTIGES']),
+    bezeichnung: z.string().min(1).max(200),
+    modus: z.enum(['PROPORTIONAL', 'DIREKT']),
+    betrag: z.number(),
+    anteile: z.array(z.number()).max(5).optional(),
+  })).min(1).max(50),
+  unterschriftBild: z.string().optional(),
+  belegDateipfade: z.array(z.string()).max(20), // wie upload.array('belege', 20) — verhindert Hash/PDF-Amplifikation
+  idempotenzKey: z.string().min(8).max(64).optional(),
 });
 
 // ── POST /api/einreichungen — Neue Einreichung ────────
@@ -629,8 +678,271 @@ einreichungenRouter.post('/', async (req, res) => {
         belegNr,
       });
 
+    } else if (body.typ === 'KLASSENFAHRT') {
+      const parsed = klassenfahrtBody.parse(body);
+
+      // ── M40-Gate: Klassenfahrt-Abrechnung ist ausschliesslich fuer Mandant 40 (Foerderverein).
+      //    Der Mandant wird serverseitig ueber die feste Nummer 40 aufgeloest — ein manipulierter
+      //    mandantId im Body kann den Vorgang nicht auf einen anderen Mandanten umlenken.
+      const [mandant] = await db.select().from(schema.mandanten).where(eq(schema.mandanten.mandantNr, 40));
+      if (!mandant) {
+        res.status(500).json({ error: 'Mandant 40 (Förderverein) ist nicht konfiguriert.' });
+        return;
+      }
+      if (parsed.mandantId !== mandant.id) {
+        res.status(403).json({ error: 'Die Klassenfahrt-Abrechnung ist nur für den Förderverein (Mandant 40) möglich.' });
+        return;
+      }
+
+      // Zeitraum-Plausibilität (Rückkehr nicht vor Abfahrt).
+      if (new Date(parsed.zeitraumBis) < new Date(parsed.zeitraumVon)) {
+        res.status(400).json({ error: 'Das Rückkehrdatum darf nicht vor dem Abfahrtdatum liegen.' });
+        return;
+      }
+
+      // ── Idempotenz-Vorprüfung: identischer Zweitversand (verlorene Response) liefert
+      //    denselben Beleg zurück, statt einen zweiten Vorgang (Doppel-DMS/Doppel-Überweisung) anzulegen.
+      if (parsed.idempotenzKey) {
+        const [vorhanden] = await db.select({ belegNr: schema.einreichungen.belegNr })
+          .from(schema.einreichungen)
+          .where(eq(schema.einreichungen.idempotenzKey, parsed.idempotenzKey))
+          .limit(1);
+        if (vorhanden) {
+          res.status(200).json({ success: true, belegNr: vorhanden.belegNr, idempotent: true });
+          return;
+        }
+      }
+
+      // ── Beleg-Pflicht (serverseitig): ohne mindestens einen validen Beleg kein Absenden.
+      const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
+      if (validatedBelegPfade.length === 0) {
+        res.status(400).json({ error: 'Mindestens ein Beleg ist erforderlich.' });
+        return;
+      }
+
+      // ── DIREKT-Kostenzeilen brauchen je Klasse einen Anteil (Länge = Anzahl Klassen),
+      //    sonst ist der Server-Recompute der Verteilung nicht rekonstruierbar.
+      const anzahlKlassen = parsed.klassen.length;
+      for (const [i, z] of parsed.kostenzeilen.entries()) {
+        if (z.modus === 'DIREKT' && (!z.anteile || z.anteile.length !== anzahlKlassen)) {
+          res.status(400).json({ error: `Kostenzeile ${i + 1} (direkt): Für jede Klasse muss ein Betrag angegeben werden.` });
+          return;
+        }
+      }
+
+      // ── Geldwerte + Begleiter-Divisor auf DB-Spaltenpräzision (2 Nachkommastellen)
+      //    normalisieren. So stimmen berechneter Zuschuss, gespeicherte Anteile und die
+      //    Auszahlungstabelle exakt überein (IKS: eine Neuberechnung aus den gespeicherten
+      //    Werten ergibt wieder die ausgezahlten Beträge — keine stille DB-Rundungsdivergenz).
+      const normKlassen = parsed.klassen.map(k => ({ ...k, begleiter: rundeAufCentKf(k.begleiter) }));
+      const normKostenzeilen = parsed.kostenzeilen.map(z => ({
+        ...z,
+        betrag: rundeAufCentKf(z.betrag),
+        anteile: z.anteile?.map(a => rundeAufCentKf(a)),
+      }));
+
+      // ── Server-Recompute (autoritativ): Zuschuss je Klasse + Gesamt aus den Roh-Inputs.
+      let ergebnis;
+      try {
+        ergebnis = berechneKlassenfahrt(
+          normKlassen.map(k => ({ schueler: k.schueler, begleiter: k.begleiter })),
+          normKostenzeilen.map(z => ({
+            modus: z.modus,
+            betrag: z.betrag,
+            anteile: z.modus === 'DIREKT' ? z.anteile : undefined,
+          })),
+        );
+      } catch (err) {
+        if (err instanceof KlassenfahrtBerechnungsfehler) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        throw err;
+      }
+
+      // Zeilen-Gesamtbetrag für Speicherung/PDF: DIREKT = Summe der (gerundeten) Anteile,
+      // PROPORTIONAL = gerundeter Gesamtbetrag der Zeile.
+      const zeilenBetrag = (z: (typeof normKostenzeilen)[number]): number =>
+        z.modus === 'DIREKT' ? rundeAufCentKf((z.anteile ?? []).reduce((s, a) => s + a, 0)) : z.betrag;
+
+      const belegNr = await generateBelegNr('KLASSENFAHRT');
+      const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
+
+      // ── PDF VOR dem Commit erzeugen (Deckblatt + Auszahlungstabelle je Konto + Belege). ──
+      //    Schlägt das Rendern fehl (z.B. nicht-WinAnsi-Zeichen in Freitext, Datei-I/O), bricht
+      //    der Vorgang ab, OHNE eine unzustellbare Zeile zu committen — ein Retry (auch mit
+      //    Idempotenz-Key) läuft sauber neu durch. Nach dem Commit ist die Zeile dank
+      //    vorhandenem pdfDateipfad immer per Admin-Requeue nachversendbar.
+      await erstelleKlassenfahrtPdf({
+        belegNr,
+        mandantName: mandant.name,
+        mandantNr: mandant.mandantNr,
+        anlass: parsed.anlass,
+        ziel: parsed.ziel || undefined,
+        zeitraumVon: parsed.zeitraumVon,
+        zeitraumBis: parsed.zeitraumBis,
+        einreicherName: `${parsed.einreicher.vorname} ${parsed.einreicher.nachname}`,
+        klassen: normKlassen.map((k, i) => ({
+          bezeichnung: k.bezeichnung || undefined,
+          schueler: k.schueler,
+          begleiter: k.begleiter,
+          empfaenger: k.empfaenger,
+          iban: k.iban,
+          kostenanteil: ergebnis.klassen[i].kostenanteil,
+          zuschuss: ergebnis.klassen[i].zuschuss,
+        })),
+        kostenzeilen: normKostenzeilen.map(z => ({
+          oberkategorie: z.oberkategorie,
+          bezeichnung: z.bezeichnung,
+          modus: z.modus,
+          betrag: zeilenBetrag(z),
+        })),
+        gesamtZuschuss: ergebnis.gesamtZuschuss,
+        unterschriftBild: parsed.unterschriftBild,
+      }, validatedBelegPfade, pdfPfad);
+
+      // Belege hashen (Datei-I/O außerhalb der Transaktion).
+      const belegBasis = await baueBelegBasisRows(validatedBelegPfade);
+
+      // ── Atomarer Multi-Tabellen-Insert: Kopf + Klassen + Kostenzeilen + Anteile + Belege.
+      //    Der Kopf trägt pdfDateipfad von Anfang an — die Biometrie-Unterschrift wird nie in der
+      //    DB abgelegt (DSGVO: sie ist bereits im PDF persistiert). ──
+      let einreichungId: string;
+      try {
+        einreichungId = await db.transaction(async (tx) => {
+          const [einreichung] = await tx.insert(schema.einreichungen).values({
+            typ: 'KLASSENFAHRT',
+            belegNr,
+            mandantId: mandant.id,
+            mitarbeiterVorname: parsed.einreicher.vorname,
+            mitarbeiterNachname: parsed.einreicher.nachname,
+            mitarbeiterPersonalNr: parsed.einreicher.personalNr || '',
+            bankIban: null,
+            bankKontoinhaber: null,
+            reiseanlass: parsed.anlass,
+            reiseziel: parsed.ziel || null,
+            abfahrtZeit: new Date(parsed.zeitraumVon),
+            rueckkehrZeit: new Date(parsed.zeitraumBis),
+            gesamtbetrag: String(ergebnis.gesamtZuschuss),
+            pdfDateipfad: pdfPfad,
+            unterschriftBild: null,
+            idempotenzKey: parsed.idempotenzKey || null,
+            status: 'EINGEREICHT',
+          }).returning();
+
+          await tx.insert(schema.klassenfahrtKlassen).values(
+            normKlassen.map((k, i) => ({
+              einreichungId: einreichung.id,
+              reihenfolge: i,
+              bezeichnung: k.bezeichnung || null,
+              schueler: k.schueler,
+              begleiter: String(k.begleiter),
+              empfaenger: k.empfaenger,
+              iban: k.iban,
+              zuschuss: String(ergebnis.klassen[i].zuschuss),
+            })),
+          );
+
+          const zeilenRows = await tx.insert(schema.klassenfahrtKostenzeilen).values(
+            normKostenzeilen.map((z, i) => ({
+              einreichungId: einreichung.id,
+              reihenfolge: i,
+              oberkategorie: z.oberkategorie,
+              bezeichnung: z.bezeichnung,
+              modus: z.modus,
+              betrag: String(zeilenBetrag(z)),
+            })),
+          ).returning({ id: schema.klassenfahrtKostenzeilen.id });
+
+          const anteilRows = normKostenzeilen.flatMap((z, i) =>
+            z.modus === 'DIREKT' && z.anteile
+              ? z.anteile.map((betrag, klasseIdx) => ({
+                  kostenzeileId: zeilenRows[i].id,
+                  klasseReihenfolge: klasseIdx,
+                  betrag: String(betrag),
+                }))
+              : [],
+          );
+          if (anteilRows.length > 0) {
+            await tx.insert(schema.klassenfahrtKostenzeileAnteil).values(anteilRows);
+          }
+
+          if (belegBasis.length > 0) {
+            await tx.insert(schema.belege).values(
+              belegBasis.map(b => ({ ...b, einreichungId: einreichung.id })),
+            );
+          }
+
+          return einreichung.id;
+        });
+      } catch (err) {
+        // Paralleler Idempotenz-Zweitversand: Unique-Verletzung → bereits angelegten Beleg zurückgeben.
+        if (parsed.idempotenzKey && istUniqueViolation(err)) {
+          const [vorhanden] = await db.select({ belegNr: schema.einreichungen.belegNr })
+            .from(schema.einreichungen)
+            .where(eq(schema.einreichungen.idempotenzKey, parsed.idempotenzKey))
+            .limit(1);
+          if (vorhanden) {
+            res.status(200).json({ success: true, belegNr: vorhanden.belegNr, idempotent: true });
+            return;
+          }
+        }
+        throw err;
+      }
+
+      const webhookDataK = {
+        id: einreichungId,
+        belegNr,
+        typ: 'KLASSENFAHRT' as const,
+        status: 'EINGEREICHT',
+        mandant: mandant.name,
+        mandantNr: mandant.mandantNr,
+        kostenstelle: '',
+        mitarbeiter: {
+          vorname: parsed.einreicher.vorname,
+          nachname: parsed.einreicher.nachname,
+          personalNr: parsed.einreicher.personalNr || '',
+        },
+        gesamtbetrag: String(ergebnis.gesamtZuschuss),
+        // KF hat kein persönliches Auszahlungskonto — die Konten liegen je Klasse (siehe PDF/SMTP-Text).
+        iban: '',
+        kontoinhaber: '',
+        reiseanlass: parsed.anlass,
+      };
+
+      void versendeEinreichung({
+        einreichungId,
+        belegNr,
+        dmsEmail: mandant.dmsEmail,
+        pdfPfad,
+        webhookData: webhookDataK,
+        smtpBetreff: `[${belegNr}] ${parsed.einreicher.vorname} ${parsed.einreicher.nachname} - ${mandant.name}`,
+        smtpText: erstelleKlassenfahrtEmailText({
+          einreicherName: `${parsed.einreicher.vorname} ${parsed.einreicher.nachname}`,
+          personalNr: parsed.einreicher.personalNr || '',
+          mandantName: mandant.name,
+          mandantNr: String(mandant.mandantNr),
+          anlass: parsed.anlass,
+          ziel: parsed.ziel || '',
+          zeitraumVon: parsed.zeitraumVon,
+          zeitraumBis: parsed.zeitraumBis,
+          gesamtZuschuss: ergebnis.gesamtZuschuss,
+          klassen: parsed.klassen.map((k, i) => ({
+            bezeichnung: k.bezeichnung || '',
+            empfaenger: k.empfaenger,
+            iban: k.iban,
+            zuschuss: ergebnis.klassen[i].zuschuss,
+          })),
+        }),
+      });
+
+      res.status(201).json({
+        success: true,
+        belegNr,
+      });
+
     } else {
-      res.status(400).json({ error: 'Ungültiger Typ. Erlaubt: REISEKOSTEN, ERSTATTUNG, SAMMELFAHRT' });
+      res.status(400).json({ error: 'Ungültiger Typ. Erlaubt: REISEKOSTEN, ERSTATTUNG, SAMMELFAHRT, KLASSENFAHRT' });
     }
   } catch (error) {
     if (error instanceof z.ZodError) {

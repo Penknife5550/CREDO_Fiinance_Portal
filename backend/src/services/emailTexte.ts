@@ -181,3 +181,52 @@ export function erstelleErstattungEmailText(data: ErstattungEmailDaten): string 
     'Diese E-Mail wurde automatisch vom CREDO Finanzportal erstellt.',
   ].join('\n');
 }
+
+interface KlassenfahrtEmailKlasse {
+  bezeichnung: string;
+  empfaenger: string;
+  iban: string;
+  zuschuss: number;
+}
+
+interface KlassenfahrtEmailDaten {
+  einreicherName: string;
+  personalNr: string;
+  mandantName: string;
+  mandantNr: string;
+  anlass: string;
+  ziel: string;
+  zeitraumVon: string;
+  zeitraumBis: string;
+  gesamtZuschuss: number;
+  klassen: KlassenfahrtEmailKlasse[];
+}
+
+export function erstelleKlassenfahrtEmailText(data: KlassenfahrtEmailDaten): string {
+  const zeilen = [
+    'Neue Klassenfahrt-Abrechnung eingereicht.',
+    '',
+    `Einreicher: ${data.einreicherName}${data.personalNr ? ` (Personal-Nr.: ${data.personalNr})` : ''}`,
+    `Mandant: ${data.mandantName} (${data.mandantNr})`,
+    `Anlass: ${data.anlass}`,
+  ];
+  if (data.ziel) zeilen.push(`Ziel: ${data.ziel}`);
+  zeilen.push(
+    `Zeitraum: ${formatiereDatum(data.zeitraumVon)} \u2013 ${formatiereDatum(data.zeitraumBis)}`,
+    `Klassen: ${data.klassen.length}`,
+    `Gesamt-Zuschuss F\u00f6rderverein: ${formatiereBetrag(data.gesamtZuschuss)} EUR`,
+    '',
+    'Auszahlung je Klassenkonto:',
+  );
+  data.klassen.forEach((k, i) => {
+    const label = k.bezeichnung || `Klasse ${i + 1}`;
+    zeilen.push(`  ${label}: ${formatiereBetrag(k.zuschuss)} EUR \u2192 ${k.empfaenger}, IBAN ${k.iban}`);
+  });
+  zeilen.push(
+    '',
+    'Die Auszahlung erfolgt getrennt je Klassenkonto (eine \u00dcberweisung je Klasse).',
+    'Das PDF mit Deckblatt (QR + Auszahlungstabelle) und allen Belegen ist als Anhang beigef\u00fcgt.',
+    'Diese E-Mail wurde automatisch vom CREDO Finanzportal erstellt.',
+  );
+  return zeilen.join('\n');
+}
