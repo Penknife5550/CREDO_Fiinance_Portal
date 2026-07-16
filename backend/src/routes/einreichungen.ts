@@ -11,6 +11,7 @@ import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSamm
 import { versendeEinreichung } from '../services/versand.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import { berechneKlassenfahrt, KlassenfahrtBerechnungsfehler, rundeAufCent as rundeAufCentKf } from '../lib/klassenfahrt.js';
+import { berechneVmaServer } from '../lib/vma.js';
 import path from 'path';
 
 export const einreichungenRouter = Router();
@@ -236,12 +237,41 @@ einreichungenRouter.post('/', async (req, res) => {
         return;
       }
 
-      // Server-Recompute: km-Beträge und VMA-Summen aus den Roh-Inputs berechnen,
-      // damit ein manipulierter Client keine fremden Beträge auszahlen kann.
+      // Server-Recompute (autoritativ): km + VMA je Tag aus den Roh-Inputs (Typ, Mahlzeiten,
+      // Land) NEU berechnen — die vom Client gelieferten VMA-Beträge werden ignoriert, sonst
+      // wäre der Auszahlungsbetrag client-manipulierbar (Audit #2).
       const serverKmBetrag = berechneKmBetrag(parsed.kmGefahren, parsed.verkehrsmittel);
-      const serverVmaBrutto = rundeAufCent(parsed.reisetage.reduce((s, t) => s + t.vmaBrutto, 0));
-      const serverVmaKuerzung = rundeAufCent(parsed.reisetage.reduce((s, t) => s + t.vmaKuerzung, 0));
-      const serverVmaNetto = rundeAufCent(parsed.reisetage.reduce((s, t) => s + t.vmaNetto, 0));
+
+      // Bei Auslandsreise den 24h-Tagessatz laden (parsed.land = landKey aus pauschalen_ausland).
+      let auslandTagessatz24h: number | null = null;
+      if (parsed.land) {
+        const [ap] = await db.select().from(schema.pauschalenAusland).where(eq(schema.pauschalenAusland.landKey, parsed.land));
+        if (!ap) {
+          res.status(400).json({ error: `Unbekanntes Reiseland: ${parsed.land}` });
+          return;
+        }
+        auslandTagessatz24h = Number(ap.tagessatz24h);
+      }
+      // Eintägig->8h aus Abfahrt/Rückkehr (der Server traut auch der Dauer nicht).
+      const eintaegigUeber8h =
+        new Date(parsed.rueckkehrZeit).getTime() - new Date(parsed.abfahrtZeit).getTime() >= 8 * 60 * 60 * 1000;
+      const serverReisetage = parsed.reisetage.map(t => ({
+        ...t,
+        ...berechneVmaServer(
+          {
+            typ: t.typ,
+            fruehstueckGestellt: t.fruehstueckGestellt,
+            mittagGestellt: t.mittagGestellt,
+            abendGestellt: t.abendGestellt,
+            eintaegigUeber8h,
+          },
+          auslandTagessatz24h,
+        ),
+      }));
+
+      const serverVmaBrutto = rundeAufCent(serverReisetage.reduce((s, t) => s + t.vmaBrutto, 0));
+      const serverVmaKuerzung = rundeAufCent(serverReisetage.reduce((s, t) => s + t.vmaKuerzung, 0));
+      const serverVmaNetto = rundeAufCent(serverReisetage.reduce((s, t) => s + t.vmaNetto, 0));
       const serverWeitereKostenSumme = rundeAufCent(parsed.weitereKosten.reduce((s, k) => s + k.betrag, 0));
       const serverGesamtbetrag = rundeAufCent(serverKmBetrag + serverVmaNetto + serverWeitereKostenSumme);
 
@@ -275,10 +305,10 @@ einreichungenRouter.post('/', async (req, res) => {
         status: 'EINGEREICHT',
       }).returning();
 
-      // Reisetage als Bulk-Insert
-      if (parsed.reisetage.length > 0) {
+      // Reisetage als Bulk-Insert (mit den server-berechneten VMA-Werten)
+      if (serverReisetage.length > 0) {
         await db.insert(schema.reisetage).values(
-          parsed.reisetage.map(tag => ({
+          serverReisetage.map(tag => ({
             einreichungId: einreichung.id,
             datum: new Date(tag.datum),
             typ: tag.typ,
@@ -332,7 +362,7 @@ einreichungenRouter.post('/', async (req, res) => {
         vmaNetto: serverVmaNetto,
         weitereKostenSumme: serverWeitereKostenSumme,
         gesamtbetrag: serverGesamtbetrag,
-        reisetage: parsed.reisetage.map(t => ({
+        reisetage: serverReisetage.map(t => ({
           datum: t.datum,
           typ: t.typ,
           vmaNetto: t.vmaNetto,
