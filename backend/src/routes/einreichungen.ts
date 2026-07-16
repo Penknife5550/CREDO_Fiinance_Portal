@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { db, schema } from '../db/index.js';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
@@ -9,10 +9,12 @@ import { erstelleGesamtPdf, erstelleKlassenfahrtPdf } from '../services/pdf.js';
 import { resolveAndValidateBelegPfade as resolveBelegPfadeImpl } from '../services/uploadResolve.js';
 import { erstelleReisekostenEmailText, erstelleErstattungEmailText, erstelleSammelfahrtEmailText, erstelleKlassenfahrtEmailText } from '../services/emailTexte.js';
 import { versendeEinreichung } from '../services/versand.js';
+import { pruefeAnhangGroesse } from '../services/email-utils.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import { berechneKlassenfahrt, KlassenfahrtBerechnungsfehler, rundeAufCent as rundeAufCentKf } from '../lib/klassenfahrt.js';
 import { berechneVmaServer } from '../lib/vma.js';
 import path from 'path';
+import fs from 'fs';
 
 export const einreichungenRouter = Router();
 
@@ -33,13 +35,6 @@ async function baueBelegBasisRows(validatedBelegPfade: string[]) {
   );
 }
 
-/** Speichert hochgeladene Beleg-Dateien für eine Einreichung als Bulk-Insert. */
-async function speichereBelege(einreichungId: string, validatedBelegPfade: string[]): Promise<void> {
-  if (validatedBelegPfade.length === 0) return;
-  const basis = await baueBelegBasisRows(validatedBelegPfade);
-  await db.insert(schema.belege).values(basis.map(b => ({ ...b, einreichungId })));
-}
-
 /** Erkennt eine PostgreSQL-Unique-Verletzung (z.B. paralleler Idempotenz-Zweitversand). */
 function istUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err
@@ -49,6 +44,21 @@ function istUniqueViolation(err: unknown): boolean {
 /** Wrapper, bindet die in services/uploadResolve.ts implementierte Logik an UPLOAD_DIR. */
 function resolveAndValidateBelegPfade(dateiIds: string[]): Promise<string[]> {
   return resolveBelegPfadeImpl(dateiIds, UPLOAD_DIR);
+}
+
+/**
+ * Prüft die fertige PDF gegen die SMTP-Nachrichtengrenze VOR dem Commit (Audit #8).
+ * Ist der Anhang zu groß, wird 400 gesendet und `false` zurückgegeben — der Nutzer
+ * erfährt es sofort, statt einen Datensatz zu committen, der beim Versand permanent
+ * scheitert (der einzige Anhang der Mail ist diese PDF, Belege sind darin eingebettet).
+ */
+function pdfPasstInMailOderAntworte(res: Response, pdfPfad: string): boolean {
+  const check = pruefeAnhangGroesse(fs.statSync(pdfPfad).size);
+  if (!check.ok) {
+    res.status(400).json({ error: check.fehler });
+    return false;
+  }
+  return true;
 }
 
 // ── Beleg-Upload (vorab, vor Einreichung) ──────────────
@@ -220,8 +230,6 @@ einreichungenRouter.post('/', async (req, res) => {
       // Path Traversal Schutz: Beleg-Pfade validieren und auflösen
       const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
 
-      const belegNr = await generateBelegNr('REISEKOSTEN');
-
       // Mandant + Kostenstelle laden
       const [mandant] = await db.select().from(schema.mandanten).where(eq(schema.mandanten.id, parsed.persoenlich.mandantId));
       const [kostenstelle] = parsed.persoenlich.kostenstelleId
@@ -275,69 +283,10 @@ einreichungenRouter.post('/', async (req, res) => {
       const serverWeitereKostenSumme = rundeAufCent(parsed.weitereKosten.reduce((s, k) => s + k.betrag, 0));
       const serverGesamtbetrag = rundeAufCent(serverKmBetrag + serverVmaNetto + serverWeitereKostenSumme);
 
-      // In DB speichern
-      const [einreichung] = await db.insert(schema.einreichungen).values({
-        typ: 'REISEKOSTEN',
-        belegNr,
-        mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
-        mitarbeiterVorname: parsed.persoenlich.vorname,
-        mitarbeiterNachname: parsed.persoenlich.nachname,
-        mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
-        bankIban: parsed.persoenlich.iban,
-        bankKontoinhaber: parsed.persoenlich.kontoinhaber,
-        reiseanlass: parsed.reiseanlass,
-        reiseziel: parsed.reiseziel,
-        abfahrtOrt: parsed.abfahrtOrt,
-        abfahrtZeit: new Date(parsed.abfahrtZeit),
-        rueckkehrZeit: new Date(parsed.rueckkehrZeit),
-        land: parsed.land || null,
-        verkehrsmittel: parsed.verkehrsmittel,
-        kmGefahren: String(parsed.kmGefahren),
-        kmPauschaleSatz: kmSatzAlsDecimal(parsed.verkehrsmittel),
-        kmBetrag: String(serverKmBetrag),
-        vmaBrutto: String(serverVmaBrutto),
-        vmaKuerzung: String(serverVmaKuerzung),
-        vmaNetto: String(serverVmaNetto),
-        weitereKostenSumme: String(serverWeitereKostenSumme),
-        gesamtbetrag: String(serverGesamtbetrag),
-        unterschriftBild: parsed.unterschriftBild,
-        status: 'EINGEREICHT',
-      }).returning();
-
-      // Reisetage als Bulk-Insert (mit den server-berechneten VMA-Werten)
-      if (serverReisetage.length > 0) {
-        await db.insert(schema.reisetage).values(
-          serverReisetage.map(tag => ({
-            einreichungId: einreichung.id,
-            datum: new Date(tag.datum),
-            typ: tag.typ,
-            fruehstueckGestellt: tag.fruehstueckGestellt,
-            mittagGestellt: tag.mittagGestellt,
-            abendGestellt: tag.abendGestellt,
-            vmaBrutto: String(tag.vmaBrutto),
-            vmaKuerzung: String(tag.vmaKuerzung),
-            vmaNetto: String(tag.vmaNetto),
-          })),
-        );
-      }
-
-      // Weitere Kosten als Bulk-Insert
-      if (parsed.weitereKosten.length > 0) {
-        await db.insert(schema.weitereKosten).values(
-          parsed.weitereKosten.map(k => ({
-            einreichungId: einreichung.id,
-            typ: k.typ,
-            beschreibung: k.beschreibung,
-            betrag: String(k.betrag),
-          })),
-        );
-      }
-
-      // Belege als Bulk-Insert (Hashes parallel berechnen)
-      await speichereBelege(einreichung.id, validatedBelegPfade);
-
-      // PDF generieren (Hauptdokument + Belege in einer PDF)
+      // ── Belegnummer + PDF VOR dem Commit (Audit #10): schlägt das Rendern fehl
+      //    (z.B. nicht-WinAnsi-Zeichen, Datei-I/O), bricht der Vorgang ab, OHNE einen
+      //    unzustellbaren Datensatz zu committen — ein Retry läuft sauber neu durch. ──
+      const belegNr = await generateBelegNr('REISEKOSTEN');
       const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
       await erstelleGesamtPdf({
         typ: 'REISEKOSTEN',
@@ -374,14 +323,84 @@ einreichungenRouter.post('/', async (req, res) => {
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
 
-      // PDF-Pfad in DB speichern, Unterschrift-Biometrie nach erfolgreicher
-      // PDF-Erstellung loeschen (DSGVO — sie ist im PDF persistiert).
-      await db.update(schema.einreichungen)
-        .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
-        .where(eq(schema.einreichungen.id, einreichung.id));
+      // Anhang-Größencheck VOR dem Commit (Audit #8): zu große PDF → 400 statt totem Datensatz.
+      if (!pdfPasstInMailOderAntworte(res, pdfPfad)) return;
+
+      // Belege hashen (Datei-I/O außerhalb der Transaktion).
+      const belegBasis = await baueBelegBasisRows(validatedBelegPfade);
+
+      // ── Atomarer Insert: Kopf (inkl. pdfDateipfad, ohne Biometrie) + Reisetage +
+      //    weitere Kosten + Belege. Die Biometrie-Unterschrift wird nie persistiert
+      //    (DSGVO — sie ist bereits im PDF enthalten). ──
+      const einreichungId = await db.transaction(async (tx) => {
+        const [einreichung] = await tx.insert(schema.einreichungen).values({
+          typ: 'REISEKOSTEN',
+          belegNr,
+          mandantId: parsed.persoenlich.mandantId,
+          kostenstelleId: parsed.persoenlich.kostenstelleId || null,
+          mitarbeiterVorname: parsed.persoenlich.vorname,
+          mitarbeiterNachname: parsed.persoenlich.nachname,
+          mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
+          bankIban: parsed.persoenlich.iban,
+          bankKontoinhaber: parsed.persoenlich.kontoinhaber,
+          reiseanlass: parsed.reiseanlass,
+          reiseziel: parsed.reiseziel,
+          abfahrtOrt: parsed.abfahrtOrt,
+          abfahrtZeit: new Date(parsed.abfahrtZeit),
+          rueckkehrZeit: new Date(parsed.rueckkehrZeit),
+          land: parsed.land || null,
+          verkehrsmittel: parsed.verkehrsmittel,
+          kmGefahren: String(parsed.kmGefahren),
+          kmPauschaleSatz: kmSatzAlsDecimal(parsed.verkehrsmittel),
+          kmBetrag: String(serverKmBetrag),
+          vmaBrutto: String(serverVmaBrutto),
+          vmaKuerzung: String(serverVmaKuerzung),
+          vmaNetto: String(serverVmaNetto),
+          weitereKostenSumme: String(serverWeitereKostenSumme),
+          gesamtbetrag: String(serverGesamtbetrag),
+          pdfDateipfad: pdfPfad,
+          unterschriftBild: null,
+          status: 'EINGEREICHT',
+        }).returning();
+
+        if (serverReisetage.length > 0) {
+          await tx.insert(schema.reisetage).values(
+            serverReisetage.map(tag => ({
+              einreichungId: einreichung.id,
+              datum: new Date(tag.datum),
+              typ: tag.typ,
+              fruehstueckGestellt: tag.fruehstueckGestellt,
+              mittagGestellt: tag.mittagGestellt,
+              abendGestellt: tag.abendGestellt,
+              vmaBrutto: String(tag.vmaBrutto),
+              vmaKuerzung: String(tag.vmaKuerzung),
+              vmaNetto: String(tag.vmaNetto),
+            })),
+          );
+        }
+
+        if (parsed.weitereKosten.length > 0) {
+          await tx.insert(schema.weitereKosten).values(
+            parsed.weitereKosten.map(k => ({
+              einreichungId: einreichung.id,
+              typ: k.typ,
+              beschreibung: k.beschreibung,
+              betrag: String(k.betrag),
+            })),
+          );
+        }
+
+        if (belegBasis.length > 0) {
+          await tx.insert(schema.belege).values(
+            belegBasis.map(b => ({ ...b, einreichungId: einreichung.id })),
+          );
+        }
+
+        return einreichung.id;
+      });
 
       const webhookData = {
-        id: einreichung.id,
+        id: einreichungId,
         belegNr,
         typ: 'REISEKOSTEN' as const,
         status: 'EINGEREICHT',
@@ -404,7 +423,7 @@ einreichungenRouter.post('/', async (req, res) => {
       };
 
       void versendeEinreichung({
-        einreichungId: einreichung.id,
+        einreichungId,
         belegNr,
         dmsEmail: mandant.dmsEmail,
         pdfPfad,
@@ -436,8 +455,6 @@ einreichungenRouter.post('/', async (req, res) => {
 
       // Path Traversal Schutz: Beleg-Pfade validieren und auflösen
       const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
-
-      const belegNr = await generateBelegNr('ERSTATTUNG');
 
       const [mandant] = await db.select().from(schema.mandanten).where(eq(schema.mandanten.id, parsed.persoenlich.mandantId));
       const [kostenstelle] = parsed.persoenlich.kostenstelleId
@@ -474,39 +491,10 @@ einreichungenRouter.post('/', async (req, res) => {
       // Server-Recompute: Gesamtbetrag aus Positions-Summen, Frontend-Wert wird ignoriert.
       const serverGesamtbetragE = rundeAufCent(parsed.positionen.reduce((s, p) => s + p.betrag, 0));
 
-      // In DB speichern
-      const [einreichung] = await db.insert(schema.einreichungen).values({
-        typ: 'ERSTATTUNG',
-        belegNr,
-        mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
-        mitarbeiterVorname: parsed.persoenlich.vorname,
-        mitarbeiterNachname: parsed.persoenlich.nachname,
-        mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
-        bankIban: parsed.persoenlich.iban,
-        bankKontoinhaber: parsed.persoenlich.kontoinhaber,
-        gesamtbetrag: String(serverGesamtbetragE),
-        unterschriftBild: parsed.unterschriftBild || null,
-        status: 'EINGEREICHT',
-      }).returning();
-
-      // Positionen als Bulk-Insert
-      if (parsed.positionen.length > 0) {
-        await db.insert(schema.positionen).values(
-          parsed.positionen.map(pos => ({
-            einreichungId: einreichung.id,
-            beschreibung: pos.beschreibung,
-            kategorie: pos.kategorie,
-            datum: new Date(pos.datum),
-            betrag: String(pos.betrag),
-          })),
-        );
-      }
-
-      // Belege als Bulk-Insert
-      await speichereBelege(einreichung.id, validatedBelegPfade);
-
-      // PDF generieren
+      // ── Belegnummer + PDF VOR dem Commit (Audit #10): schlägt das Rendern fehl
+      //    (z.B. nicht-WinAnsi-Zeichen, Datei-I/O), bricht der Vorgang ab, OHNE einen
+      //    unzustellbaren Datensatz zu committen — ein Retry läuft sauber neu durch. ──
+      const belegNr = await generateBelegNr('ERSTATTUNG');
       const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
       await erstelleGesamtPdf({
         typ: 'ERSTATTUNG',
@@ -525,13 +513,53 @@ einreichungenRouter.post('/', async (req, res) => {
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
 
-      // pdfDateipfad speichern + Unterschrift-Biometrie löschen (DSGVO — sie ist im PDF persistiert).
-      await db.update(schema.einreichungen)
-        .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
-        .where(eq(schema.einreichungen.id, einreichung.id));
+      // Anhang-Größencheck VOR dem Commit (Audit #8): zu große PDF → 400 statt totem Datensatz.
+      if (!pdfPasstInMailOderAntworte(res, pdfPfad)) return;
+
+      // Belege hashen (Datei-I/O außerhalb der Transaktion).
+      const belegBasis = await baueBelegBasisRows(validatedBelegPfade);
+
+      // ── Atomarer Insert: Kopf (inkl. pdfDateipfad, ohne Biometrie) + Positionen + Belege. ──
+      const einreichungId = await db.transaction(async (tx) => {
+        const [einreichung] = await tx.insert(schema.einreichungen).values({
+          typ: 'ERSTATTUNG',
+          belegNr,
+          mandantId: parsed.persoenlich.mandantId,
+          kostenstelleId: parsed.persoenlich.kostenstelleId || null,
+          mitarbeiterVorname: parsed.persoenlich.vorname,
+          mitarbeiterNachname: parsed.persoenlich.nachname,
+          mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
+          bankIban: parsed.persoenlich.iban,
+          bankKontoinhaber: parsed.persoenlich.kontoinhaber,
+          gesamtbetrag: String(serverGesamtbetragE),
+          pdfDateipfad: pdfPfad,
+          unterschriftBild: null,
+          status: 'EINGEREICHT',
+        }).returning();
+
+        if (parsed.positionen.length > 0) {
+          await tx.insert(schema.positionen).values(
+            parsed.positionen.map(pos => ({
+              einreichungId: einreichung.id,
+              beschreibung: pos.beschreibung,
+              kategorie: pos.kategorie,
+              datum: new Date(pos.datum),
+              betrag: String(pos.betrag),
+            })),
+          );
+        }
+
+        if (belegBasis.length > 0) {
+          await tx.insert(schema.belege).values(
+            belegBasis.map(b => ({ ...b, einreichungId: einreichung.id })),
+          );
+        }
+
+        return einreichung.id;
+      });
 
       const webhookDataE = {
-        id: einreichung.id,
+        id: einreichungId,
         belegNr,
         typ: 'ERSTATTUNG' as const,
         status: 'EINGEREICHT',
@@ -550,7 +578,7 @@ einreichungenRouter.post('/', async (req, res) => {
       };
 
       void versendeEinreichung({
-        einreichungId: einreichung.id,
+        einreichungId,
         belegNr,
         dmsEmail: mandant.dmsEmail,
         pdfPfad,
@@ -579,8 +607,6 @@ einreichungenRouter.post('/', async (req, res) => {
       // Path Traversal Schutz: Beleg-Pfade validieren
       const validatedBelegPfade = await resolveAndValidateBelegPfade(parsed.belegDateipfade);
 
-      const belegNr = await generateBelegNr('SAMMELFAHRT');
-
       const [mandant] = await db.select().from(schema.mandanten).where(eq(schema.mandanten.id, parsed.persoenlich.mandantId));
       const [kostenstelle] = parsed.persoenlich.kostenstelleId
         ? await db.select().from(schema.kostenstellen).where(eq(schema.kostenstellen.id, parsed.persoenlich.kostenstelleId))
@@ -603,46 +629,9 @@ einreichungenRouter.post('/', async (req, res) => {
       const serverKmSumme = rundeAufCent(serverFahrten.reduce((s, f) => s + f.km, 0));
       const serverGesamtbetragS = rundeAufCent(serverFahrten.reduce((s, f) => s + f.kmBetrag, 0));
 
-      // Einreichung speichern (Sammelfahrt nutzt km-Felder, kein VMA)
-      const [einreichung] = await db.insert(schema.einreichungen).values({
-        typ: 'SAMMELFAHRT',
-        belegNr,
-        mandantId: parsed.persoenlich.mandantId,
-        kostenstelleId: parsed.persoenlich.kostenstelleId || null,
-        mitarbeiterVorname: parsed.persoenlich.vorname,
-        mitarbeiterNachname: parsed.persoenlich.nachname,
-        mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
-        bankIban: parsed.persoenlich.iban,
-        bankKontoinhaber: parsed.persoenlich.kontoinhaber,
-        reiseanlass: parsed.reiseanlass,
-        verkehrsmittel: parsed.verkehrsmittel,
-        kmGefahren: String(serverKmSumme),
-        kmPauschaleSatz: kmSatzAlsDecimal(parsed.verkehrsmittel),
-        kmBetrag: String(serverGesamtbetragS),
-        gesamtbetrag: String(serverGesamtbetragS),
-        unterschriftBild: parsed.unterschriftBild || null,
-        status: 'EINGEREICHT',
-      }).returning();
-
-      // Einzelfahrten als Bulk-Insert
-      if (serverFahrten.length > 0) {
-        await db.insert(schema.fahrten).values(
-          serverFahrten.map((f, i) => ({
-            einreichungId: einreichung.id,
-            datum: new Date(f.datum),
-            startOrt: f.startOrt,
-            ziel: f.ziel,
-            km: String(f.km),
-            kmBetrag: String(f.kmBetrag),
-            reihenfolge: i,
-          })),
-        );
-      }
-
-      // Belege als Bulk-Insert
-      await speichereBelege(einreichung.id, validatedBelegPfade);
-
-      // PDF generieren
+      // ── Belegnummer + PDF VOR dem Commit (Audit #10): schlägt das Rendern fehl,
+      //    wird kein unzustellbarer Datensatz angelegt; ein Retry läuft sauber neu durch. ──
+      const belegNr = await generateBelegNr('SAMMELFAHRT');
       const pdfPfad = path.join(UPLOAD_DIR, 'pdfs', `${belegNr}.pdf`);
       await erstelleGesamtPdf({
         typ: 'SAMMELFAHRT',
@@ -664,13 +653,60 @@ einreichungenRouter.post('/', async (req, res) => {
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
 
-      // pdfDateipfad speichern + Unterschrift-Biometrie löschen (DSGVO — sie ist im PDF persistiert).
-      await db.update(schema.einreichungen)
-        .set({ pdfDateipfad: pdfPfad, unterschriftBild: null })
-        .where(eq(schema.einreichungen.id, einreichung.id));
+      // Anhang-Größencheck VOR dem Commit (Audit #8): zu große PDF → 400 statt totem Datensatz.
+      if (!pdfPasstInMailOderAntworte(res, pdfPfad)) return;
+
+      // Belege hashen (Datei-I/O außerhalb der Transaktion).
+      const belegBasis = await baueBelegBasisRows(validatedBelegPfade);
+
+      // ── Atomarer Insert: Kopf (inkl. pdfDateipfad, ohne Biometrie) + Fahrten + Belege. ──
+      const einreichungId = await db.transaction(async (tx) => {
+        const [einreichung] = await tx.insert(schema.einreichungen).values({
+          typ: 'SAMMELFAHRT',
+          belegNr,
+          mandantId: parsed.persoenlich.mandantId,
+          kostenstelleId: parsed.persoenlich.kostenstelleId || null,
+          mitarbeiterVorname: parsed.persoenlich.vorname,
+          mitarbeiterNachname: parsed.persoenlich.nachname,
+          mitarbeiterPersonalNr: parsed.persoenlich.personalNr || '',
+          bankIban: parsed.persoenlich.iban,
+          bankKontoinhaber: parsed.persoenlich.kontoinhaber,
+          reiseanlass: parsed.reiseanlass,
+          verkehrsmittel: parsed.verkehrsmittel,
+          kmGefahren: String(serverKmSumme),
+          kmPauschaleSatz: kmSatzAlsDecimal(parsed.verkehrsmittel),
+          kmBetrag: String(serverGesamtbetragS),
+          gesamtbetrag: String(serverGesamtbetragS),
+          pdfDateipfad: pdfPfad,
+          unterschriftBild: null,
+          status: 'EINGEREICHT',
+        }).returning();
+
+        if (serverFahrten.length > 0) {
+          await tx.insert(schema.fahrten).values(
+            serverFahrten.map((f, i) => ({
+              einreichungId: einreichung.id,
+              datum: new Date(f.datum),
+              startOrt: f.startOrt,
+              ziel: f.ziel,
+              km: String(f.km),
+              kmBetrag: String(f.kmBetrag),
+              reihenfolge: i,
+            })),
+          );
+        }
+
+        if (belegBasis.length > 0) {
+          await tx.insert(schema.belege).values(
+            belegBasis.map(b => ({ ...b, einreichungId: einreichung.id })),
+          );
+        }
+
+        return einreichung.id;
+      });
 
       const webhookDataS = {
-        id: einreichung.id,
+        id: einreichungId,
         belegNr,
         typ: 'SAMMELFAHRT' as const,
         status: 'EINGEREICHT',
@@ -693,7 +729,7 @@ einreichungenRouter.post('/', async (req, res) => {
       };
 
       void versendeEinreichung({
-        einreichungId: einreichung.id,
+        einreichungId,
         belegNr,
         dmsEmail: mandant.dmsEmail,
         pdfPfad,
@@ -843,6 +879,9 @@ einreichungenRouter.post('/', async (req, res) => {
         gesamtZuschuss: ergebnis.gesamtZuschuss,
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
+
+      // Anhang-Größencheck VOR dem Commit (Audit #8): zu große PDF → 400 statt totem Datensatz.
+      if (!pdfPasstInMailOderAntworte(res, pdfPfad)) return;
 
       // Belege hashen (Datei-I/O außerhalb der Transaktion).
       const belegBasis = await baueBelegBasisRows(validatedBelegPfade);
