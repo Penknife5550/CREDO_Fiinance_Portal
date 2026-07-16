@@ -271,6 +271,28 @@ Neuer Vorgangstyp `KLASSENFAHRT` (nur Mandant 40 = Christlicher Schulverein Mind
 
 **Nachtrag 15.4 (Wunsch Dimitri, 15.07.2026): PDF-Aufteilungsmatrix.** Das KF-Deckblatt zeigt jetzt eine Sektion „KOSTENAUFTEILUNG JE KLASSE": je Kostenzeile der auf jede Klasse entfallende Anteil (proportional aus Schülerzahl bzw. direkt erfasst; DIREKT-Null als „–"), darunter die Herleitung Spaltensumme = Kostenanteil K → ÷ Personen (S+B) → = FV-Zuschuss je Klasse. Damit ist auf einen Blick nachvollziehbar, wie sich der Zuschuss ergibt (ersetzt die frühere flache „Kostendetails"-Liste). Datenquelle: `berechneKlassenfahrt` liefert neu die Matrix `verteilung[zeile][klasse]` (Single Source; Golden-Master um Matrix-Zellen + Spaltensummen-Konsistenz erweitert). Dynamische Spaltenbreiten (1–5 Klassen), negative Gutschriften und dezimale Begleiter visuell verifiziert (3- und 5-Klassen-Muster gerendert). Backend-tsc grün, 147 Vitest grün, ESLint 0.
 
+### Phase 16: Gesamt-Audit + Tier-1-Härtung (16.07.2026)
+
+Auslöser: Wunsch Dimitri — gründliche Prüfung (Korrektheit/Sicherheit/Performance/UI-UX/Resilienz/SMTP) mit Ziel Stabilität + Speed, plus funktionaler Nachweis des SMTP-Versands **inkl. Belege**.
+
+**SMTP-Versand end-to-end verifiziert:** lokaler SMTP-Sink (STARTTLS, self-signed) → KF-Submit mit Beleg → **Mail zugestellt mit PDF-Anhang, der den eingebetteten Beleg enthält** (DB GESENDET + `email_log` SENT). IPv6-Fehlversuch (`::1` vs. `127.0.0.1`) → korrekt Status FEHLER + n8n-`fehler`-Fallback + Requeue-Fähigkeit.
+
+**Audit:** 6-Linsen-Workflow (32 Agenten, je Befund adversarial verifiziert) → **25 bestätigte Befunde** (0 CRITICAL, 11 MAJOR, 14 MINOR).
+
+**Tier 1 behoben (16.07.2026):**
+- **(#6/#11)** `versendeEinreichung` (fire-and-forget) in try/catch gekapselt + globale `unhandledRejection`/`uncaughtException`-Handler in `index.ts` → ein DB-Schluckauf nach dem 201 crasht den Prozess nicht mehr.
+- **(#4/#7/#13)** Array-Caps (`reisetage` 60 / `weitereKosten` 50 / `positionen` 100 / `belegDateipfade` 20) + numerische Obergrenzen (DB-Präzision) auf allen Vorgangstypen → DoS/OOM entschärft, sauberes 400 statt Overflow-500.
+- **(#12)** Datums-`refine` (Date.parse) auf RK/KE/SF → 400 statt unklarem 500.
+- **(#2 Interim)** VMA je Tag ≤ 200 € gedeckelt (voller Server-Recompute = Tier 2).
+- **(#10 Mitigation)** PDF `winAnsiSafe`: nicht-CP1252-Zeichen (Emoji/Kyrillisch) → „?", kein WinAnsi-Throw mehr → keine hängenden, unzustellbaren Zeilen aus dieser Ursache. **E2E mit Emoji/Kyrillisch verifiziert** (Umlaute bleiben erhalten).
+- **(#9)** AdminCenter-Mandanten-Tabelle `overflow-hidden`→`overflow-x-auto`.
+- **(#21)** BelegUpload: `input.value`-Reset → entfernte Datei wieder hinzufügbar; zusätzlich HEIF ergänzt.
+- **(#3 Teil)** SSRF-Guard: IPv6-`[]`-Klammern entfernt, IPv4-mapped (dotted + normalisiert-hex) + Loopback-Formen blockiert. **E2E-verifiziert.**
+
+**Tier 2 (offen, mit Dimitri abzustimmen):** #2 voller Server-VMA-Recompute · #1 belegNr-Race (Zähler-Tabelle/Sequence) · #10 volle Transaktions-Backport RK/KE/SF (PDF-vor-Commit) · #5 PDF vom Request-Thread nehmen · #8 Anhang-Budget vs. 25-MB-Grenze · #3 DNS-Rebind-Schutz · MINOR: #14 Login-Timing, #19 SMTP-Duplikat, #22 IBAN-Caret (Hauptformulare), #24 Signatur-a11y, #15–18 Perf, #20/#23/#25.
+
+**Verifikation:** Backend+Frontend-tsc grün, **156 Vitest**, ESLint 0 Fehler. Dev-DB-E2E: KF-Submit (inkl. Emoji/Kyrillisch) → GESENDET + PDF-Anhang mit Beleg; SSRF-Bypässe blockiert. Nebenbei: Startseiten-Hero-Logo entfernt (nur „Finanzportal" + Frage).
+
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 
 Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.

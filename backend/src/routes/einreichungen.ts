@@ -83,6 +83,16 @@ einreichungenRouter.post('/belege', upload.array('belege', 20), async (req, res)
 
 // ── Validierung ────────────────────────────────────────
 
+// Datums-String, der tatsächlich parsebar ist (Audit #12) — sonst schlägt ein
+// ungültiges Datum erst beim Timestamp-Insert als unklares 500 fehl statt als 400.
+const isoDatum = z.string().refine(s => !Number.isNaN(Date.parse(s)), 'Ungültiges Datum');
+// Obergrenzen passend zur DB-Spaltenpräzision (Audit #13) → sauberes 400 statt numeric-overflow-500.
+const MAX_BETRAG = 99999999.99; // decimal(10,2)
+const MAX_KM = 999999.99;       // decimal(8,2)
+// Verpflegungspauschale je Tag: großzügiger Deckel (realer Höchstsatz 24h-Ausland ~75 €).
+// Interim-Schutz gegen client-manipulierte VMA (Audit #2), bis der Server sie selbst neu rechnet.
+const MAX_VMA_TAG = 200;
+
 const persoenlichSchema = z.object({
   vorname: z.string().min(1).max(100),
   nachname: z.string().min(1).max(100),
@@ -96,51 +106,51 @@ const persoenlichSchema = z.object({
 const reisekostenBody = z.object({
   typ: z.literal('REISEKOSTEN'),
   persoenlich: persoenlichSchema,
-  reiseanlass: z.string().min(3),
-  reiseziel: z.string().min(1),
+  reiseanlass: z.string().min(3).max(500),
+  reiseziel: z.string().min(1).max(500),
   abfahrtOrt: z.enum(['WOHNUNG', 'TAETIGKEIT']),
-  abfahrtZeit: z.string(),
-  rueckkehrZeit: z.string(),
-  land: z.string().nullable().optional(),
+  abfahrtZeit: isoDatum,
+  rueckkehrZeit: isoDatum,
+  land: z.string().max(100).nullable().optional(),
   verkehrsmittel: z.enum(['PKW', 'MOTORRAD', 'OEPNV', 'BAHN', 'FLUG', 'SONSTIGE']),
-  kmGefahren: z.number().min(0),
-  kmBetrag: z.number().min(0),
+  kmGefahren: z.number().min(0).max(MAX_KM),
+  kmBetrag: z.number().min(0).max(MAX_BETRAG),
   reisetage: z.array(z.object({
-    datum: z.string(),
+    datum: isoDatum,
     typ: z.enum(['ANREISE', 'GANZTAG', 'ABREISE', 'EINTAEGIG']),
     fruehstueckGestellt: z.boolean(),
     mittagGestellt: z.boolean(),
     abendGestellt: z.boolean(),
-    vmaBrutto: z.number(),
-    vmaKuerzung: z.number(),
-    vmaNetto: z.number(),
-  })),
-  vmaNetto: z.number().min(0),
+    vmaBrutto: z.number().min(0).max(MAX_VMA_TAG),
+    vmaKuerzung: z.number().min(0).max(MAX_VMA_TAG),
+    vmaNetto: z.number().min(0).max(MAX_VMA_TAG),
+  })).max(60),
+  vmaNetto: z.number().min(0).max(MAX_BETRAG),
   weitereKosten: z.array(z.object({
-    typ: z.string(),
-    beschreibung: z.string(),
-    betrag: z.number().positive(),
-  })),
-  weitereKostenSumme: z.number().min(0),
-  gesamtbetrag: z.number().positive(),
+    typ: z.string().max(50),
+    beschreibung: z.string().max(500),
+    betrag: z.number().positive().max(MAX_BETRAG),
+  })).max(50),
+  weitereKostenSumme: z.number().min(0).max(MAX_BETRAG),
+  gesamtbetrag: z.number().positive().max(MAX_BETRAG),
   unterschriftBild: z.string().optional(),
-  belegDateipfade: z.array(z.string()),
+  belegDateipfade: z.array(z.string()).max(20),
 });
 
 const erstattungBody = z.object({
   typ: z.literal('ERSTATTUNG'),
   persoenlich: persoenlichSchema,
   positionen: z.array(z.object({
-    beschreibung: z.string().min(5),
+    beschreibung: z.string().min(5).max(500),
     // Kategorie ist jetzt pro Mandant konfigurierbar — der erlaubte Wertebereich
     // wird nach dem Laden des Mandanten gegen `erstattung_kategorien` geprueft.
     kategorie: z.string().min(1).max(50),
-    datum: z.string(),
-    betrag: z.number().positive(),
-  })).min(1),
-  gesamtbetrag: z.number().positive(),
+    datum: isoDatum,
+    betrag: z.number().positive().max(MAX_BETRAG),
+  })).min(1).max(100),
+  gesamtbetrag: z.number().positive().max(MAX_BETRAG),
   unterschriftBild: z.string().optional(),
-  belegDateipfade: z.array(z.string()),
+  belegDateipfade: z.array(z.string()).max(20),
 });
 
 const sammelfahrtBody = z.object({
@@ -149,16 +159,16 @@ const sammelfahrtBody = z.object({
   reiseanlass: z.string().min(3),
   verkehrsmittel: z.enum(['PKW', 'MOTORRAD']),
   fahrten: z.array(z.object({
-    datum: z.string(),
+    datum: isoDatum,
     startOrt: z.string().min(1).max(500),
     ziel: z.string().min(1).max(500),
-    km: z.number().positive(),
-    kmBetrag: z.number().nonnegative(),
+    km: z.number().positive().max(MAX_KM),
+    kmBetrag: z.number().nonnegative().max(MAX_BETRAG),
   })).min(2).max(50),
-  kmSumme: z.number().positive(),
-  gesamtbetrag: z.number().positive(),
+  kmSumme: z.number().positive().max(MAX_BETRAG),
+  gesamtbetrag: z.number().positive().max(MAX_BETRAG),
   unterschriftBild: z.string().optional(),
-  belegDateipfade: z.array(z.string()),
+  belegDateipfade: z.array(z.string()).max(20),
 });
 
 // Klassenfahrt (nur Mandant 40). Betraege duerfen negativ sein (Gutschriften/Rabatte);
@@ -180,7 +190,7 @@ const klassenfahrtBody = z.object({
   zeitraumBis: z.string().refine(s => !Number.isNaN(Date.parse(s)), 'Ungültiges Datum'),
   klassen: z.array(z.object({
     bezeichnung: z.string().max(100).optional().or(z.literal('')),
-    schueler: z.number().int().min(0),
+    schueler: z.number().int().min(0).max(9999),
     begleiter: z.number().min(1).max(999), // Pflicht >= 1, Dezimal erlaubt (z.B. 1,5)
     empfaenger: z.string().min(1).max(200),
     iban: z.string().regex(/^DE\d{20}$/),
@@ -189,8 +199,8 @@ const klassenfahrtBody = z.object({
     oberkategorie: z.enum(['FAHRTKOSTEN', 'UNTERKUNFT', 'AKTIVITAETEN', 'SONSTIGES']),
     bezeichnung: z.string().min(1).max(200),
     modus: z.enum(['PROPORTIONAL', 'DIREKT']),
-    betrag: z.number(),
-    anteile: z.array(z.number()).max(5).optional(),
+    betrag: z.number().min(-MAX_BETRAG).max(MAX_BETRAG),
+    anteile: z.array(z.number().min(-MAX_BETRAG).max(MAX_BETRAG)).max(5).optional(),
   })).min(1).max(50),
   unterschriftBild: z.string().optional(),
   belegDateipfade: z.array(z.string()).max(20), // wie upload.array('belege', 20) — verhindert Hash/PDF-Amplifikation

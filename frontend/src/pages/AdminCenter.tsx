@@ -490,7 +490,7 @@ function MandantenTab() {
         </div>
       )}
 
-      <div className="card p-0 overflow-hidden">
+      <div className="card p-0 overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-credo-50 border-b border-credo-200">
             <tr>

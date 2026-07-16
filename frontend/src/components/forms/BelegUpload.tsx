@@ -8,7 +8,7 @@ interface Props {
   label?: string;
 }
 
-const ERLAUBTE_TYPEN = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic'];
+const ERLAUBTE_TYPEN = ['application/pdf', 'image/jpeg', 'image/png', 'image/heic', 'image/heif'];
 
 export function BelegUpload({ dateien, onChange, maxSize = 10, label }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -21,7 +21,7 @@ export function BelegUpload({ dateien, onChange, maxSize = 10, label }: Props) {
 
     const neueDateien: File[] = [];
     for (const file of Array.from(files)) {
-      if (!ERLAUBTE_TYPEN.includes(file.type) && !file.name.toLowerCase().endsWith('.heic')) {
+      if (!ERLAUBTE_TYPEN.includes(file.type) && !/\.(heic|heif)$/i.test(file.name)) {
         setFehler(`"${file.name}" hat ein ungültiges Format. Erlaubt: PDF, JPG, PNG, HEIC`);
         continue;
       }
@@ -72,9 +72,11 @@ export function BelegUpload({ dateien, onChange, maxSize = 10, label }: Props) {
         ref={inputRef}
         type="file"
         multiple
-        accept=".pdf,.jpg,.jpeg,.png,.heic"
+        accept=".pdf,.jpg,.jpeg,.png,.heic,.heif"
         className="hidden"
-        onChange={e => handleFiles(e.target.files)}
+        // value nach dem Lesen zurücksetzen, damit eine zuvor entfernte Datei erneut
+        // ausgewählt werden kann (sonst feuert onChange bei gleichem File nicht — Audit #21).
+        onChange={e => { handleFiles(e.target.files); e.target.value = ''; }}
       />
 
       {/* Fehler */}

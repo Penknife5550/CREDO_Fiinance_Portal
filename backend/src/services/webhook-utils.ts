@@ -12,7 +12,11 @@ export class UnsafeWebhookUrlError extends Error {
 
 /** Loopback-, Link-local- und RFC1918-Adressen erkennen. */
 export function isPrivateOrLoopbackHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
+  let h = hostname.toLowerCase();
+  // URL.hostname klammert IPv6 in [...] — vor der IP-Prüfung entfernen (Audit #3),
+  // sonst matchen weder `h === '::1'` noch net.isIPv6() (der IPv6-Zweig war toter Code).
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+
   if (h === 'localhost' || h === '0.0.0.0' || h === '::' || h === '::1') return true;
 
   if (net.isIPv4(h)) {
@@ -24,8 +28,21 @@ export function isPrivateOrLoopbackHost(hostname: string): boolean {
   }
 
   if (net.isIPv6(h)) {
+    // IPv4-mapped/-compat als Dotted-Form (::ffff:127.0.0.1, ::127.0.0.1).
+    const mappedDotted = h.match(/^::(?:ffff:)?(\d+\.\d+\.\d+\.\d+)$/);
+    if (mappedDotted && isPrivateOrLoopbackHost(mappedDotted[1])) return true;
+    // …und als Hex-Form, in die der URL-Parser die Dotted-Form normalisiert (::ffff:7f00:1).
+    const mappedHex = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+    if (mappedHex) {
+      const hi = parseInt(mappedHex[1], 16);
+      const lo = parseInt(mappedHex[2], 16);
+      const ipv4 = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+      if (isPrivateOrLoopbackHost(ipv4)) return true;
+    }
+    // Voll/teil-ausgeschriebenes Loopback (0:0:0:0:0:0:0:1).
+    if (/^(0+:){7}0*1$/.test(h)) return true;
     if (h.startsWith('fc') || h.startsWith('fd')) return true; // ULA fc00::/7
-    if (h.startsWith('fe80:')) return true; // link-local
+    if (h.startsWith('fe80:') || h.startsWith('fe80::')) return true; // link-local
   }
 
   return false;

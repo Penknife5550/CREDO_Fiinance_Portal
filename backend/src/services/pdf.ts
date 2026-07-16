@@ -5,6 +5,29 @@ import sharp from 'sharp';
 import QRCode from 'qrcode';
 import { kmSatzAlsString } from '../lib/kmSaetze.js';
 
+// WinAnsi (CP1252) deckt Latin-1 + einige Sonderzeichen ab. pdf-lib's StandardFonts
+// werfen bei nicht darstellbaren Zeichen (Emoji, Kyrillisch, CJK …) — was die gesamte
+// PDF-Erzeugung scheitern lässt (Audit #10). Freitext wird daher vor dem Zeichnen
+// bereinigt: nicht darstellbare Zeichen werden durch „?" ersetzt.
+const CP1252_EXTRA = new Set([
+  0x20ac, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160,
+  0x2039, 0x0152, 0x017d, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014,
+  0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
+]);
+function winAnsiSafe(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp === 0x09 || cp === 0x0a || cp === 0x0d) { out += ' '; continue; }
+    if ((cp >= 0x20 && cp <= 0x7e) || (cp >= 0xa0 && cp <= 0xff) || CP1252_EXTRA.has(cp)) {
+      out += ch;
+    } else {
+      out += '?';
+    }
+  }
+  return out;
+}
+
 interface ReisekostenPdfData {
   typ: 'REISEKOSTEN';
   belegNr: string;
@@ -112,11 +135,11 @@ export async function erstelleGesamtPdf(
 
   const drawText = (text: string, x: number, size = 10, bold = false) => {
     checkPageBreak(ctx);
-    ctx.page.drawText(text, { x, y: ctx.y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
+    ctx.page.drawText(winAnsiSafe(text), { x, y: ctx.y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
   };
 
   const drawTextAt = (text: string, x: number, yPos: number, size = 10, bold = false) => {
-    ctx.page.drawText(text, { x, y: yPos, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
+    ctx.page.drawText(winAnsiSafe(text), { x, y: yPos, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
   };
 
   const drawLine = () => {
@@ -167,7 +190,7 @@ export async function erstelleGesamtPdf(
   /** Zeichnet Text, kürzt ihn aber mit „…" falls er über maxX hinausragen würde */
   const drawTextClipped = (text: string, x: number, yPos: number, maxX: number, size = 10, bold = false) => {
     const f = bold ? fontBold : font;
-    let display = text;
+    let display = winAnsiSafe(text);
     while (f.widthOfTextAtSize(display, size) > maxX - x && display.length > 1) {
       display = display.slice(0, -2) + '…';
     }
@@ -559,10 +582,10 @@ export async function erstelleKlassenfahrtPdf(
 
   const drawText = (text: string, x: number, size = 10, bold = false) => {
     checkPageBreak(ctx);
-    ctx.page.drawText(text, { x, y: ctx.y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
+    ctx.page.drawText(winAnsiSafe(text), { x, y: ctx.y, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
   };
   const drawTextAt = (text: string, x: number, yPos: number, size = 10, bold = false) => {
-    ctx.page.drawText(text, { x, y: yPos, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
+    ctx.page.drawText(winAnsiSafe(text), { x, y: yPos, size, font: bold ? fontBold : font, color: rgb(0.1, 0.1, 0.1) });
   };
   const drawLine = () => {
     checkPageBreak(ctx);
@@ -570,7 +593,7 @@ export async function erstelleKlassenfahrtPdf(
   };
   const drawTextClipped = (text: string, x: number, yPos: number, maxX: number, size = 10, bold = false) => {
     const f = bold ? fontBold : font;
-    let display = text;
+    let display = winAnsiSafe(text);
     while (f.widthOfTextAtSize(display, size) > maxX - x && display.length > 1) {
       display = display.slice(0, -2) + '…';
     }
@@ -838,8 +861,9 @@ function kuerzeText(text: string, maxLen: number): string {
 
 /** Kürzt einen Text font-genau mit „…", bis er in maxWidth passt (für schmale Tabellenspalten). */
 function passtInSpalte(text: string, maxWidth: number, font: PDFFont, size = 8): string {
-  if (font.widthOfTextAtSize(text, size) <= maxWidth) return text;
-  let display = text;
+  const safe = winAnsiSafe(text);
+  if (font.widthOfTextAtSize(safe, size) <= maxWidth) return safe;
+  let display = safe;
   while (display.length > 1 && font.widthOfTextAtSize(display + '…', size) > maxWidth) {
     display = display.slice(0, -1);
   }

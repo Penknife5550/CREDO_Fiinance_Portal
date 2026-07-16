@@ -105,6 +105,11 @@ function webhookFehlerText(wh: { konfiguriert: number; fehlgeschlagen: number })
 export async function versendeEinreichung(opts: VersandOptions): Promise<void> {
   const { einreichungId, belegNr, dmsEmail, pdfPfad, webhookData, smtpBetreff, smtpText } = opts;
 
+  // Der komplette Versand läuft fire-and-forget (`void versendeEinreichung(...)`) und
+  // darf daher NIEMALS rejecten — sonst wird eine unhandled rejection zum Prozess-Crash
+  // (Audit #6/#11). Dieser äußere try umschließt auch den emailConfig-Read, der zuvor
+  // außerhalb jedes try lag.
+  try {
   const [emailConf] = await db.select().from(schema.emailConfig).limit(1);
   const kanal = aufloeseVersandkanal(emailConf?.versandMethode);
   const maxVersuche = emailConf?.maxVersuche && emailConf.maxVersuche > 0 ? emailConf.maxVersuche : 3;
@@ -199,6 +204,10 @@ export async function versendeEinreichung(opts: VersandOptions): Promise<void> {
     if (fehlerEmail) await benachrichtigeFehlerEmail(fehlerEmail, belegNr, dmsEmail, fehler);
   } catch (err) {
     console.error(`[${belegNr}] SMTP-Pipeline-Fehler:`, err);
+  }
+  } catch (pipelineErr) {
+    // Auffangnetz für alles vor/zwischen den inneren try-Blöcken (z.B. der emailConfig-Read).
+    console.error(`[${belegNr}] Versand-Pipeline unerwartet fehlgeschlagen:`, pipelineErr);
   }
 }
 

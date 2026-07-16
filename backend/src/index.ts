@@ -18,6 +18,17 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
+// Globales Sicherheitsnetz: Hintergrund-Tasks (fire-and-forget Versand) dürfen den
+// Prozess nicht per unhandled rejection / uncaught exception beenden (Audit #6/#11).
+// Wir loggen den Fehler und lassen den Server weiterlaufen, statt alle laufenden
+// Requests durch einen Crash zu verlieren.
+process.on('unhandledRejection', (reason) => {
+  console.error('[Prozess] Unhandled Rejection (abgefangen, kein Crash):', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Prozess] Uncaught Exception (abgefangen, kein Crash):', err);
+});
+
 // ── Rate Limiting ─────────────────────────────────────────
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 Minuten
