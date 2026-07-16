@@ -25,6 +25,30 @@ const neueKostenzeile = (anzahlKlassen: number): KfKostenzeileForm =>
 const fmtNum = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const zelle = (n: number) => (Math.abs(n) < 0.005 ? '–' : fmtNum(n));
 
+// DIREKT-Verteilung: die LETZTE Klasse ist immer der automatische „Rest"
+// (= Gesamtbetrag − Summe der übrigen). So kann nie mehr verteilt werden als
+// der Gesamtbetrag — die Rest-Klasse gleicht immer exakt aus.
+function effektiveAnteile(z: KfKostenzeileForm, anzahlKlassen: number): number[] {
+  const a = Array.from({ length: anzahlKlassen }, (_, i) => z.anteile[i] ?? 0);
+  if (anzahlKlassen >= 1) {
+    const summeOhneLetzte = a.slice(0, anzahlKlassen - 1).reduce((s, x) => s + x, 0);
+    a[anzahlKlassen - 1] = rundeAufCent(z.betrag - summeOhneLetzte);
+  }
+  return a;
+}
+// Über-Verteilung: die übrigen Klassen bekommen zusammen mehr als den Gesamtbetrag,
+// die Rest-Klasse hätte also das falsche Vorzeichen.
+function istUeberverteilt(z: KfKostenzeileForm, anzahlKlassen: number): boolean {
+  if (z.modus !== 'DIREKT') return false;
+  const rest = effektiveAnteile(z, anzahlKlassen)[anzahlKlassen - 1];
+  return (z.betrag >= 0 && rest < -0.005) || (z.betrag < 0 && rest > 0.005);
+}
+// Schreibt den Auto-Rest fest in den State (nur DIREKT), damit die Rest-Klasse beim
+// Hinzufügen/Entfernen von Klassen ihren Wert behält, statt auf 0 zurückzufallen.
+function mitAutoRest(z: KfKostenzeileForm, anzahlKlassen: number): KfKostenzeileForm {
+  return z.modus === 'DIREKT' ? { ...z, anteile: effektiveAnteile(z, anzahlKlassen) } : z;
+}
+
 export function KlassenfahrtFormular() {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -52,13 +76,15 @@ export function KlassenfahrtFormular() {
   // ── Klassen-/Kostenzeilen-Handler (Anteil-Arrays synchron zur Klassenzahl halten) ──
   const addKlasse = () => {
     if (klassen.length >= KF_MAX_KLASSEN) return;
+    const neueAnzahl = klassen.length + 1;
     setKlassen([...klassen, neueKlasse()]);
-    setKostenzeilen(kostenzeilen.map(z => ({ ...z, anteile: [...z.anteile, 0] })));
+    setKostenzeilen(kostenzeilen.map(z => mitAutoRest({ ...z, anteile: [...z.anteile, 0] }, neueAnzahl)));
   };
   const removeKlasse = (idx: number) => {
     if (klassen.length <= 1) return;
+    const neueAnzahl = klassen.length - 1;
     setKlassen(klassen.filter((_, i) => i !== idx));
-    setKostenzeilen(kostenzeilen.map(z => ({ ...z, anteile: z.anteile.filter((_, i) => i !== idx) })));
+    setKostenzeilen(kostenzeilen.map(z => mitAutoRest({ ...z, anteile: z.anteile.filter((_, i) => i !== idx) }, neueAnzahl)));
   };
   const updateKlasse = (idx: number, patch: Partial<KfKlasseForm>) =>
     setKlassen(klassen.map((k, i) => (i === idx ? { ...k, ...patch } : k)));
@@ -66,22 +92,34 @@ export function KlassenfahrtFormular() {
   const addZeile = () => { if (kostenzeilen.length < KF_MAX_KOSTENZEILEN) setKostenzeilen([...kostenzeilen, neueKostenzeile(klassen.length)]); };
   const removeZeile = (idx: number) => { if (kostenzeilen.length > 1) setKostenzeilen(kostenzeilen.filter((_, i) => i !== idx)); };
   const updateZeile = (idx: number, patch: Partial<KfKostenzeileForm>) =>
-    setKostenzeilen(kostenzeilen.map((z, i) => (i === idx ? { ...z, ...patch } : z)));
+    setKostenzeilen(kostenzeilen.map((z, i) => (i === idx ? mitAutoRest({ ...z, ...patch }, klassen.length) : z)));
   const updateAnteil = (zi: number, ki: number, val: number) =>
-    setKostenzeilen(kostenzeilen.map((z, i) => (i === zi ? { ...z, anteile: z.anteile.map((a, j) => (j === ki ? val : a)) } : z)));
+    setKostenzeilen(kostenzeilen.map((z, i) => {
+      if (i !== zi) return z;
+      const anteile = z.anteile.map((a, j) => (j === ki ? val : a));
+      return mitAutoRest({ ...z, anteile }, klassen.length);
+    }));
 
   // Geldwerte + Begleiter-Divisor auf 2 Nachkommastellen normalisieren — exakt wie der
   // Server (einreichungen.ts), damit die Live-Vorschau == dem ausgezahlten Betrag ist
   // (auch wenn jemand mehr als 2 Nachkommastellen eintippt).
-  const zeileBetrag = (z: KfKostenzeileForm): number =>
-    z.modus === 'DIREKT' ? rundeAufCent(z.anteile.reduce((s, a) => s + rundeAufCent(a), 0)) : rundeAufCent(z.betrag);
+  // Zeilen-Gesamt bei beiden Modi = (gerundeter) Gesamtbetrag. Bei DIREKT ist die Summe
+  // der auto-restigen Anteile per Konstruktion == betrag.
+  const zeileBetrag = (z: KfKostenzeileForm): number => rundeAufCent(z.betrag);
 
   // ── Live-Berechnung (autoritativ rechnet der Server neu) ──
   const berechnung = useMemo(() => {
     try {
       const ergebnis = berechneKlassenfahrt(
         klassen.map(k => ({ schueler: k.schueler, begleiter: rundeAufCent(k.begleiter) })),
-        kostenzeilen.map(z => ({ modus: z.modus, betrag: rundeAufCent(z.betrag), anteile: z.anteile.map(a => rundeAufCent(a)) })),
+        kostenzeilen.map(z => ({
+          modus: z.modus,
+          betrag: rundeAufCent(z.betrag),
+          // DIREKT: mit der Auto-Rest-Verteilung rechnen (letzte Klasse = Rest).
+          anteile: z.modus === 'DIREKT'
+            ? effektiveAnteile(z, klassen.length).map(a => rundeAufCent(a))
+            : z.anteile.map(a => rundeAufCent(a)),
+        })),
       );
       return { ok: true as const, ergebnis };
     } catch (e) {
@@ -110,6 +148,9 @@ export function KlassenfahrtFormular() {
     if (step === 2) {
       kostenzeilen.forEach((z, i) => {
         if (!z.bezeichnung.trim()) errs[`z_${i}_bezeichnung`] = 'Pflichtfeld';
+        if (istUeberverteilt(z, klassen.length)) {
+          errs[`z_${i}_verteilung`] = 'Es wurde mehr verteilt als der Gesamtbetrag.';
+        }
       });
       if (!berechnung.ok) errs.berechnung = berechnung.fehler;
     }
@@ -143,7 +184,11 @@ export function KlassenfahrtFormular() {
         einreicher,
         anlass, ziel, zeitraumVon, zeitraumBis,
         klassen,
-        kostenzeilen: kostenzeilen.map(z => ({ ...z, betrag: zeileBetrag(z) })),
+        kostenzeilen: kostenzeilen.map(z => ({
+          ...z,
+          betrag: zeileBetrag(z),
+          anteile: z.modus === 'DIREKT' ? effektiveAnteile(z, klassen.length) : z.anteile,
+        })),
         unterschriftBild: unterschrift,
         belege,
         idempotenzKey,
@@ -388,19 +433,52 @@ export function KlassenfahrtFormular() {
                       value={z.betrag} onChange={n => updateZeile(i, { betrag: n })} />
                   </div>
                 ) : (
-                  <div>
-                    <label className="label">Betrag je Klasse (EUR)</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {klassen.map((k, ki) => (
-                        <div key={ki}>
-                          <span className="text-xs text-credo-500 block mb-0.5">{k.bezeichnung || `Klasse ${ki + 1}`}</span>
-                          <DezimalInput className="input-field" allowNegative
-                            value={z.anteile[ki] ?? 0} onChange={n => updateAnteil(i, ki, n)}
-                            aria-label={`Betrag ${k.bezeichnung || `Klasse ${ki + 1}`} für ${z.bezeichnung || `Kostenzeile ${i + 1}`}`} />
-                        </div>
-                      ))}
+                  <div className="space-y-2">
+                    <div>
+                      <label className="label" htmlFor={`z-gesamt-${i}`}>Gesamtbetrag zu verteilen (EUR)</label>
+                      <DezimalInput id={`z-gesamt-${i}`} className="input-field" allowNegative
+                        value={z.betrag} onChange={n => updateZeile(i, { betrag: n })} />
                     </div>
-                    <p className="text-xs text-credo-500 mt-1">Summe dieser Zeile: {formatCurrency(zeileBetrag(z))}</p>
+                    <div>
+                      <label className="label">
+                        Verteilung je Klasse <span className="text-credo-500 font-normal">— letzte Klasse = automatischer Rest</span>
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {(() => {
+                          const eff = effektiveAnteile(z, klassen.length);
+                          return klassen.map((k, ki) => {
+                            const istRest = ki === klassen.length - 1;
+                            return (
+                              <div key={ki}>
+                                <span className="text-xs text-credo-500 block mb-0.5">
+                                  {k.bezeichnung || `Klasse ${ki + 1}`}{istRest && klassen.length > 1 ? ' (Rest)' : ''}
+                                </span>
+                                {istRest ? (
+                                  <input readOnly tabIndex={-1}
+                                    className="input-field bg-credo-100 text-credo-600 cursor-not-allowed font-medium"
+                                    value={fmtNum(eff[ki])}
+                                    aria-label={`Rest ${k.bezeichnung || `Klasse ${ki + 1}`} (automatisch berechnet)`} />
+                                ) : (
+                                  <DezimalInput className="input-field" allowNegative
+                                    value={z.anteile[ki] ?? 0} onChange={n => updateAnteil(i, ki, n)}
+                                    aria-label={`Betrag ${k.bezeichnung || `Klasse ${ki + 1}`} für ${z.bezeichnung || `Kostenzeile ${i + 1}`}`} />
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                      {istUeberverteilt(z, klassen.length) ? (
+                        <p className="text-xs text-red-500 mt-1">
+                          ⚠ Es wurde mehr verteilt als der Gesamtbetrag ({formatCurrency(zeileBetrag(z))}). Bitte die Beträge der übrigen Klassen reduzieren.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-credo-500 mt-1">
+                          Rest auf {klassen.length > 1 ? (klassen[klassen.length - 1].bezeichnung || `Klasse ${klassen.length}`) : 'die Klasse'}:{' '}
+                          {formatCurrency(effektiveAnteile(z, klassen.length)[klassen.length - 1])}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
