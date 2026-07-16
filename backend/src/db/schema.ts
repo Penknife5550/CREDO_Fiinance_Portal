@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial, index, uniqueIndex, primaryKey } from 'drizzle-orm/pg-core';
 
 // ── Enums ──────────────────────────────────────────────
 
@@ -333,6 +333,18 @@ export const admins = pgTable('admins', {
   name: varchar('name', { length: 200 }).notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
+
+// ── Belegnummern-Zähler (race-freie, atomare Vergabe) ──
+// Ersetzt das SELECT MAX + Advisory-Lock in belegNummer.ts (Audit #1/#15). Eine Zeile
+// je (typ, jahr); generateBelegNr macht ein atomares UPSERT … RETURNING → es können nie
+// zwei Einreichungen dieselbe Nummer bekommen.
+export const belegCounter = pgTable('beleg_counter', {
+  typ: einreichungTypEnum('typ').notNull(),
+  jahr: integer('jahr').notNull(),
+  lastNum: integer('last_num').notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.typ, t.jahr] }),
+}));
 
 // ── Audit-Log ──────────────────────────────────────────
 

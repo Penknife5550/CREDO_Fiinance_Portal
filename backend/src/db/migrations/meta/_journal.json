@@ -1,90 +1,97 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1774081442770,
-      "tag": "0000_exotic_tony_stark",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1774300000000,
-      "tag": "0001_webhook_auth",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1774400000000,
-      "tag": "0002_webhook_typ_filter",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1774500000000,
-      "tag": "0003_kostenstelle_nullable",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1774600000000,
-      "tag": "0004_versand_methode_webhook",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1774700000000,
-      "tag": "0005_kostenstelle_anzeige",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1774800000000,
-      "tag": "0006_sammelfahrt",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1777995304459,
-      "tag": "0007_add_indexes_and_cascade",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1778083200000,
-      "tag": "0008_pauschalen_ausland",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1778601600000,
-      "tag": "0009_erstattung_kategorien",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1778688000000,
-      "tag": "0010_smtp_email_log",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1778774400000,
-      "tag": "0011_klassenfahrt",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1774081442770,
+			"tag": "0000_exotic_tony_stark",
+			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "7",
+			"when": 1774300000000,
+			"tag": "0001_webhook_auth",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1774400000000,
+			"tag": "0002_webhook_typ_filter",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1774500000000,
+			"tag": "0003_kostenstelle_nullable",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1774600000000,
+			"tag": "0004_versand_methode_webhook",
+			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1774700000000,
+			"tag": "0005_kostenstelle_anzeige",
+			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1774800000000,
+			"tag": "0006_sammelfahrt",
+			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1777995304459,
+			"tag": "0007_add_indexes_and_cascade",
+			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1778083200000,
+			"tag": "0008_pauschalen_ausland",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1778601600000,
+			"tag": "0009_erstattung_kategorien",
+			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1778688000000,
+			"tag": "0010_smtp_email_log",
+			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1778774400000,
+			"tag": "0011_klassenfahrt",
+			"breakpoints": true
+		},
+		{
+			"idx": 12,
+			"version": "7",
+			"when": 1778860800000,
+			"tag": "0012_beleg_counter",
+			"breakpoints": true
+		}
+	]
 }
