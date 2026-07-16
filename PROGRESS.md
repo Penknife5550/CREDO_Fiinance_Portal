@@ -304,6 +304,25 @@ Auslöser: Wunsch Dimitri — gründliche Prüfung (Korrektheit/Sicherheit/Perfo
 
 **Nachtrag (Wunsch Dimitri): DIREKT-Kostenverteilung mit Auto-Rest.** Bei „direkt"-Kostenzeilen im KF-Wizard gibt man jetzt einen **Gesamtbetrag** ein und verteilt ihn je Klasse; die **letzte Klasse ist der automatische Rest** (= Gesamtbetrag − Summe der übrigen), fest im State gehalten (bleibt beim Hinzufügen/Entfernen von Klassen erhalten). **Über-Verteilungs-Check:** es kann nie mehr als der Gesamtbetrag verteilt werden — Live-Warnung + „Weiter"/„Einreichen" blockiert. Rein Frontend (`KlassenfahrtFormular.tsx`); der Server rechnet ohnehin autoritativ neu. Verifiziert im Browser (250 → Rest 250; ändern → Rest passt sich an; Über-Verteilung 600/500 blockiert; Klasse-Hinzufügen erhält Verteilung) + Backend-Calc (500 → [200, 300] → Zuschuss 9,52/27,27, gesamt 36,79 €). Frontend-tsc/ESLint grün.
 
+---
+
+## Produktivsetzung (Vorbereitung, 16.07.2026)
+
+Richtung nach Abschluss von Teil 3 + Audit-Härtung: GoLive vorbereiten. Reihenfolge: (1) Doku + Migrations-Check, (2) 90-Tage-Löschjob.
+
+**(1) Migrations-Check — Prod-Tauglichkeit verifiziert.** Kompletter Lauf `migrate` (0000–0012) + `seed` gegen eine **frische PostgreSQL-16-DB** (Wegwerf-Container) fehlerfrei: 20 Tabellen, `einreichung_typ`-Enum mit `KLASSENFAHRT`, Seed 7 Mandanten / 43 Erstattungs-Kategorien (6×7 + Schulleiterbudget M40) / `beleg_counter` leer / 1 Admin, 13 Migrationen im Drizzle-Tracking. `0009`/`0011` mit `ALTER TYPE ADD VALUE`/`ALTER COLUMN` und leeren Seed-Selects auf frischer DB unkritisch (PG ≥ 12).
+
+**(1) Doku aktualisiert.** `DEPLOYMENT.md` + `README.md` auf Ist-Stand: **SMTP** als primärer Versandweg (statt n8n/Webhook, das jetzt optional ist), SMTP-Felder als Pflicht-Env, 4 Vorgangstypen inkl. Klassenfahrt (nur Mandant 40), Migrationen 0007–0012 dokumentiert, Smoke-Test um KF ergänzt, Schema-/Status-/Backlog-Abschnitte nachgezogen.
+
+**(2) 90-Tage-Löschjob (DSGVO) gebaut** — Entscheidung Dimitri: *ganzen Vorgang hart löschen*, *in-process täglich*, *nur GESENDET*. Neuer Service `backend/src/services/retention.ts`:
+- `loescheAbgelaufeneVorgaenge(maxAlterTage=90)`: löscht Vorgänge mit `status='GESENDET'` UND `created_at < heute−90 T` vollständig — `einreichungen`-Zeile (Cascade räumt Reisetage/Positionen/Fahrten/Klassen/Kostenzeilen/Anteile/Belege), zugehörige `email_log`-Zeilen (FK ist `ON DELETE SET NULL` → sonst bliebe der **Klarname im `betreff`** zurück; daher explizit vor der Einreichung gelöscht) sowie Beleg-Dateien + PDF von der Platte (Guard: nur innerhalb `UPLOAD_DIR`). DB-Löschung in **einer Transaktion**, Datei-Löschung danach (Fehler unkritisch, nur geloggt).
+- `starteRetentionScheduler()`: Catch-up-Lauf ~1 min nach Start, danach alle 24 h; **nur** bei `NODE_ENV=production` oder `RETENTION_ENABLED=true` (kein versehentliches Löschen von Dev-Daten). Verdrahtet in `index.ts` (`app.listen`). `RETENTION_TAGE`-Env überschreibt die Frist.
+- **Verifiziert (Dev-DB-Integrationstest, 11 Assertions):** alter GESENDET-Vorgang → Zeile + Cascade-Belege + `email_log` + beide Dateien entfernt; junger GESENDET-Vorgang und alter EINGEREICHT-Vorgang bleiben; Ergebnis `{geloescht:1, dateienGeloescht:2, dateiFehler:0}`.
+
+**Verifikation Produktivsetzung:** Backend-tsc grün, **100 Vitest** grün, ESLint 0 Fehler. Fresh-PG16 migrate+seed grün. Retention-Integrationstest grün.
+
+**Offen für GoLive (braucht Dimitris Hände / Live-Infra):** Prod-SMTP-Zugangsdaten + Secrets (`ENCRYPTION_KEY`/`JWT_SECRET`/Passwörter) in `.env.production`, Deployment auf dem Server (`deploy.sh`, DNS, Caddy). Optional-offen: CREDO-Rot-Hex + DSGVO-Art.-13-Text final freigeben; allgemeine `email_log`-Retention unabhängig vom Vorgang.
+
 ### Phase 11: Steuerexperten-Audit + UX-Hardening + Apple-like Startseite (09.05.2026)
 
 Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. Steuerexperten-Audit mit 3 parallelen Spezial-Agenten (Steuerrecht-Aktualität, UX-Vergleich Markttools, lokales UX-Audit) ergab: kritische Lücke bei Auslandspauschalen + UX-Reibung im VerpflegungStep für 80 % der Lehrer-Reisen.

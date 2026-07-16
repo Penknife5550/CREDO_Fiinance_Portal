@@ -12,6 +12,7 @@ import { einreichungenRouter } from './routes/einreichungen.js';
 import { pauschalenRouter } from './routes/pauschalen.js';
 import { adminRouter } from './routes/admin.js';
 import { adminLogin, adminLogout, adminCheck, requireAdmin } from './middleware/adminAuth.js';
+import { starteRetentionScheduler } from './services/retention.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -145,6 +146,8 @@ app.listen(PORT, () => {
   console.log(`  App:    http://localhost:${PORT}`);
   console.log(`  API:    http://localhost:${PORT}/api`);
   console.log(`  Health: http://localhost:${PORT}/api/health\n`);
+  // DSGVO-Löschfrist: täglicher In-Process-Lauf (nur Produktion / RETENTION_ENABLED=true).
+  starteRetentionScheduler();
 });
 
 export default app;
