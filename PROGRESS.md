@@ -291,6 +291,14 @@ Auslöser: Wunsch Dimitri — gründliche Prüfung (Korrektheit/Sicherheit/Perfo
 
 **Tier 2 (offen, mit Dimitri abzustimmen):** #2 voller Server-VMA-Recompute · #1 belegNr-Race (Zähler-Tabelle/Sequence) · #10 volle Transaktions-Backport RK/KE/SF (PDF-vor-Commit) · #5 PDF vom Request-Thread nehmen · #8 Anhang-Budget vs. 25-MB-Grenze · #3 DNS-Rebind-Schutz · MINOR: #14 Login-Timing, #19 SMTP-Duplikat, #22 IBAN-Caret (Hauptformulare), #24 Signatur-a11y, #15–18 Perf, #20/#23/#25.
 
+**Tier-2-Fortschritt (16.07.2026):**
+- ✅ **#1/#15 belegNr-Race behoben:** neue Tabelle `beleg_counter(typ,jahr,last_num)` + Migration 0012; `generateBelegNr` per atomarem `INSERT … ON CONFLICT DO UPDATE … RETURNING` (kein Advisory-Lock/SELECT-MAX mehr). Verifiziert: 50 parallele Vergaben → 50 eindeutige Nummern. Commit `02afb0f`.
+- ✅ **#2 Server-VMA-Recompute behoben:** neues `backend/src/lib/vma.ts` (Spiegel des Frontends, 16 Tests); REISEKOSTEN rechnet VMA je Tag serverseitig neu (Typ+Mahlzeiten+Land), ignoriert Client-Beträge. Verifiziert: Client 180/Tag → Server 14/28/14. Commit `0410684`.
+- ⏳ **#10 (Transaktions-Umbau RK/KE/SF) + #8 (Anhang-Budget): bewusst zurückgestellt** in eine fokussierte Folge-Session. Grund: #10 baut 3 funktionierende Submit-Branches um (Risiko), sein Hauptnutzen (keine hängenden unzustellbaren Zeilen) ist durch den Tier-1-WinAnsi-Fix bereits größtenteils abgedeckt; #8 (sauberer Größencheck) ist mit #10 gekoppelt. Umsetzung dann Branch für Branch mit E2E je Branch.
+- **Übriges Tier 2 (offen):** #5 (PDF vom Request-Thread), #3 (DNS-Rebind), MINOR #14/#19/#22/#24/#15–18/#20/#23/#25.
+
+**Verifikation Tier-2 (bisher):** Backend-tsc grün, **172 Vitest** (156 + 16 VMA), ESLint 0. Migration 0012 gegen Dev-DB angewandt (Zähler aus Bestandsmaxima geseedet).
+
 **Verifikation:** Backend+Frontend-tsc grün, **156 Vitest**, ESLint 0 Fehler. Dev-DB-E2E: KF-Submit (inkl. Emoji/Kyrillisch) → GESENDET + PDF-Anhang mit Beleg; SSRF-Bypässe blockiert. Nebenbei: Startseiten-Hero-Logo entfernt (nur „Finanzportal" + Frage).
 
 **Nachtrag (Wunsch Dimitri): DIREKT-Kostenverteilung mit Auto-Rest.** Bei „direkt"-Kostenzeilen im KF-Wizard gibt man jetzt einen **Gesamtbetrag** ein und verteilt ihn je Klasse; die **letzte Klasse ist der automatische Rest** (= Gesamtbetrag − Summe der übrigen), fest im State gehalten (bleibt beim Hinzufügen/Entfernen von Klassen erhalten). **Über-Verteilungs-Check:** es kann nie mehr als der Gesamtbetrag verteilt werden — Live-Warnung + „Weiter"/„Einreichen" blockiert. Rein Frontend (`KlassenfahrtFormular.tsx`); der Server rechnet ohnehin autoritativ neu. Verifiziert im Browser (250 → Rest 250; ändern → Rest passt sich an; Über-Verteilung 600/500 blockiert; Klasse-Hinzufügen erhält Verteilung) + Backend-Calc (500 → [200, 300] → Zuschuss 9,52/27,27, gesamt 36,79 €). Frontend-tsc/ESLint grün.
