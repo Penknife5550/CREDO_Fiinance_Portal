@@ -52,11 +52,6 @@ export function Startseite() {
     <div className="flex flex-col items-center justify-center min-h-[70vh] px-4 py-12">
       {/* Hero */}
       <div className="text-center mb-16 max-w-2xl">
-        <img
-          src="/credo_logo_claim.svg"
-          alt="CREDO — Glauben. Leben. Lernen."
-          className="h-16 sm:h-20 mx-auto mb-10"
-        />
         <h1 className="text-4xl sm:text-5xl font-bold text-credo-900 tracking-tight mb-4">
           Finanzportal
         </h1>
