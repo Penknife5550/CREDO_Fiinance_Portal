@@ -9,7 +9,10 @@ GoLive-Schritte fuer Produktion (`finance.fes-credo.de`).
 - Server mit Docker + Docker Compose v2
 - Bestehende Caddy-Instanz mit externem Netzwerk `reverse_proxy`
 - DNS: `finance.fes-credo.de` → Server-IP
-- n8n-Instanz erreichbar (z.B. `https://n8n.fes-minden.de`) mit zwei Webhooks (Reisekosten + Erstattung + Sammelfahrt — siehe Punkt 7)
+- **SMTP-Postfach** (z.B. Office365, `smtp.office365.com:587`) für den E-Mail-Versand ans DMS — **primärer Versandweg** (Default `versand_methode = SMTP`)
+- *Optional:* n8n-Instanz mit Webhooks, falls der Versand statt per SMTP über n8n laufen soll (siehe Punkt 7)
+
+> **Vier Vorgangstypen:** Reisekosten, Kostenerstattung, Sammelfahrt und Klassenfahrt (Letztere nur für Mandant 40 / Förderverein).
 
 ---
 
@@ -37,12 +40,16 @@ Pflichtfelder:
 | `DB_PASSWORD` | Starkes Passwort, min. 16 Zeichen |
 | `ENCRYPTION_KEY` | **Genau 32 Zeichen**, einmalig generieren: `openssl rand -hex 16` |
 | `JWT_SECRET` | Beliebiger 48+ Zeichen-String, einmalig generieren: `openssl rand -hex 24` |
+| `SMTP_HOST` | SMTP-Server, z.B. `smtp.office365.com` |
+| `SMTP_PORT` | `587` (STARTTLS) bzw. `465` (implizites TLS) |
+| `SMTP_USER` | Postfach-Benutzer, z.B. `finanzportal@credo.de` |
+| `SMTP_PASS` | Postfach-Passwort / App-Passwort |
 | `MAIL_FROM_NAME` | `CREDO Finanzportal` |
 | `MAIL_FROM_EMAIL` | `finanzportal@credo.de` |
 | `ADMIN_INITIAL_PASSWORD` | Initial-Passwort, **muss nach erstem Login geaendert werden** |
 | `APP_URL` | `https://finance.fes-credo.de` |
 
-SMTP-Felder (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`) bleiben Platzhalter, solange Versand ueber Webhook + n8n laeuft.
+Die **SMTP-Felder sind Pflicht** — SMTP ist der Default-Versandweg. Nur wenn stattdessen n8n/Webhook genutzt werden soll, im AdminCenter auf `WEBHOOK` umstellen (siehe Punkt 7); dann dürfen die SMTP-Felder leer bleiben.
 
 ```bash
 chmod 600 .env.production
@@ -90,7 +97,7 @@ Das Script:
 4. Wartet auf DB-Health, fuehrt automatisch alle Migrationen aus (`docker-entrypoint.sh`)
 5. Seedet 7 Mandanten + Pauschalen + Admin-Konto
 
-**Migrationen 0000–0006 laufen idempotent.** Migration `0006_sammelfahrt.sql` enthaelt `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16).
+**Migrationen 0000–0012 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`). Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012).
 
 Nach erfolgreichem Start:
 
@@ -109,9 +116,9 @@ Nach erfolgreichem Start:
 
 ---
 
-## 7. n8n-Webhook(s) einrichten
+## 7. (Optional) n8n-Webhook(s) statt SMTP
 
-Versandmethode steht per Default auf `WEBHOOK`. Fuer jeden Vorgangstyp (Reisekosten, Erstattung, Sammelfahrt) einen n8n-Workflow vorbereiten oder pro Typ einen einzigen mit Filter.
+**Standard ist SMTP-Direktversand** (`versand_methode = SMTP`) — dieser Abschnitt ist nur nötig, wenn der Versand stattdessen über n8n laufen soll. Dann im AdminCenter → Versand & Integration die Methode auf `WEBHOOK` stellen und für jeden Vorgangstyp (Reisekosten, Erstattung, Sammelfahrt, Klassenfahrt) einen n8n-Workflow vorbereiten oder pro Typ einen einzigen mit Filter.
 
 ### Webhook-URL im AdminCenter eintragen
 
@@ -160,11 +167,12 @@ Im AdminCenter → Mandanten:
 
 ## 9. Smoke-Test
 
-1. https://finance.fes-credo.de oeffnen → 3 Karten sichtbar
+1. https://finance.fes-credo.de oeffnen → **4 Karten** sichtbar
 2. **Reisekostenabrechnung** einreichen (1 Tag, PKW 50 km, 1 Beleg) → Erfolgsseite mit `RK-2026-00001`
 3. **Kostenerstattung** einreichen (1 Position, 1 Beleg) → `KE-2026-00001`
 4. **Sammelfahrt** einreichen (3 Fahrten, PKW) → `SF-2026-00001`
-5. Pruefen: drei E-Mails im DMS angekommen, jeweils mit PDF-Anhang
+5. **Klassenfahrt** (nur Mandant 40 / Förderverein) einreichen (2 Klassen, 1 Kostenzeile, 1 Beleg) → `KF-2026-00001`
+6. Pruefen: **vier** E-Mails im DMS angekommen, jeweils mit PDF-Anhang (bei Klassenfahrt: Deckblatt + Auszahlungstabelle je Klasse + Kostenaufteilungsmatrix)
 
 ---
 

@@ -14,8 +14,9 @@ Das Finanzportal ermoeglicht 400-1000 Mitarbeitenden die eigenstaendige Einreich
 - **Reisekosten** (6-Schritt-Wizard): Reisedaten, Verkehrsmittel, Verpflegungspauschalen (VMA), Belege, digitale Unterschrift
 - **Kostenerstattungen** (3-Schritt-Wizard): Positionen mit Kategorien, Belege, Unterschrift
 - **Fahrtkosten-Sammelantraege** (3-Schritt-Wizard): Mehrere Einzelfahrten in einem Antrag — nur Kilometerpauschale, ohne VMA. Fuer Mitarbeiter, die regelmaessig zu Praktikumsbesuchen, Aussenterminen o.ae. fahren
+- **Klassenfahrt-Abrechnungen** (Wizard, nur Mandant 40 / Förderverein): Zuschuss-Verteilung je Klasse mit eigenem Auszahlungskonto, Kostenaufteilung (proportional oder direkt), Belege, Unterschrift
 
-Eingereichte Formulare werden als PDF generiert und per Webhook an n8n versendet, das die E-Mail an das DMS (Docubit) zustellt. Direkter SMTP-Versand ist alternativ ueber das AdminCenter konfigurierbar.
+Eingereichte Formulare werden als PDF generiert und **direkt per SMTP** an das DMS (Docubit) zugestellt (Default-Versandweg). Alternativ kann der Versand im AdminCenter auf **Webhook/n8n** umgestellt werden.
 
 ---
 
@@ -71,10 +72,11 @@ Finance_Portal/
 │   └── src/
 │       ├── main.tsx                # React Router
 │       ├── pages/
-│       │   ├── Startseite.tsx      # Typenauswahl (3 Karten)
+│       │   ├── Startseite.tsx      # Typenauswahl (4 Karten)
 │       │   ├── ReisekostenFormular.tsx   # 6-Step Wizard
 │       │   ├── ErstattungFormular.tsx    # 3-Step Wizard
 │       │   ├── SammelfahrtFormular.tsx   # 3-Step Wizard (km-Pauschale)
+│       │   ├── KlassenfahrtFormular.tsx  # Wizard (nur Mandant 40)
 │       │   ├── Erfolg.tsx          # Bestaetigung
 │       │   └── AdminCenter.tsx     # 5-Tab Admin
 │       ├── components/forms/       # PersoenlicheDaten, VerpflegungStep, FahrtenListe, BelegUpload, SignaturPad
@@ -258,7 +260,7 @@ Das Script:
 | `GET` | `/api/kostenstellen?mandantId=...` | Kostenstellen pro Mandant |
 | `GET` | `/api/pauschalen?datum=...` | Pauschalen fuer Datum |
 | `POST` | `/api/einreichungen/belege` | Beleg-Upload (Rate-Limited) |
-| `POST` | `/api/einreichungen` | Einreichung (typ: `REISEKOSTEN` / `ERSTATTUNG` / `SAMMELFAHRT`) |
+| `POST` | `/api/einreichungen` | Einreichung (typ: `REISEKOSTEN` / `ERSTATTUNG` / `SAMMELFAHRT` / `KLASSENFAHRT`) |
 
 ### Admin (Token erforderlich)
 
@@ -295,21 +297,28 @@ Das Script:
 
 ## Datenbank-Schema
 
-13 Tabellen mit PostgreSQL 16 + Drizzle ORM:
+20 Tabellen mit PostgreSQL 16 + Drizzle ORM (Auszug):
 
 | Tabelle | Beschreibung |
 |---|---|
 | `mandanten` | CREDO-Einrichtungen (7 Schulen/Verwaltung), inkl. KST-Sichtbarkeits-Flags pro Vorgangstyp |
 | `kostenstellen` | Kostenstellen pro Mandant |
-| `einreichungen` | Haupttabelle (Reisekosten + Erstattungen + Sammelfahrt) |
+| `einreichungen` | Haupttabelle (Reisekosten + Erstattungen + Sammelfahrt + Klassenfahrt) |
 | `reisetage` | Tageseintraege fuer VMA-Berechnung (nur Reisekosten) |
 | `positionen` | Einzelpositionen bei Erstattungen |
+| `erstattung_kategorien` | Konfigurierbare Erstattungs-Kategorien pro Mandant (ersetzt festes Enum) |
 | `fahrten` | Einzelfahrten bei Sammelantraegen (mit ON DELETE CASCADE) |
+| `klassenfahrt_klassen` | Klassen je Klassenfahrt (Konto + Zuschuss pro Klasse) |
+| `klassenfahrt_kostenzeilen` | Kostenzeilen je Klassenfahrt (proportional/direkt) |
+| `klassenfahrt_kostenzeile_anteil` | Betragsanteile je Klasse bei direkter Verteilung |
 | `belege` | Hochgeladene Nachweise (Dateien) |
 | `weitere_kosten` | Zusatzkosten bei Reisen |
-| `pauschalen` | Kilometerpauschalen, VMA-Saetze |
-| `email_config` | SMTP-/MS365-/Webhook-Konfiguration |
-| `webhook_config` | Webhook-Endpunkte (n8n) |
+| `pauschalen` | Kilometerpauschalen, VMA-Saetze (Inland) |
+| `pauschalen_ausland` | Auslands-Tagessaetze (24h) je Land |
+| `beleg_counter` | Atomarer Belegnummern-Zähler je (Typ, Jahr) — race-frei |
+| `email_config` | SMTP-/Webhook-Konfiguration |
+| `email_log` | Versandprotokoll je Zustellversuch (SMTP + Webhook, IKS) |
+| `webhook_config` | Webhook-Endpunkte (n8n, optional) |
 | `admins` | Admin-Konten |
 | `audit_log` | GoBD-konformes Protokoll |
 
@@ -321,9 +330,15 @@ Das Script:
 | 0001 | webhook_auth | Webhook BASIC/HEADER Auth-Felder |
 | 0002 | webhook_typ_filter | Webhook-Filter pro Vorgangstyp |
 | 0003 | kostenstelle_nullable | `kostenstelle_id` optional |
-| 0004 | versand_methode_webhook | Default: WEBHOOK |
+| 0004 | versand_methode_webhook | (historisch) Default WEBHOOK — inzwischen wieder SMTP (0010) |
 | 0005 | kostenstelle_anzeige | KST-Sichtbarkeits-Flags pro Vorgangstyp |
 | 0006 | sammelfahrt | Sammelfahrt-Enum + `fahrten`-Tabelle + Cascade-Deletes |
+| 0007 | add_indexes_and_cascade | Performance-Indizes + Cascade-Härtung |
+| 0008 | pauschalen_ausland | Auslands-Tagessätze-Tabelle |
+| 0009 | erstattung_kategorien | Konfigurierbare Erstattungs-Kategorien pro Mandant |
+| 0010 | smtp_email_log | SMTP als Default-Versand + `email_log` (MS365 entfernt) |
+| 0011 | klassenfahrt | Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum + Idempotenz-Key |
+| 0012 | beleg_counter | Atomarer Belegnummern-Zähler (race-frei) |
 
 ---
 
@@ -344,19 +359,22 @@ Das Script:
 ## Status
 
 - [x] Phase 1-4: Foundation, Wizards, PDF, E-Mail-Pipeline
-- [x] Phase 5: QA-Review, ESLint/Prettier, 37 Unit-Tests, Accessibility, Toasts
+- [x] Phase 5: QA-Review, ESLint/Prettier, Unit-Tests, Accessibility, Toasts
 - [x] Phase A: Kostenstellen-Sichtbarkeit pro Mandant + Vorgangstyp (Migration 0005)
-- [x] Phase B: Fahrtkostensammelantrag als 3. Vorgangstyp (Migration 0006, neue Tabelle `fahrten`, neue Wizard-Page, FahrtenListe-Component)
+- [x] Phase B: Fahrtkostensammelantrag als 3. Vorgangstyp (Migration 0006)
+- [x] Teil 1: Konfigurierbare Erstattungs-Kategorien pro Mandant (Migration 0009)
+- [x] Teil 2: SMTP als primärer Versandweg + Versandprotokoll `email_log` (Migration 0010)
+- [x] Teil 3: Klassenfahrt-Abrechnung (nur Mandant 40) — Wizard, PDF mit Auszahlungstabelle + Kostenaufteilungsmatrix, DIREKT-Verteilung mit Auto-Rest (Migration 0011)
+- [x] Audit-Härtung: race-freie Belegnummern (0012), server-autoritative VMA-Neuberechnung, PDF-vor-Commit in **einer** DB-Transaktion (RK/KE/SF/KF), Anhang-Größencheck
 - [x] Server-Recompute aller Auszahlungsbetraege (kein Trust auf Client-Werte)
 - [x] Bulk-Inserts fuer Kindrecords + ON DELETE CASCADE
-- [x] Optimistic Updates mit Server-Truth-Rollback im AdminCenter
-- [x] 52 Unit-Tests gruen (37 Reisekosten + 15 Sammelfahrt)
+- [x] 100 Backend-Unit-Tests grün (inkl. VMA, Klassenfahrt-Golden-Master, email-utils)
 
 ### Backlog
 
-- [ ] DB-Transaktion um Multi-Inserts pro Einreichung
-- [ ] Frontend km-Saetze in `vma.ts` zentralisieren (Backend-Pendant existiert bereits)
-- [ ] WizardLayout-Component (~210 Zeilen Duplikat in 3 Wizards)
-- [ ] React Testing Library + Backend-Test-Setup
+- [ ] 90-Tage-Löschjob (DSGVO): abgelaufene Vorgänge inkl. Belege/PDF automatisch entfernen
+- [ ] Frontend km-Saetze zentralisieren (Backend-Pendant existiert bereits)
+- [ ] WizardLayout-Component (Duplikat in den Wizards)
+- [ ] React Testing Library (Frontend-Test-Setup)
 - [ ] PostgreSQL-Backups automatisieren
 - [ ] CI/CD-Pipeline (GitHub Actions)
