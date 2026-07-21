@@ -1,4 +1,5 @@
 import { db, schema } from '../db/index.js';
+import { ladeEmailConfigRow } from '../db/emailConfig.js';
 import { eq, and, ne } from 'drizzle-orm';
 import { sendeWebhook, type WebhookEinreichungData } from './webhook.js';
 import { sendeAnDmsMitRetry, sendEmailDetailed } from './email.js';
@@ -110,7 +111,7 @@ export async function versendeEinreichung(opts: VersandOptions): Promise<void> {
   // (Audit #6/#11). Dieser äußere try umschließt auch den emailConfig-Read, der zuvor
   // außerhalb jedes try lag.
   try {
-  const [emailConf] = await db.select().from(schema.emailConfig).limit(1);
+  const emailConf = await ladeEmailConfigRow();
   const kanal = aufloeseVersandkanal(emailConf?.versandMethode);
   const maxVersuche = emailConf?.maxVersuche && emailConf.maxVersuche > 0 ? emailConf.maxVersuche : 3;
   const fehlerEmail = emailConf?.fehlerEmail?.trim() || null;
@@ -265,7 +266,7 @@ export async function versendeErneut(einreichungId: string): Promise<ResendResul
     .where(eq(schema.mandanten.id, einreichung.mandantId)).limit(1);
   if (!mandant) return { erfolg: false, versuche: 0, fehler: 'Mandant nicht gefunden' };
 
-  const [emailConf] = await db.select().from(schema.emailConfig).limit(1);
+  const emailConf = await ladeEmailConfigRow();
   const kanal = aufloeseVersandkanal(emailConf?.versandMethode);
   const fehlerEmail = emailConf?.fehlerEmail?.trim() || null;
   const betreff = `[${einreichung.belegNr}] ${einreichung.mitarbeiterVorname} ${einreichung.mitarbeiterNachname} - ${mandant.name}`;

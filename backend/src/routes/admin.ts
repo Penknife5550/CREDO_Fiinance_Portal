@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { sendeTestWebhook, assertSafeWebhookUrl, UnsafeWebhookUrlError } from '../services/webhook.js';
 import { encryptSecret, isEncryptionConfigured, decryptSecretIfNeeded } from '../services/crypto.js';
 import { testSmtpVerbindung } from '../services/email.js';
+import { ladeEmailConfigRow } from '../db/emailConfig.js';
 import { versendeErneut } from '../services/versand.js';
 import { TYP_FILTER_VALUES } from '../lib/constants.js';
 
@@ -414,13 +415,12 @@ adminRouter.delete('/pauschalen-ausland/:landKey', async (req, res) => {
 // GET /api/admin/email-config
 adminRouter.get('/email-config', async (_req, res) => {
   try {
-    const result = await db.select().from(schema.emailConfig).limit(1);
-    if (result.length === 0) {
+    const config = await ladeEmailConfigRow();
+    if (!config) {
       res.status(404).json({ error: 'Keine E-Mail-Konfiguration vorhanden' });
       return;
     }
     // Passwörter nicht zurückgeben
-    const config = result[0];
     res.json({
       ...config,
       smtpPasswortEncrypted: config.smtpPasswortEncrypted ? '***' : null,
@@ -464,7 +464,7 @@ adminRouter.put('/email-config', async (req, res) => {
       patch.smtpPasswortEncrypted = body.smtpPasswort === '' ? null : encryptOrPassthrough(body.smtpPasswort) ?? null;
     }
 
-    const [existing] = await db.select().from(schema.emailConfig).limit(1);
+    const existing = await ladeEmailConfigRow();
     let saved;
     if (existing) {
       [saved] = await db.update(schema.emailConfig)
@@ -473,13 +473,34 @@ adminRouter.put('/email-config', async (req, res) => {
         .returning();
     } else {
       // Fallback: es existiert (noch) keine Zeile — mit sinnvollen Defaults anlegen.
-      [saved] = await db.insert(schema.emailConfig).values({
+      // Der Singleton-Unique-Index (Migration 0013) verhindert Doubletten; bei einem
+      // Race (parallele PUTs) faengt onConflictDoNothing die Kollision ab und wir
+      // aktualisieren stattdessen die bereits angelegte Zeile (kein 500).
+      const inserted = await db.insert(schema.emailConfig).values({
         versandMethode: patch.versandMethode ?? 'SMTP',
         absenderName: patch.absenderName ?? 'CREDO Finanzportal',
         absenderEmail: patch.absenderEmail ?? 'finanzportal@credo.de',
         maxVersuche: patch.maxVersuche ?? 3,
         ...patch,
-      }).returning();
+      }).onConflictDoNothing().returning();
+      if (inserted.length > 0) {
+        saved = inserted[0];
+      } else {
+        const vorhanden = await ladeEmailConfigRow();
+        if (vorhanden) {
+          [saved] = await db.update(schema.emailConfig)
+            .set(patch)
+            .where(eq(schema.emailConfig.id, vorhanden.id))
+            .returning();
+        }
+      }
+    }
+
+    if (!saved) {
+      // Unerreichbar unter dem Singleton-Index (Insert kollidierte UND danach keine
+      // Zeile auffindbar) — defensiv als Serverfehler behandeln statt undefined zu senden.
+      res.status(500).json({ error: 'E-Mail-Konfiguration konnte nicht gespeichert werden' });
+      return;
     }
 
     // Passwort nie zuruecksenden.

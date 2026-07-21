@@ -92,6 +92,13 @@
 			"when": 1778860800000,
 			"tag": "0012_beleg_counter",
 			"breakpoints": true
+		},
+		{
+			"idx": 13,
+			"version": "7",
+			"when": 1778947200000,
+			"tag": "0013_email_config_singleton",
+			"breakpoints": true
 		}
 	]
 }

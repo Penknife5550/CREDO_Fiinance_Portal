@@ -84,14 +84,25 @@ async function seed() {
 
   // ── E-Mail-Konfiguration (Platzhalter) ─────────────
   // SMTP ist der primaere (und einzige regulaere) Versandweg; n8n/Webhook nur optionaler Notnagel.
-  await db.insert(schema.emailConfig).values({
-    versandMethode: 'SMTP',
-    absenderName: 'CREDO Finanzportal',
-    absenderEmail: 'finanzportal@credo.de',
-    maxVersuche: 3,
-    fehlerEmail: 'admin@credo.de',
-  }).onConflictDoNothing();
-  console.log(`  ✓ E-Mail-Konfiguration (Platzhalter) angelegt`);
+  // Idempotent: nur anlegen, wenn noch keine Zeile existiert. email_config ist ein
+  // Singleton (Unique-Index seit Migration 0013). Frueher fuegte dieser Insert bei
+  // JEDEM Seed-Lauf (= jedem Container-Start) eine weitere Zeile ein, weil das
+  // onConflictDoNothing mangels Unique-Constraint nie griff — das erzeugte die
+  // Duplikat-Zeilen, auf denen der Mailer nicht-deterministisch landete.
+  const [emailConfigVorhanden] = await db.select({ id: schema.emailConfig.id })
+    .from(schema.emailConfig).limit(1);
+  if (!emailConfigVorhanden) {
+    await db.insert(schema.emailConfig).values({
+      versandMethode: 'SMTP',
+      absenderName: 'CREDO Finanzportal',
+      absenderEmail: 'finanzportal@credo.de',
+      maxVersuche: 3,
+      fehlerEmail: 'admin@credo.de',
+    }).onConflictDoNothing();
+    console.log(`  ✓ E-Mail-Konfiguration (Platzhalter) angelegt`);
+  } else {
+    console.log(`  ✓ E-Mail-Konfiguration bereits vorhanden — unveraendert`);
+  }
 
   console.log('\nSeeding complete!');
   process.exit(0);

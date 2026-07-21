@@ -13,7 +13,7 @@
 
 import nodemailer from 'nodemailer';
 import fs from 'fs';
-import { db, schema } from '../db/index.js';
+import { ladeEmailConfigRow } from '../db/emailConfig.js';
 import { decryptSecretIfNeeded } from './crypto.js';
 import {
   resolveSmtpConfig,
@@ -61,7 +61,7 @@ export interface RetryResult {
 // DB-Konfiguration laden
 // =============================================
 async function ladeEmailConfig(): Promise<SmtpConfigResolved | null> {
-  const [row] = await db.select().from(schema.emailConfig).limit(1);
+  const row = await ladeEmailConfigRow();
 
   let passwort: string | null = null;
   try {
