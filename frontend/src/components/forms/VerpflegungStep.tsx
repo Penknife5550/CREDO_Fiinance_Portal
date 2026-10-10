@@ -3,7 +3,7 @@ import type { ReisetagEingabe } from '@/lib/types';
 import type { AuslandsPauschale } from '@/lib/hooks';
 import { formatReisetagTyp, formatDatumKurz } from '@/lib/vma';
 import {
-  fragtOrt24Uhr, landBezeichnung, satzLandKey, setzeOrt24MitFolgetagen, LAND_ANDERES, LAND_INLAND,
+  fragtOrt24Uhr, laenderZumDatum, landBezeichnung, satzLandKey, setzeOrt24MitFolgetagen, LAND_ANDERES, LAND_INLAND,
   type VmaVorschau, type VmaVorschauTag,
 } from '@/lib/reisetage';
 import { formatCurrency } from '@/lib/utils';
@@ -22,15 +22,15 @@ interface Props {
   vorschau: VmaVorschau;
   /** Hauptreiseland (Land-Key) — null = Inlandsreise. */
   hauptland: string | null;
-  /** Länderliste für die Auswahl je Tag (nur Auslandsreise). */
-  laender: AuslandsPauschale[];
+  /** Alle Satzstände (GET /api/pauschalen/ausland) — die Auswahl je Tag zeigt jedes Land einmal, mit Stand zum Datum des Tags. */
+  staende: AuslandsPauschale[];
   /** Abfahrt (datetime-local) — für den Hinweis bei Abfahrt ab 18 Uhr. */
   abfahrtZeit: string;
   /** Meldung aus der Schritt-Validierung. */
   fehler?: string;
 }
 
-export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, laender, abfahrtZeit, fehler }: Props) {
+export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, staende, abfahrtZeit, fehler }: Props) {
   // Master-Toggle: hat irgendwer eine Mahlzeit gestellt?
   // Initial: aus den Daten ableiten — wenn ein Tag bereits Mahlzeit-Flags hat, ist es "Ja".
   const initialGestellt = reisetage.some(
@@ -120,6 +120,8 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, laen
   // das Land des Vortags) — genau damit ist die Auswahl vorbelegt.
   const landFelder = (tag: ReisetagEingabe, index: number) => {
     const v = vorschauTag(index);
+    // Länder mit Stand zum Datum dieses Tags (Jahreswechsel: Stand des jeweiligen Jahres)
+    const laender = laenderZumDatum(staende, tag.datum);
     const freitextWert = tag.landFreitext ?? v?.land.landFreitext ?? '';
     const freitextFehler = !!fehler && !freitextWert.trim();
     const freitextProps = (feld: 'land24uhr' | 'letzterTaetigkeitsort') => ({

@@ -9,18 +9,30 @@ import {
   setzeOrt24MitFolgetagen,
   uebernachtungsfrage,
   uebernehmeTagesangaben,
+  laenderZumDatum,
   type ReisetageFehlerCode,
+  type Satzstand,
   type VmaVorschau,
 } from '../reisetage';
 import type { ReisetagEingabe } from '../types';
-import type { VmaSatz } from '../vma';
 
-// BMF-Schreiben vom 05.12.2025 (Endbeträge 24 h / 8 h)
-const SAETZE: ReadonlyMap<string, VmaSatz> = new Map([
-  ['Belgien', { tagessatz24h: 59, tagessatz8h: 40 }],
-  ['Niederlande', { tagessatz24h: 58, tagessatz8h: 39 }],
-  ['Luxemburg', { tagessatz24h: 63, tagessatz8h: 42 }],
-]);
+const BMF_2026 = 'BMF-Schreiben vom 05.12.2025';
+const stand = (landKey: string, gueltigVon: string, tagessatz24h: number, tagessatz8h: number, quelle = BMF_2026): Satzstand =>
+  ({ landKey, gueltigVon, quelle, tagessatz24h, tagessatz8h });
+
+// Satzstand 2026: BMF-Schreiben vom 05.12.2025 (Endbeträge 24 h / 8 h)
+const SAETZE: readonly Satzstand[] = [
+  stand('Belgien', '2026-01-01', 59, 40),
+  stand('Niederlande', '2026-01-01', 58, 39),
+  stand('Luxemburg', '2026-01-01', 63, 42),
+];
+// Fiktiver Test-Stand 2027 (Werte frei gewählt, nur zur Unterscheidung)
+const TEST_2027 = 'Test-Stand 2027';
+const SAETZE_2027: readonly Satzstand[] = [
+  ...SAETZE,
+  stand('Belgien', '2027-01-01', 61, 41, TEST_2027),
+  stand('Luxemburg', '2027-01-01', 65, 44, TEST_2027),
+];
 
 /** Code des geworfenen ReisetageFehlers, null = kein Fehler. */
 function fehlerCode(fn: () => unknown): ReisetageFehlerCode | null {
@@ -282,6 +294,128 @@ describe('berechneVmaVorschau (gleiche reine Funktionen wie der Server)', () => 
     expect(inland.fehler).toBe(
       'Bei einer Inlandsreise kann kein Reisetag im Ausland liegen (13.10.2026). Bitte wählen Sie „Ausland“ und ein Reiseland.',
     );
+  });
+
+  it('Jahreswechsel mit zwei Ständen: Dezember Satz 2026, Januar Satz 2027 (je Tag mit Quelle)', () => {
+    const v = berechneVmaVorschau(eingaben('2026-12-30T08:00', '2027-01-02T18:00'), 'Belgien', SAETZE_2027);
+    expect(v.fehler).toBeNull();
+    expect(v.tage.map(t => t.vmaNetto)).toEqual([40, 59, 61, 41]);
+    expect(summe(v)).toBe(201);
+    expect(v.tage.map(t => t.satz.quelle)).toEqual([BMF_2026, BMF_2026, TEST_2027, TEST_2027]);
+  });
+
+  it('Jahreswechsel ohne Stand 2027: keine Beträge, Meldung wie der Server', () => {
+    expect(berechneVmaVorschau(eingaben('2026-12-30T08:00', '2027-01-02T18:00'), 'Belgien', SAETZE)).toEqual({
+      tage: [],
+      fehler: 'Die Auslandspauschalen für 2027 sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung.',
+    });
+    // Inlandsreise braucht keinen Stand (28/14, § 9 Abs. 4a EStG)
+    const inland = berechneVmaVorschau(eingaben('2026-12-30T08:00', '2027-01-02T18:00'), null, []);
+    expect(inland.fehler).toBeNull();
+    expect(summe(inland)).toBe(84);
+    expect(inland.tage.every(t => t.satz.quelle === '§ 9 Abs. 4a EStG')).toBe(true);
+  });
+
+  it('Jahreswechsel, Land im Stand 2027 nicht mehr aufgeführt: Hinweis auf „Staat nicht in der Liste“ statt „später einreichen“', () => {
+    // SAETZE_2027 enthält die Niederlande nur für 2026
+    expect(berechneVmaVorschau(eingaben('2026-12-30T08:00', '2027-01-02T18:00'), 'Niederlande', SAETZE_2027)).toEqual({
+      tage: [],
+      fehler: 'Für „Niederlande“ ist für 2027 keine Auslandspauschale hinterlegt. Bitte wählen Sie „Staat nicht in der Liste“ (Satz Luxemburg) oder wenden Sie sich an die Buchhaltung.',
+    });
+    // So gewählt: Januar-Tage mit Satz Luxemburg 2027 (Abreisetag erbt den Vortag)
+    const tage = eingaben('2026-12-30T08:00', '2027-01-02T18:00', {
+      '2027-01-01': { land24uhr: 'ANDERES', landFreitext: 'Niederlande' },
+    });
+    const v = berechneVmaVorschau(tage, 'Niederlande', SAETZE_2027);
+    expect(v.fehler).toBeNull();
+    expect(v.tage.map(t => t.vmaNetto)).toEqual([39, 58, 65, 44]);
+  });
+
+  it('verspätete Abrechnung aus 2025 (vor dem ersten Stand): Buchhaltung statt „später einreichen“', () => {
+    expect(berechneVmaVorschau(eingaben('2025-12-29T08:00', '2025-12-31T18:00'), 'Belgien', SAETZE).fehler).toBe(
+      'Für Reisetage im Jahr 2025 sind keine Auslandspauschalen hinterlegt. Bitte wenden Sie sich an die Buchhaltung.',
+    );
+  });
+});
+
+describe('laenderZumDatum (Länderauswahl: jedes Land einmal)', () => {
+  type Eintrag = Satzstand & { reihenfolge: number };
+  const e = (landKey: string, gueltigVon: string, reihenfolge: number, quelle = BMF_2026): Eintrag =>
+    ({ ...stand(landKey, gueltigVon, 1, 1, quelle), reihenfolge });
+  // Sortierung wie GET /api/pauschalen/ausland: reihenfolge, landKey, gueltigVon
+  const API: Eintrag[] = [
+    e('Belgien', '2026-01-01', 10),
+    e('Belgien', '2027-01-01', 10, TEST_2027),
+    e('Spanien — Palma de Mallorca', '2027-01-01', 15, TEST_2027), // Stadt erst ab 2027
+    e('Frankreich', '2026-01-01', 20),
+    e('Albanien', '2026-01-01', 1000),
+    e('Albanien', '2027-01-01', 1000, TEST_2027),
+    e('Frankreich', '2027-01-01', 1000, TEST_2027), // ab 2027 nicht mehr „Häufige Ziele“
+  ];
+  const kurz = (liste: Eintrag[]) => liste.map(x => `${x.landKey} ${x.gueltigVon} ${x.reihenfolge}`);
+
+  it('Reisejahr 2026: Stand 2026, Land nur mit späterem Stand bleibt wählbar (dessen ältester Stand)', () => {
+    expect(kurz(laenderZumDatum(API, '2026-10-12'))).toEqual([
+      'Belgien 2026-01-01 10',
+      'Spanien — Palma de Mallorca 2027-01-01 15',
+      'Frankreich 2026-01-01 20',
+      'Albanien 2026-01-01 1000',
+    ]);
+  });
+
+  it('Reisejahr 2027: Stand 2027 samt dessen Sortierung', () => {
+    expect(kurz(laenderZumDatum(API, '2027-01-01'))).toEqual([
+      'Belgien 2027-01-01 10',
+      'Spanien — Palma de Mallorca 2027-01-01 15',
+      'Albanien 2027-01-01 1000',
+      'Frankreich 2027-01-01 1000',
+    ]);
+  });
+
+  it('Reisejahr 2028 ohne Stand: jüngster Stand davor (die Vorschau meldet den fehlenden Stand)', () => {
+    expect(laenderZumDatum(API, '2028-03-01').map(x => x.gueltigVon)).toEqual(['2027-01-01', '2027-01-01', '2027-01-01', '2027-01-01']);
+    expect(laenderZumDatum([], '2026-10-12')).toEqual([]);
+  });
+
+  it('Reihenfolge der Stände egal, jedes Land genau einmal', () => {
+    for (const datum of ['2025-06-01', '2026-01-01', '2026-12-31', '2027-01-01', '2028-01-01']) {
+      const vor = laenderZumDatum(API, datum);
+      expect(new Set(vor.map(x => x.landKey)).size).toBe(vor.length);
+      expect(vor).toHaveLength(4);
+      expect(laenderZumDatum([...API].reverse(), datum), datum).toEqual(vor);
+    }
+  });
+});
+
+describe('laenderZumDatum mit Jahresstand (Luxemburg): nur Länder mit Stand zum Datum', () => {
+  type Eintrag = Satzstand & { reihenfolge: number };
+  const e = (landKey: string, gueltigVon: string, reihenfolge: number, quelle = BMF_2026): Eintrag =>
+    ({ ...stand(landKey, gueltigVon, 1, 1, quelle), reihenfolge });
+  const API: Eintrag[] = [
+    e('Luxemburg', '2026-01-01', 30),
+    e('Luxemburg', '2027-01-01', 30, TEST_2027),
+    e('Spanien', '2026-01-01', 40),
+    e('Spanien', '2027-01-01', 40, TEST_2027),
+    e('Spanien — Barcelona', '2026-01-01', 41), // im BMF-Schreiben 2027 gestrichen
+    e('Italien — Rom', '2027-01-01', 1000, TEST_2027), // erst ab 2027 aufgenommen
+    e('Frankreich', '2026-07-01', 1001), // im AdminCenter mitten im Jahr angelegt
+  ];
+  const keys = (liste: Eintrag[]) => liste.map(x => x.landKey);
+
+  it('Reisejahr 2026: Stadt erst ab 2027 fehlt, Land ab 01.07. erst ab diesem Tag', () => {
+    expect(keys(laenderZumDatum(API, '2026-03-01'))).toEqual(['Luxemburg', 'Spanien', 'Spanien — Barcelona']);
+    expect(keys(laenderZumDatum(API, '2026-07-01'))).toEqual(['Luxemburg', 'Spanien', 'Spanien — Barcelona', 'Frankreich']);
+  });
+
+  it('Reisejahr 2027: gestrichene Stadt und Vorjahres-Land fehlen, neue Stadt ist da (Stand 2027)', () => {
+    const liste = laenderZumDatum(API, '2027-01-05');
+    expect(keys(liste)).toEqual(['Luxemburg', 'Spanien', 'Italien — Rom']);
+    expect(liste.every(x => x.gueltigVon === '2027-01-01')).toBe(true);
+  });
+
+  it('Jahr ohne Luxemburg-Stand (2028 noch nicht eingespielt, 2025 vor dem ersten Stand): jedes Land wählbar', () => {
+    expect(laenderZumDatum(API, '2028-01-05')).toHaveLength(5);
+    expect(laenderZumDatum(API, '2025-12-30')).toHaveLength(5);
   });
 });
 

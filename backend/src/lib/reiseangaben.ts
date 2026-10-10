@@ -1,6 +1,7 @@
 /**
- * Reisekosten (Release 1b): Zuordnung der Client-Tagesangaben, Anzeige des Reiselands und
- * Prüfvermerke bei Überschneidungen — reine, testbare Funktionen für Route, PDF und Mailtext.
+ * Reisekosten (Release 1b/1c): Zuordnung der Client-Tagesangaben, Anzeige des Reiselands,
+ * Quellen der angewandten Pauschalen und Prüfvermerke bei Überschneidungen — reine, testbare
+ * Funktionen für Route, PDF und Mailtext.
  * Die steuerliche Logik (Tagesbildung, maßgebendes Land, Satz) liegt in reisetage.ts.
  */
 
@@ -48,6 +49,41 @@ export function reiselandFolge(laender: readonly TagesLand[]): string[] {
     if (folge[folge.length - 1] !== name) folge.push(name);
   }
   return folge;
+}
+
+/** Zusammenhängende Tage als Zeitraum: '01.07.2026', '30.12.–31.12.2026', '31.12.2026–01.01.2027'. */
+function zeitraumDe(von: string, bis: string): string {
+  if (von === bis) return datumDe(von);
+  return `${von.slice(0, 4) === bis.slice(0, 4) ? datumDe(von).slice(0, 6) : datumDe(von)}–${datumDe(bis)}`;
+}
+
+/**
+ * Fußnote zu den angewandten Pauschalen (PDF und Mail), z. B. „Pauschalen: BMF-Schreiben vom
+ * 05.12.2025; Inland: § 9 Abs. 4a EStG“. Auslandsquellen ohne Wiederholung in der Reihenfolge der
+ * Tage; galten mehrere (Jahreswechsel, Korrekturstand), steht bei jeder, an welchen Tagen — so
+ * zeigt auch der archivierte Beleg, welcher Stand an welchem Tag angewandt wurde. Reine
+ * Inlandsreise: nur die Inlandsquelle. `tage` in der Reihenfolge der (lückenlosen) Reisetage.
+ */
+export function quellenVermerk(tage: ReadonlyArray<{ datum: string; landKey: string; satzQuelle: string }>): string {
+  const ausland = tage.map((t, i) => ({ ...t, i })).filter(t => t.landKey !== LAND_INLAND);
+  const auslandQuellen = [...new Set(ausland.map(t => t.satzQuelle))];
+  const zeitraeume = (quelle: string) => {
+    const bereiche: Array<[von: string, bis: string]> = [];
+    let vorher = -2;
+    for (const t of ausland) {
+      if (t.satzQuelle !== quelle) continue;
+      if (t.i === vorher + 1) bereiche[bereiche.length - 1][1] = t.datum;
+      else bereiche.push([t.datum, t.datum]);
+      vorher = t.i;
+    }
+    return bereiche.map(([von, bis]) => zeitraumDe(von, bis)).join(', ');
+  };
+  const auslandText = auslandQuellen.length > 1
+    ? auslandQuellen.map(q => `${q} (${zeitraeume(q)})`).join('; ')
+    : auslandQuellen.join('');
+  const inland = [...new Set(tage.filter(t => t.landKey === LAND_INLAND).map(t => t.satzQuelle))].join(', ');
+  const teile = [auslandText, inland && auslandText ? `Inland: ${inland}` : inland].filter(Boolean);
+  return `Pauschalen: ${teile.join('; ')}`;
 }
 
 /** Gemeinsamer Reisetag mit einer früheren Reisekostenabrechnung derselben Person. */

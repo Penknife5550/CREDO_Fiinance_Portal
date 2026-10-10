@@ -11,8 +11,8 @@
 --   VMA (Soll) gegenüber — je Kalendertag und je Beleg. Es ändert nichts an der Datenbank.
 --
 -- VORAUSSETZUNG
---   Tabellenstand VOR Release 1c (pauschalen_ausland mit Primärschlüssel land_key); läuft vor
---   und nach Migration 0015 (Release 1b).
+--   Läuft vor und nach Migration 0015 (Release 1b) und 0017 (Release 1c: pauschalen_ausland je
+--   Land und Satzstand, Vergleich nur mit dem Stand 01.01.2026).
 --   Das Soll rechnet mit den BMF-Sätzen 2026 aus der CTE `bmf` (generiert aus
 --   backend/src/db/data/bmf-auslandspauschalen-2026*.csv), NICHT mit dem DB-Inhalt von
 --   pauschalen_ausland. Im AdminCenter abweichend gepflegte Sätze fließen also nicht ins
@@ -328,7 +328,10 @@ rk AS (
   FROM einreichungen e
   JOIN mandanten m ON m.id = e.mandant_id
   LEFT JOIN bmf ON bmf.land_key = e.land
+  -- ab 0017 mehrere Satzstände je Land: nur den Stand 2026 vergleichen (über to_jsonb, damit das
+  -- Skript auch vor Migration 0017 ohne Spalte gueltig_von läuft)
   LEFT JOIN pauschalen_ausland pa ON pa.land_key = e.land
+    AND COALESCE(to_jsonb(pa) ->> 'gueltig_von', '2026-01-01') = '2026-01-01'
   WHERE e.typ = 'REISEKOSTEN'
     AND (e.created_at >= DATE '2026-01-01' OR e.abfahrt_zeit >= DATE '2026-01-01')
     -- ab Release 1b je Tag korrekt gerechnet (land_key ist dann an jedem Tag gesetzt, auch INLAND);

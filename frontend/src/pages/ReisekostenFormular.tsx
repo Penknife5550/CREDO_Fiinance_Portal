@@ -11,8 +11,8 @@ import { DezimalInput } from '@/components/forms/DezimalInput';
 import { LandAuswahl } from '@/components/forms/LandAuswahl';
 import { berechneKmBetrag, berechneVmaGesamt } from '@/lib/vma';
 import {
-  berechneVmaVorschau, bildeReisetage, laenderfolge, ReisetageFehler, uebernachtungsfrage,
-  uebernehmeTagesangaben, type ReisetagSoll,
+  berechneVmaVorschau, bildeReisetage, fehlerOhneSatzstand, laenderfolge, laenderZumDatum, ReisetageFehler,
+  uebernachtungsfrage, uebernehmeTagesangaben, waehleSatzstand, type ReisetagSoll,
 } from '@/lib/reisetage';
 import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenReisekosten } from '@/lib/api';
@@ -49,6 +49,12 @@ function bildeTageSicher(
   }
 }
 
+/** Heutiges Datum 'YYYY-MM-DD' (Ortszeit) — Stichtag für Länderauswahl und Satzanzeige ohne Reisedaten. */
+function heute(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function ReisekostenFormular() {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -82,17 +88,10 @@ export function ReisekostenFormular() {
   // ── 3-Monats-Frist prüfen ─────────────────────────
   const dreiMonatsFrist = pruefeDreiMonatsFrist(reiseziel);
 
-  // ── Auslandspauschalen aus DB (AdminCenter-pflegbar) ────
-  const {
-    pauschalen: auslandsPauschalen,
-    map: auslandsPauschalenMap,
-    loading: laenderLaden,
-    error: laenderFehler,
-  } = useAuslandsPauschalen();
-  const auslandsSaetze = new Map(auslandsPauschalen.map(p => [p.landKey, p]));
+  // ── Auslandspauschalen aus DB (AdminCenter-pflegbar): alle Satzstände aller Länder ────
+  const { staende: auslandsStaende, loading: laenderLaden, error: laenderFehler } = useAuslandsPauschalen();
 
-  // ── Aktives Auslandsland (Hauptland; Vorbelegung der Tage) ─
-  const aktivesAuslandsLand = inlandAusland === 'ausland' && auslandsLand ? auslandsPauschalenMap[auslandsLand] : null;
+  // ── Hauptland (Vorbelegung der Tage) ─
   const hauptland = inlandAusland === 'ausland' && auslandsLand ? auslandsLand : null;
 
   // ── Reisetage: nur aus Abfahrt/Rückkehr/Übernachtung gebildet (Serverlogik), ──
@@ -104,6 +103,14 @@ export function ReisekostenFormular() {
     ? bildeTageSicher(abfahrtZeit, rueckkehrZeit, uebernachtung)
     : { soll: null, fehler: null };
   const tage = zeitraum.soll ? uebernehmeTagesangaben(zeitraum.soll, reisetage) : [];
+
+  // Stichtag = erster Reisetag (ohne Reisedaten: heute) für die Auswahl des Hauptlands (jedes Land
+  // einmal, Stand des Reisejahres) und dessen Satz im Schritt „Reisedaten“. Die Auswahl je Reisetag
+  // und den Satz je Tag bestimmt der Tag selbst (Jahreswechsel: je Tag der Stand seines Jahres).
+  const stichtag = tage[0]?.datum ?? heute();
+  const laender = laenderZumDatum(auslandsStaende, stichtag);
+  const hauptlandStaende = hauptland ? auslandsStaende.filter(s => s.landKey === hauptland) : [];
+  const hauptlandStand = waehleSatzstand(hauptlandStaende, stichtag);
 
   const aendereZeitraum = (abfahrt: string, rueckkehr: string) => {
     setAbfahrtZeit(abfahrt);
@@ -125,7 +132,7 @@ export function ReisekostenFormular() {
   const tageFuerRechnung = hauptland
     ? tage
     : tage.map(t => ({ ...t, land24uhr: null, letzterTaetigkeitsort: null, landFreitext: null }));
-  const vorschau = berechneVmaVorschau(tageFuerRechnung, hauptland, auslandsSaetze);
+  const vorschau = berechneVmaVorschau(tageFuerRechnung, hauptland, auslandsStaende);
   const kmBetrag = berechneKmBetrag(kmGefahren, verkehrsmittel);
   const vmaGesamt = berechneVmaGesamt(vorschau.tage);
   const weitereKostenSumme = weitereKosten.reduce((sum, k) => sum + (k.betrag || 0), 0);
@@ -155,7 +162,7 @@ export function ReisekostenFormular() {
       else if (zeitraum.fehler?.code === 'FORMAT') errs.abfahrtZeit = zeitraum.fehler.message;
       else if (zeitraum.fehler) errs.rueckkehrZeit = zeitraum.fehler.message;
       // Ohne Land würde still mit Inlandssätzen gerechnet — bei Ausland daher Pflicht.
-      if (inlandAusland === 'ausland' && !aktivesAuslandsLand) errs.auslandsLand = 'Bitte Land wählen';
+      if (inlandAusland === 'ausland' && hauptlandStaende.length === 0) errs.auslandsLand = 'Bitte Land wählen';
     }
 
     if (step === 2) {
@@ -434,7 +441,7 @@ export function ReisekostenFormular() {
                   label="Reiseland *"
                   value={auslandsLand}
                   onChange={setAuslandsLand}
-                  laender={auslandsPauschalen}
+                  laender={laender}
                   platzhalter={laenderLaden ? 'Länder werden geladen...' : 'Bitte Land wählen...'}
                   fehler={laenderFehler
                     ? 'Die Länderliste konnte nicht geladen werden. Bitte laden Sie die Seite neu.'
@@ -448,9 +455,16 @@ export function ReisekostenFormular() {
                   zählen zum Mutterland (z. B. Grönland → Dänemark, Madeira → Portugal); die Kanarischen Inseln
                   haben einen eigenen Eintrag.
                 </p>
-                {aktivesAuslandsLand && (
+                {hauptlandStand && (
                   <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-                    Tagessatz {auslandsLand}: {formatCurrency(aktivesAuslandsLand.tagessatz24h)} (24h) / {formatCurrency(aktivesAuslandsLand.tagessatz8h)} (8h) | Übernachtung: {formatCurrency(aktivesAuslandsLand.uebernachtung)}
+                    Tagessatz {auslandsLand}: {formatCurrency(hauptlandStand.tagessatz24h)} (24h) / {formatCurrency(hauptlandStand.tagessatz8h)} (8h) | Übernachtung: {formatCurrency(hauptlandStand.uebernachtung)}
+                    <span className="block text-xs text-blue-600 mt-0.5">{hauptlandStand.quelle}</span>
+                  </div>
+                )}
+                {/* Land bekannt, aber kein Satzstand für das Reisejahr: Hinweis wie der Server (400). */}
+                {hauptland && hauptlandStaende.length > 0 && !hauptlandStand && (
+                  <div role="alert" className="mt-2 bg-amber-50 border border-amber-300 rounded-lg p-3 text-sm text-amber-800">
+                    {fehlerOhneSatzstand(hauptland, stichtag, auslandsStaende).message}
                   </div>
                 )}
               </div>
@@ -519,7 +533,7 @@ export function ReisekostenFormular() {
             onChange={aendereReisetage}
             vorschau={vorschau}
             hauptland={hauptland}
-            laender={auslandsPauschalen}
+            staende={auslandsStaende}
             abfahrtZeit={abfahrtZeit}
             fehler={errors.verpflegung}
           />

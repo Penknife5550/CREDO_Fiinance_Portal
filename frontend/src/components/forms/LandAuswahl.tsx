@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { AuslandsPauschale } from '@/lib/hooks';
-import { LAND_ANDERES, LAND_INLAND, LAND_SEETAG, landKeyZuFreitext } from '@/lib/reisetage';
+import { LAND_ANDERES, LAND_INLAND, LAND_SEETAG, RESERVIERTE_LAND_KEYS, landKeyZuFreitext } from '@/lib/reisetage';
 
 interface Props {
   id: string;
@@ -8,7 +8,7 @@ interface Props {
   /** Gewählter Wert: 'INLAND', 'ANDERES', 'SEETAG' oder Land-Key; '' = noch nichts gewählt (nur mit platzhalter). */
   value: string;
   onChange: (wert: string) => void;
-  /** Länder aus GET /api/pauschalen/ausland. */
+  /** Länder aus GET /api/pauschalen/ausland — jedes Land genau einmal (laenderZumDatum), nicht alle Satzstände. */
   laender: AuslandsPauschale[];
   /** Leere erste Option (z. B. „Bitte Land wählen...“). */
   platzhalter?: string;
@@ -47,6 +47,11 @@ export function LandAuswahl({
   // damit niemand für eine Stadt mit eigenem Satz versehentlich den allgemeinen Staatssatz wählt.
   const staatenMitStaedten = new Set(laender.filter(p => p.landKey.includes(' — ')).map(p => p.landKey.split(' — ')[0]));
   const anzeige = (landKey: string) => (staatenMitStaedten.has(landKey) ? `${landKey} (übrige Orte)` : landKey);
+  // Gewähltes Land ohne Stand zum Datum (z. B. nach Änderung der Reisedaten im neuen Jahr): trotzdem
+  // anzeigen — sonst zeigte die Auswahl ein anderes Land als das gewählte; den Grund nennt die Vorschau.
+  const ohneStand = laender.length > 0 && value && !RESERVIERTE_LAND_KEYS.includes(value) && !laender.some(p => p.landKey === value)
+    ? value
+    : null;
   const zeigeFreitext = mitAnderes && value === LAND_ANDERES;
   // Eingetippter Staat steht doch in der Liste (z. B. „Südkorea“ → „Korea, Republik“)?
   const listenLand = zeigeFreitext && freitext ? landKeyZuFreitext(freitext, laender.map(p => p.landKey)) : null;
@@ -67,6 +72,7 @@ export function LandAuswahl({
         aria-invalid={fehler ? true : undefined}
       >
         {platzhalter !== undefined && <option value="">{platzhalter}</option>}
+        {ohneStand && <option value={ohneStand}>{ohneStand} (im Reisejahr nicht hinterlegt)</option>}
         {mitInland && (
           <optgroup label="Inland">
             <option value={LAND_INLAND}>{inlandText}</option>

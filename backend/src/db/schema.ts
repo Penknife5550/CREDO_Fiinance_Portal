@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, pgEnum, serial, index, uniqueIndex, primaryKey } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, integer, decimal, boolean, timestamp, date, pgEnum, serial, index, uniqueIndex, primaryKey } from 'drizzle-orm/pg-core';
 
 // ── Enums ──────────────────────────────────────────────
 
@@ -136,6 +136,10 @@ export const reisetage = pgTable('reisetage', {
   letzterTaetigkeitsort: varchar('letzter_taetigkeitsort', { length: 100 }),
   landKey: varchar('land_key', { length: 100 }), // 'INLAND' | 'ANDERES' | 'SEETAG' | Land-Key
   landFreitext: varchar('land_freitext', { length: 100 }), // Staat bei 'ANDERES'
+  // Angewandter Satz je Reisetag (seit 0017, Altbestand NULL): Satzstand zum Datum des Tags bzw. Inland 28/14
+  satz24h: decimal('satz_24h', { precision: 8, scale: 2 }),
+  satz8h: decimal('satz_8h', { precision: 8, scale: 2 }),
+  satzQuelle: varchar('satz_quelle', { length: 200 }), // z. B. 'BMF-Schreiben vom 05.12.2025', '§ 9 Abs. 4a EStG'
 }, (t) => ({
   einreichungIdx: index('reisetage_einreichung_idx').on(t.einreichungId),
 }));
@@ -252,17 +256,24 @@ export const pauschalen = pgTable('pauschalen', {
 });
 
 // ── Auslandspauschalen (DB-gepflegt, BMF-Schreiben jaehrlich) ──
-// Eine Row pro Land bzw. Land—Stadt-Variante. Dropdown-Reihenfolge ueber
-// `reihenfolge`. Editierbar im AdminCenter (PauschalenTab).
+// Eine Row pro Land bzw. Land—Stadt-Variante UND Satzstand (seit 0017): ein Stand gilt ab
+// `gueltigVon` bis zum naechsten Stand desselben Kalenderjahres (lib/reisetage.ts
+// waehleSatzstand). Dropdown-Reihenfolge ueber `reihenfolge` (< 1000 = „Häufige Ziele“).
+// Editierbar im AdminCenter (PauschalenTab); ganze Jahresstaende per Generator-Migration.
 
 export const pauschalenAusland = pgTable('pauschalen_ausland', {
-  landKey: varchar('land_key', { length: 100 }).primaryKey(),
+  landKey: varchar('land_key', { length: 100 }).notNull(),
+  // Ohne Default (0017 entfernt ihn nach dem Backfill): jeder Stand nennt Datum und Quelle ausdrücklich
+  gueltigVon: date('gueltig_von', { mode: 'string' }).notNull(),
+  quelle: varchar('quelle', { length: 200 }).notNull(),
   tagessatz24h: decimal('tagessatz_24h', { precision: 8, scale: 2 }).notNull(),
   tagessatz8h: decimal('tagessatz_8h', { precision: 8, scale: 2 }).notNull(),
   uebernachtung: decimal('uebernachtung', { precision: 8, scale: 2 }).notNull(),
   reihenfolge: integer('reihenfolge').notNull().default(0),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (t) => ({
+  pk: primaryKey({ columns: [t.landKey, t.gueltigVon] }),
+}));
 
 // ── E-Mail-Konfiguration (AdminCenter) ─────────────────
 

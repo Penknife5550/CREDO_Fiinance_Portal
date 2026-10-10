@@ -42,6 +42,9 @@ export interface TagesSatz {
 /** Inland (§ 9 Abs. 4a Satz 3 EStG). */
 export const INLAND_SATZ: TagesSatz = { satz24h: 28, satz8h: 14 };
 
+/** Quelle des Inlandssatzes (je Reisetag gespeichert, Fußnote in PDF und Mail). */
+export const INLAND_QUELLE = '§ 9 Abs. 4a EStG';
+
 const K_FRUEHSTUECK = 0.2;
 const K_MITTAG = 0.4;
 const K_ABEND = 0.4;

@@ -97,7 +97,7 @@ Das Script:
 4. Wartet auf DB-Health, fuehrt automatisch alle Migrationen aus (`docker-entrypoint.sh`)
 5. Seedet 7 Mandanten + Pauschalen + Admin-Konto
 
-**Migrationen 0000–0016 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`), 0000–0014 erneut am 10.10.2026, 0000–0015 ebenfalls am 10.10.2026. Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012), `email_config` als Singleton (0013), vollständige BMF-Auslandspauschalen 2026 (0014), Land je Reisetag + Übernachtungsangabe (0015), Städte mit eigenem Satz unter „Häufige Ziele“ (0016).
+**Migrationen 0000–0017 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`), 0000–0014 erneut am 10.10.2026, 0000–0015 und 0000–0017 ebenfalls am 10.10.2026. Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012), `email_config` als Singleton (0013), vollständige BMF-Auslandspauschalen 2026 (0014), Land je Reisetag + Übernachtungsangabe (0015), Städte mit eigenem Satz unter „Häufige Ziele“ (0016), Auslandspauschalen je Satzstand/Jahr + angewandter Satz je Reisetag (0017).
 
 **0014 (Auslandspauschalen nach BMF-Schreiben vom 05.12.2025):** legt alle Länder/Städte an (223 Zeilen inkl. 9 Verweisstaaten) und korrigiert die 19 Bestandszeilen nur dort, wo noch der alte Seed-Wert steht — im AdminCenter gepflegte Werte bleiben unberührt. Vor und nach dem Deploy prüfen:
 
@@ -105,9 +105,13 @@ Das Script:
 docker exec -i credo-finanz-db psql -U credo -d finanzportal < backend/scripts/pruefe-auslandspauschalen.sql
 ```
 
-Vorher zeigt die Abfrage die anstehenden Korrekturen und fehlende Länder, nachher muss sie **leer** sein. Bleibt eine Zeile `abweichend`, wurde der Satz im AdminCenter geändert — bewusst klären und dort auf den BMF-Wert setzen. Die Migration wird aus `backend/src/db/data/bmf-auslandspauschalen-2026*.csv` erzeugt (`npx tsx backend/scripts/bmf-csv-zu-sql.ts`); nach dem Deploy Korrekturen nur noch als **neue** Migration, nie 0014 neu schreiben. Für die lohnsteuerliche Nachkorrektur siehe `backend/scripts/vma-nachkorrektur-2026.sql` (Kopfkommentar) und Abschnitt 13.
+Vorher zeigt die Abfrage die anstehenden Korrekturen und fehlende Länder, nachher muss sie **leer** sein. Die Abfrage läuft vor und nach Migration 0017 (sie liest `gueltig_von` über `to_jsonb`), also auch beim gemeinsamen Deploy von 0014–0017. Bleibt eine Zeile `abweichend`, wurde der Satz im AdminCenter geändert — bewusst klären und dort auf den BMF-Wert setzen. Die Migration wird aus `backend/src/db/data/bmf-auslandspauschalen-2026*.csv` erzeugt (`npx tsx backend/scripts/bmf-csv-zu-sql.ts`); nach dem Deploy Korrekturen nur noch als **neue** Migration, nie 0014 neu schreiben. Für die lohnsteuerliche Nachkorrektur siehe `backend/scripts/vma-nachkorrektur-2026.sql` (Kopfkommentar) und Abschnitt 13.
 
 **0015 (Land je Reisetag, Release 1b):** fünf neue, nullable Spalten ohne Backfill und ohne Fremdschlüssel — `reisetage.land_24uhr`, `reisetage.letzter_taetigkeitsort` (Angaben des Mitarbeiters), `reisetage.land_key` (maßgebendes Land, vom Server bestimmt: `INLAND`, `ANDERES`, `SEETAG` oder Land-Key), `reisetage.land_freitext` (Staat bei „Staat nicht in der Liste“) und `einreichungen.uebernachtung`. Reine Metadaten: Altbelege behalten `NULL` (maßgebend war dort `einreichungen.land`), Beträge ändern sich nicht. Ab 1b bildet der Server die Reisetage selbst aus Abfahrt/Rückkehr; ein noch geöffneter alter Browser-Tab bekommt bei Reisen unter 24 h über Mitternacht die Meldung, die Seite neu zu laden. Die Nachkorrektur (`vma-nachkorrektur-2026.sql`) schließt Belege mit gesetztem `land_key` aus — sie sind bereits je Tag richtig gerechnet.
+
+**0017 (Sätze nach Reisedatum, Release 1c):** `pauschalen_ausland` bekommt `gueltig_von` (date) und `quelle`; der Primärschlüssel wird `(land_key, gueltig_von)`. Der Bestand wird zum Satzstand **01.01.2026 / „BMF-Schreiben vom 05.12.2025“** (Spalten-Default nur für den Backfill, danach entfernt — jeder neue Stand nennt Datum und Quelle ausdrücklich; keine Wertänderung). Der Server nimmt je Reisetag den Stand mit dem größten `gueltig_von` ≤ Datum **im selben Kalenderjahr**; fehlt er, wird die Abrechnung mit einem passenden Hinweis abgelehnt (Jahresstand fehlt noch → später einreichen; nur dieses Land fehlt → Staat bzw. „Staat nicht in der Liste“ wählen; Jahr vor 2026 → Buchhaltung). Neu in `reisetage`: `satz_24h`, `satz_8h`, `satz_quelle` (angewandter Satz je Tag, nullable, kein Backfill); PDF und Mail nennen die Quelle(n) („Pauschalen: …“, bei mehreren je Quelle die Tage). Die Prüfabfrage `pruefe-auslandspauschalen.sql` vergleicht nur den Stand 2026.
+
+**Nach dem Deploy von 0017** die Prüfabfrage (oben) erneut ausführen: 0017 kennzeichnet **jede** Bestandszeile als „BMF-Schreiben vom 05.12.2025“, auch im AdminCenter abweichend gepflegte oder angelegte. Für jede Zeile `abweichend` bzw. `nicht in CSV` im AdminCenter (Pauschalen → Stand 2026 → Bearbeiten) entweder den BMF-Wert eintragen oder die **Quelle** berichtigen, z. B. „AdminCenter, abweichend von BMF 05.12.2025“ — die Quelle steht ab jetzt je Reisetag im Beleg. Jährliches Update: Abschnitt 14.
 
 Nach erfolgreichem Start:
 
@@ -250,6 +254,41 @@ docker compose -f docker-compose.prod.yml --env-file .env.production up -d app
 docker exec credo-finanz-app printenv RETENTION_TAGE        # erwartet: 3650
 docker logs credo-finanz-app 2>&1 | grep Retention           # "Scheduler aktiv (3650-Tage-Frist ..."
 ```
+
+---
+
+## 14. Jährliches Pauschalen-Update (Auslandspauschalen)
+
+Die Auslandspauschalen gelten je Kalenderjahr (Satzstand mit `gueltig_von` = 01.01.). Fehlt der Stand des Reisejahres, lehnt das Portal Auslandsabrechnungen mit Reisetagen in diesem Jahr ab („Die Auslandspauschalen für 2027 sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein …“) — es rechnet nie still mit dem Vorjahressatz weiter. Ob ein Jahr hinterlegt ist, entscheidet der **Luxemburg-Stand** (gesetzlicher Ersatzsatz, steht in jedem Schreiben; der Generator verlangt ihn). Inland (28/14 €, § 9 Abs. 4a EStG) steht im Code und braucht kein Update.
+
+Das BMF-Schreiben erscheint i. d. R. **Anfang Dezember** (Sätze 2026: Schreiben vom 05.12.2025). Ablauf, Deploy spätestens zum **31.12.** — verantwortlich für Termin und Abgleich: (eintragen):
+
+1. **PDF → CSV:** Schreiben samt Anlage herunterladen, `backend/scripts/bmf-pdf-zu-csv.py` anpassen (Titelprüfung „Auslandsreisen ab 1. Januar 2027“, Seitenbereich der Anlage, ggf. Spaltengrenzen, Namenszuordnung `STAAT_KEY`/`STADT_KEY`) und `backend/src/db/data/bmf-auslandspauschalen-2027.csv` erzeugen (`land_key;tagessatz_24h;tagessatz_8h;uebernachtung`). Verweisstaaten aus dem Text des Schreibens (z. B. „Mikronesien: wie Philippinen“) in `bmf-auslandspauschalen-2027-verweise.csv` (`land_key;wie_land_key`). Die Verweis-CSV ist jedes Jahr Pflicht (ohne Verweisstaaten: nur die Kopfzeile) — fehlt sie, bricht der Generator ab. Keys exakt wie im Vorjahr (Staat = Name, Stadt = „Staat — Stadt“) — nie umbenennen. Gelten laut BMF die Vorjahressätze unverändert fort, trotzdem einen eigenen Stand mit der neuen Quelle anlegen (**beide** CSV-Dateien des Vorjahres kopieren).
+2. **Generator** (Repo-Root, `00NN` = nächste freie Migrationsnummer):
+
+   ```bash
+   npx tsx backend/scripts/bmf-csv-zu-sql.ts --jahr 2027 \
+     --quelle 'BMF-Schreiben vom TT.MM.2026' --migration 00NN_pauschalen_ausland_bmf2027
+   ```
+
+   Erzeugt die Migration (alle Zeilen mit `gueltig_von` = 2027-01-01, `ON CONFLICT (land_key, gueltig_von) DO NOTHING`; Sortierung und damit „Häufige Ziele“ vom Vorgängerstand des Landes, neue Länder ab 1000), den Journal-Eintrag und `backend/scripts/pruefe-auslandspauschalen-2027.sql`. Die Ausgabe listet Keys, die gegenüber der Vorjahres-CSV **fehlen** oder **neu** sind — jeden klären:
+   - **Umbenennung** im BMF (gleicher Staat/Ort, neuer Name) → CSV-Key an den Bestand anpassen, damit Sortierung und „Häufige Ziele“ erhalten bleiben.
+   - **Gestrichen** (Staat bzw. Stadt nicht mehr im Schreiben) → kein Stand 2027. Für Reisetage ab 2027 fehlt der Key in der Länderauswahl; wer ihn noch gewählt hat (z. B. Reise über den Jahreswechsel), erhält den Hinweis, den Staat (übrige Orte) bzw. „Staat nicht in der Liste“ (Satz Luxemburg) zu wählen. Reisetage 2026 rechnen weiter mit dem Stand 2026.
+   - **Neu** aufgenommen → Sortierung ab 1000 (alphabetisch), wählbar nur für Reisetage ab 2027; bei Bedarf im AdminCenter die Sortierung unter 1000 setzen („Häufige Ziele“).
+
+   Der Name muss `bmf2027` enthalten (fängt einen vom Vorjahr kopierten Befehl ab). Eine committete oder eingespielte Migration **nie** neu schreiben: `--neu-schreiben` nur für die jüngste, noch nicht committete Satzstand-Migration desselben Jahres — der Generator verweigert alles andere (Korrektur danach im AdminCenter bzw. als neue, handgeschriebene Migration; ein erneuter Generatorlauf korrigiert wegen `DO NOTHING` keine vorhandenen Zeilen).
+3. **Vier-Augen-Abgleich:** Eine zweite Person vergleicht die CSV mit der BMF-Anlage (Zeilenzahl, alle „Häufigen Ziele“, Stichproben je Seite, Verweisstaaten, Datum des Schreibens in `--quelle`) und prüft die Migration (nur `INSERT`). Danach Tests und Migration gegen eine frische Test-DB (`npm run db:migrate`, `npm run db:seed`).
+4. **Deploy vor dem 01.01.** (`./deploy.sh`, Migration läuft automatisch), danach die Prüfabfrage — sie muss **leer** sein:
+
+   ```bash
+   docker exec -i credo-finanz-db psql -U credo -d finanzportal < backend/scripts/pruefe-auslandspauschalen-2027.sql
+   ```
+
+5. CSV-Dateien, Migration, Journal und Prüfabfrage committen.
+
+**Einzelkorrekturen** (Berichtigung, Satz ab einem Stichtag im Jahr) im AdminCenter unter „Pauschalen“ als **neuen Satzstand** mit eigenem „gültig ab“ und **eigener Quelle** anlegen (bei gleicher Quelle sind die Stände im PDF nicht zu unterscheiden): Reisetage ab diesem Datum (im selben Jahr) erhalten den neuen Satz, frühere den bisherigen. „Gültig ab“ ist der erste Tag, ab dem der Satz gilt — für einen Jahresstand der 01.01., nie das Datum des Schreibens. Eingereichte Belege bleiben unverändert (angewandter Satz je Tag in `reisetage.satz_24h/satz_8h/satz_quelle`, im PDF je Quelle mit den Tagen). Luxemburg (gesetzlicher Ersatzsatz für nicht aufgeführte Staaten und Seetage): Den **ersten** Luxemburg-Stand eines Jahres sperren AdminCenter und Server gegen Löschen, solange andere Länder Stände in diesem Jahr haben; spätere Korrekturstände und Stände eines sonst leeren Jahres (z. B. Tippfehler im Datum) lassen sich löschen. **Ein neues Jahr nie von Hand im AdminCenter beginnen:** Schon ein einzelner Luxemburg-Stand schaltet das Jahr frei — die Länderauswahl zeigt dann nur Länder mit Stand in diesem Jahr, und für alle übrigen verweist das Portal auf „Staat nicht in der Liste“ (Satz Luxemburg). Ganze Jahresstände daher nur per Generator-Migration (alle Länder in einem `INSERT`).
+
+Kommt das Schreiben erst nach dem 01.01., werden Auslandsabrechnungen mit Reisetagen im neuen Jahr bis zum Deploy abgelehnt; Inlandsabrechnungen laufen weiter. Einen Massenweg im AdminCenter („Jahresstand übernehmen“) gibt es noch nicht — bis dahin hängt das Update an diesem Ablauf.
 
 ---
 

@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info, Tags, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
+import { Building2, DollarSign, Mail, Activity, Plus, Edit, ToggleLeft, ToggleRight, LogOut, Lock, Save, Trash2, Zap, CheckCircle, XCircle, Loader2, Send, X, Check, Layers, Info, Tags, RefreshCw, CalendarPlus } from 'lucide-react';
 import { adminLogin, adminLogout, checkSession, adminFetch } from '@/lib/adminAuth';
 import { useToast } from '@/components/Toast';
+import { FALLBACK_LAND_KEY } from '@/lib/reisetage';
 import { VORGANGSTYP_META, istKstAn, type KstField, type MandantAdmin, type Vorgangstyp } from '@/lib/types';
 
 // Default-Flags für editForm: jeder Vorgangstyp ist standardmäßig "an".
@@ -972,19 +973,42 @@ const INLANDSPAUSCHALEN_2026: Array<{ label: string; value: string; suffix: stri
 
 interface AuslandsPauschaleAdmin {
   landKey: string;
+  /** Erster Gültigkeitstag 'YYYY-MM-DD' — mit landKey der Schlüssel des Satzstands. */
+  gueltigVon: string;
+  quelle: string;
   tagessatz24h: number;
   tagessatz8h: number;
   uebernachtung: number;
-  reihenfolge: number;
+  /** Beim Anlegen optional: ohne Angabe übernimmt der Server die Sortierung des Vorgängerstands (neues Land 9999). */
+  reihenfolge?: number;
   updatedAt?: string;
 }
+
+/** Schlüssel eines Satzstands (Land + gültig ab). */
+const standSchluessel = (e: AuslandsPauschaleAdmin) => `${e.landKey}|${e.gueltigVon}`;
+/** Admin-URL eines Satzstands: /api/admin/pauschalen-ausland/:landKey/:gueltigVon */
+const standUrl = (e: AuslandsPauschaleAdmin) =>
+  `/api/admin/pauschalen-ausland/${encodeURIComponent(e.landKey)}/${e.gueltigVon}`;
+/** 'YYYY-MM-DD' → 'TT.MM.JJJJ' (ohne Date-Objekt, also ohne Zeitzonenverschiebung). */
+const datumDe = (datum: string) => datum.split('-').reverse().join('.');
+
+// Spalten ab lg: Land | gültig ab | Quelle | 24 h | 8 h | Übernachtung | Sortierung | Aktionen
+const PAUSCHALEN_SPALTEN = 'lg:grid-cols-[minmax(0,1.6fr)_8.5rem_minmax(0,1.4fr)_4.5rem_4.5rem_5.5rem_4rem_6rem]';
+// Unter lg fehlt die Kopfzeile: Werte und Eingaben tragen dort eine eigene Bezeichnung.
+const SPALTEN_LABEL = 'lg:hidden text-xs text-credo-400 font-sans';
+
+const LUXEMBURG_SPERRE =
+  'Gesetzlicher Ersatzsatz für nicht aufgeführte Staaten und Seetage: Der erste Luxemburg-Stand eines Jahres kann nicht gelöscht werden, solange andere Länder Sätze für dieses Jahr haben.';
 
 function PauschalenTab() {
   const { showToast } = useToast();
   const [auslandsListe, setAuslandsListe] = useState<AuslandsPauschaleAdmin[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  // Formular „Neuer Satzstand“: leer (neues Land) oder Vorlage aus einem bestehenden Stand; null = zu.
+  const [neuerStand, setNeuerStand] = useState<AuslandsPauschaleAdmin | null>(null);
+  // Filter nach Stand (Jahr von „gültig ab“): '' = Vorgabe (aktuelles bzw. jüngstes Jahr), 'alle' = alle Stände.
+  const [standFilter, setStandFilter] = useState('');
 
   const loadAusland = async () => {
     try {
@@ -1002,12 +1026,28 @@ function PauschalenTab() {
     void loadAusland();
   }, []);
 
+  const jahre = [...new Set(auslandsListe.map(e => e.gueltigVon.slice(0, 4)))].sort();
+  const aktuellesJahr = String(new Date().getFullYear());
+  const vorgabeJahr = jahre.includes(aktuellesJahr) ? aktuellesJahr : jahre[jahre.length - 1] ?? 'alle';
+  // Gewähltes Jahr nur, solange es Stände hat (z. B. nach dem Löschen des einzigen Stands eines Jahres).
+  const jahr = standFilter === 'alle' || jahre.includes(standFilter) ? standFilter : vorgabeJahr;
+  const sichtbar = jahr === 'alle' ? auslandsListe : auslandsListe.filter(e => e.gueltigVon.startsWith(`${jahr}-`));
+  const laenderKeys = [...new Set(auslandsListe.map(e => e.landKey))].sort((a, b) => a.localeCompare(b, 'de'));
+
+  // Luxemburg = gesetzlicher Ersatzsatz für nicht aufgeführte Staaten und Seetage. Wie der Server
+  // (admin.ts luxemburgLoeschbar): löschbar, wenn im selben Jahr ein früherer Luxemburg-Stand bleibt
+  // (Korrektur) oder das Jahr keine Stände anderer Länder hat (z. B. Tippfehler im Datum).
+  const darfLoeschen = (e: AuslandsPauschaleAdmin) => {
+    if (e.landKey !== FALLBACK_LAND_KEY) return true;
+    const imJahr = (a: AuslandsPauschaleAdmin) => a.gueltigVon.slice(0, 4) === e.gueltigVon.slice(0, 4);
+    return auslandsListe.some(a => a.landKey === FALLBACK_LAND_KEY && imJahr(a) && a.gueltigVon < e.gueltigVon) ||
+      !auslandsListe.some(a => a.landKey !== FALLBACK_LAND_KEY && imJahr(a));
+  };
+
   const handleSave = async (eintrag: AuslandsPauschaleAdmin, isNew: boolean) => {
     try {
-      const url = isNew
-        ? '/api/admin/pauschalen-ausland'
-        : `/api/admin/pauschalen-ausland/${encodeURIComponent(eintrag.landKey)}`;
-      const res = await adminFetch(url, {
+      // Schlüssel (Land + gültig ab) steht beim Ändern in der URL; der Server ignoriert ihn im Body.
+      const res = await adminFetch(isNew ? '/api/admin/pauschalen-ausland' : standUrl(eintrag), {
         method: isNew ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(eintrag),
@@ -1016,23 +1056,26 @@ function PauschalenTab() {
         const err = await res.json().catch(() => ({ error: 'Speichern fehlgeschlagen' }));
         throw new Error(err.error || 'HTTP ' + res.status);
       }
-      showToast(isNew ? 'Eintrag angelegt' : 'Eintrag aktualisiert', 'success');
+      showToast(isNew ? 'Satzstand angelegt' : 'Satzstand aktualisiert', 'success');
       setEditingKey(null);
-      setCreating(false);
+      setNeuerStand(null);
+      // Neuer Stand eines anderen Jahres: Filter mitnehmen, damit er sichtbar ist.
+      if (isNew && jahr !== 'alle') setStandFilter(eintrag.gueltigVon.slice(0, 4));
       void loadAusland();
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Speichern fehlgeschlagen', 'error');
     }
   };
 
-  const handleDelete = async (landKey: string) => {
-    if (!confirm(`Auslandspauschale „${landKey}" wirklich löschen?`)) return;
+  const handleDelete = async (eintrag: AuslandsPauschaleAdmin) => {
+    if (!confirm(`Satzstand „${eintrag.landKey}“ ab ${datumDe(eintrag.gueltigVon)} wirklich löschen?`)) return;
     try {
-      const res = await adminFetch(`/api/admin/pauschalen-ausland/${encodeURIComponent(landKey)}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      showToast('Eintrag gelöscht', 'success');
+      const res = await adminFetch(standUrl(eintrag), { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Löschen fehlgeschlagen' }));
+        throw new Error(err.error || 'HTTP ' + res.status);
+      }
+      showToast('Satzstand gelöscht', 'success');
       void loadAusland();
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Löschen fehlgeschlagen', 'error');
@@ -1067,26 +1110,54 @@ function PauschalenTab() {
         </div>
       </div>
 
-      {/* Auslandspauschalen — editierbar */}
+      {/* Auslandspauschalen — je Land und Satzstand editierbar */}
       <div className="card">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
           <div>
             <h3 className="text-lg font-semibold text-credo-900">Auslandspauschalen</h3>
             <p className="text-xs text-credo-500 mt-0.5">
-              Aktuell: BMF-Schreiben vom 05.12.2025 (gültig ab 01.01.2026). Bei neuem BMF-Schreiben hier aktualisieren.
-              Sortierung unter 1000 erscheint im Reisekosten-Formular unter „Häufige Ziele“.
+              Je Land ein Satzstand pro BMF-Schreiben. Für einen Reisetag gilt der jüngste Stand bis zu diesem Tag
+              aus demselben Kalenderjahr — fehlt er, lehnt das Portal die Abrechnung mit einem Hinweis ab.
+              Neues BMF-Schreiben (meist Anfang Dezember): bitte an die IT geben — die vollständige Jahrestabelle
+              wird bis zum 31.12. zentral eingespielt. Hier nur einzelne Stände anlegen, korrigieren oder löschen.
+              „Gültig ab“ ist der erste Tag, ab dem ein Satz gilt (Jahresstand: 01.01.), nicht das Datum des
+              Schreibens. Sortierung unter 1000 erscheint im Reisekosten-Formular unter „Häufige Ziele“.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => { setCreating(true); setEditingKey(null); }}
-            disabled={creating}
-            className="inline-flex items-center px-3 py-1.5 rounded-lg bg-credo-600 text-white text-sm font-medium hover:bg-credo-700 disabled:opacity-50"
-          >
-            <Plus className="w-4 h-4 mr-1.5" />
-            Neuer Eintrag
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <label htmlFor="pauschalen-stand" className="sr-only">Stand</label>
+            <select
+              id="pauschalen-stand"
+              className="input-field !w-auto !py-1.5 text-sm"
+              value={jahr}
+              onChange={e => setStandFilter(e.target.value)}
+            >
+              {jahre.map(j => (
+                <option key={j} value={j}>Stand {j}</option>
+              ))}
+              <option value="alle">Alle Stände</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => {
+                setNeuerStand({ landKey: '', gueltigVon: '', quelle: '', tagessatz24h: 0, tagessatz8h: 0, uebernachtung: 0 });
+                setEditingKey(null);
+              }}
+              disabled={neuerStand !== null}
+              className="inline-flex items-center px-3 py-1.5 rounded-lg bg-credo-600 text-white text-sm font-medium hover:bg-credo-700 disabled:opacity-50 whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4 mr-1.5" />
+              Neuer Satzstand
+            </button>
+          </div>
         </div>
+
+        {/* Vorschläge für das Land beim Anlegen (neuer Stand eines bestehenden Landes) */}
+        <datalist id="pauschalen-laender">
+          {laenderKeys.map(k => (
+            <option key={k} value={k} />
+          ))}
+        </datalist>
 
         {loading ? (
           <div className="flex items-center justify-center py-8 text-credo-500">
@@ -1096,71 +1167,95 @@ function PauschalenTab() {
         ) : (
           <div className="space-y-2">
             {/* Header */}
-            <div className="hidden sm:grid grid-cols-[2fr_1fr_1fr_1fr_0.7fr_auto] gap-3 px-3 py-2 text-xs font-medium text-credo-500 uppercase tracking-wider">
+            <div className={`hidden lg:grid ${PAUSCHALEN_SPALTEN} gap-3 px-3 py-2 text-xs font-medium text-credo-500 uppercase tracking-wider`}>
               <span>Land / Stadt</span>
-              <span className="text-right">Tagessatz 24h</span>
-              <span className="text-right">Tagessatz 8h</span>
+              <span>Gültig ab</span>
+              <span>Quelle</span>
+              <span className="text-right">24h</span>
+              <span className="text-right">8h</span>
               <span className="text-right">Übernachtung</span>
-              <span className="text-right">Sortierung</span>
+              <span className="text-right">Sort.</span>
               <span></span>
             </div>
 
-            {/* Neuer Eintrag */}
-            {creating && (
+            {/* Neuer Satzstand */}
+            {neuerStand && (
               <PauschaleZeile
-                eintrag={{ landKey: '', tagessatz24h: 0, tagessatz8h: 0, uebernachtung: 0, reihenfolge: 9999 }}
+                eintrag={neuerStand}
                 isNew
                 onSave={p => handleSave(p, true)}
-                onCancel={() => setCreating(false)}
+                onCancel={() => setNeuerStand(null)}
               />
             )}
 
-            {/* Bestehende Eintraege */}
-            {auslandsListe.map(eintrag => (
-              editingKey === eintrag.landKey ? (
+            {/* Bestehende Satzstände */}
+            {sichtbar.map(eintrag => (
+              editingKey === standSchluessel(eintrag) ? (
                 <PauschaleZeile
-                  key={eintrag.landKey}
+                  key={standSchluessel(eintrag)}
                   eintrag={eintrag}
                   onSave={p => handleSave(p, false)}
                   onCancel={() => setEditingKey(null)}
                 />
               ) : (
                 <div
-                  key={eintrag.landKey}
-                  className="grid grid-cols-2 sm:grid-cols-[2fr_1fr_1fr_1fr_0.7fr_auto] gap-3 px-3 py-3 border border-credo-100 rounded-lg hover:bg-credo-50/40 items-center"
+                  key={standSchluessel(eintrag)}
+                  className={`grid grid-cols-2 ${PAUSCHALEN_SPALTEN} gap-3 px-3 py-3 border border-credo-100 rounded-lg hover:bg-credo-50/40 items-center`}
                 >
-                  <span className="font-medium text-credo-800 col-span-2 sm:col-span-1">{eintrag.landKey}</span>
-                  <span className="text-right font-mono text-sm">{eintrag.tagessatz24h.toFixed(2)} €</span>
-                  <span className="text-right font-mono text-sm">{eintrag.tagessatz8h.toFixed(2)} €</span>
-                  <span className="text-right font-mono text-sm">{eintrag.uebernachtung.toFixed(2)} €</span>
-                  <span className="text-right text-xs text-credo-400">{eintrag.reihenfolge}</span>
+                  <span className="font-medium text-credo-800 col-span-2 lg:col-span-1">{eintrag.landKey}</span>
+                  <span className="text-sm text-credo-700">
+                    <span className="lg:hidden text-credo-400">ab </span>{datumDe(eintrag.gueltigVon)}
+                  </span>
+                  <span className="text-xs text-credo-500 leading-snug break-words">{eintrag.quelle}</span>
+                  <span className="text-right font-mono text-sm"><span className={SPALTEN_LABEL}>24h </span>{eintrag.tagessatz24h.toFixed(2)} €</span>
+                  <span className="text-right font-mono text-sm"><span className={SPALTEN_LABEL}>8h </span>{eintrag.tagessatz8h.toFixed(2)} €</span>
+                  <span className="text-right font-mono text-sm"><span className={SPALTEN_LABEL}>Übern. </span>{eintrag.uebernachtung.toFixed(2)} €</span>
+                  <span className="text-right text-xs text-credo-400"><span className={SPALTEN_LABEL}>Sort. </span>{eintrag.reihenfolge}</span>
                   <div className="flex items-center gap-1 justify-end">
                     <button
                       type="button"
-                      onClick={() => { setEditingKey(eintrag.landKey); setCreating(false); }}
+                      onClick={() => { setEditingKey(standSchluessel(eintrag)); setNeuerStand(null); }}
                       className="p-1.5 text-credo-500 hover:text-credo-700 hover:bg-credo-100 rounded"
-                      aria-label={`${eintrag.landKey} bearbeiten`}
+                      aria-label={`${eintrag.landKey} ab ${datumDe(eintrag.gueltigVon)} bearbeiten`}
                     >
                       <Edit className="w-4 h-4" />
                     </button>
-                    {/* Luxemburg = gesetzlicher Fallback für nicht aufgeführte Länder (Server sperrt das Löschen ebenfalls). */}
-                    {eintrag.landKey !== 'Luxemburg' && (
+                    {/* Neuer Stand statt Überschreiben: Sätze als Vorlage, Datum und Quelle neu eingeben */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNeuerStand({ ...eintrag, gueltigVon: '', quelle: '', reihenfolge: undefined });
+                        setEditingKey(null);
+                      }}
+                      className="p-1.5 text-credo-500 hover:text-credo-700 hover:bg-credo-100 rounded"
+                      aria-label={`Neuer Satzstand für ${eintrag.landKey}`}
+                      title="Neuer Satzstand für dieses Land"
+                    >
+                      <CalendarPlus className="w-4 h-4" />
+                    </button>
+                    {/* Gesperrt (erster Luxemburg-Stand eines genutzten Jahres): sichtbar, mit Begründung */}
+                    <span className="inline-flex" title={darfLoeschen(eintrag) ? undefined : LUXEMBURG_SPERRE}>
                       <button
                         type="button"
-                        onClick={() => handleDelete(eintrag.landKey)}
-                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
-                        aria-label={`${eintrag.landKey} löschen`}
+                        onClick={() => handleDelete(eintrag)}
+                        disabled={!darfLoeschen(eintrag)}
+                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                        aria-label={darfLoeschen(eintrag)
+                          ? `${eintrag.landKey} ab ${datumDe(eintrag.gueltigVon)} löschen`
+                          : `${eintrag.landKey} ab ${datumDe(eintrag.gueltigVon)} kann nicht gelöscht werden. ${LUXEMBURG_SPERRE}`}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
-                    )}
+                    </span>
                   </div>
                 </div>
               )
             ))}
 
-            {!loading && auslandsListe.length === 0 && !creating && (
-              <p className="text-sm text-credo-500 text-center py-6">Keine Auslandspauschalen hinterlegt.</p>
+            {!loading && sichtbar.length === 0 && !neuerStand && (
+              <p className="text-sm text-credo-500 text-center py-6">
+                {auslandsListe.length === 0 ? 'Keine Auslandspauschalen hinterlegt.' : `Keine Satzstände für ${jahr}.`}
+              </p>
             )}
           </div>
         )}
@@ -1169,7 +1264,18 @@ function PauschalenTab() {
   );
 }
 
-// Inline-Editor fuer eine Auslandspauschale-Zeile (Edit oder Neu)
+/** Eingabe im Inline-Editor; unter lg (ohne Kopfzeile) mit sichtbarer Bezeichnung. */
+function EditorFeld({ label, className = '', children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <label className={`block min-w-0 ${className}`}>
+      <span className={`${SPALTEN_LABEL} block mb-1`}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+// Inline-Editor fuer einen Satzstand (Edit oder Neu). Land und „gültig ab“ sind der Schlüssel:
+// nur beim Anlegen editierbar (anderes Datum = neuen Stand anlegen, alten löschen).
 function PauschaleZeile({
   eintrag,
   isNew = false,
@@ -1182,65 +1288,136 @@ function PauschaleZeile({
   onCancel: () => void;
 }) {
   const [landKey, setLandKey] = useState(eintrag.landKey);
-  const [t24, setT24] = useState(String(eintrag.tagessatz24h));
-  const [t8, setT8] = useState(String(eintrag.tagessatz8h));
-  const [uebern, setUebern] = useState(String(eintrag.uebernachtung));
-  const [reihenfolge, setReihenfolge] = useState(String(eintrag.reihenfolge));
+  const [gueltigVon, setGueltigVon] = useState(eintrag.gueltigVon);
+  const [quelle, setQuelle] = useState(eintrag.quelle);
+  // Leeres Formular (neues Land): Beträge leer statt „0“ — der Platzhalter bleibt sichtbar, und ein
+  // vergessenes Feld wird nicht als 0,00 € gespeichert. Neuer Stand aus Vorlage: deren Beträge.
+  const betragText = (n: number) => (isNew && !eintrag.landKey ? '' : String(n));
+  const [t24, setT24] = useState(betragText(eintrag.tagessatz24h));
+  const [t8, setT8] = useState(betragText(eintrag.tagessatz8h));
+  const [uebern, setUebern] = useState(betragText(eintrag.uebernachtung));
+  // Leer = Sortierung des Vorgängerstands übernehmen (nur beim Anlegen) bzw. unverändert lassen.
+  const [reihenfolge, setReihenfolge] = useState(eintrag.reihenfolge === undefined ? '' : String(eintrag.reihenfolge));
+  const [versucht, setVersucht] = useState(false);
+
+  const parsed: AuslandsPauschaleAdmin = {
+    landKey: landKey.trim(),
+    gueltigVon,
+    quelle: quelle.trim(),
+    tagessatz24h: Number(t24.replace(',', '.')),
+    tagessatz8h: Number(t8.replace(',', '.')),
+    uebernachtung: Number(uebern.replace(',', '.')),
+    reihenfolge: reihenfolge.trim() === '' ? undefined : Number(reihenfolge),
+  };
+  // Wie der Server (admin.ts auslandspauschaleSchema): Tagessätze > 0 (das BMF kennt keine 0-€-Sätze),
+  // Übernachtung ≥ 0, Sortierung ganze Zahl ≥ 0, Datum 20JJ-MM-TT; leeres Feld = ungültig.
+  const betragUngueltig = (text: string, wert: number, max: number, nullErlaubt: boolean) =>
+    text.trim() === '' || !Number.isFinite(wert) || wert > max || (nullErlaubt ? wert < 0 : wert <= 0);
+  const ungueltig = {
+    landKey: !parsed.landKey,
+    gueltigVon: !/^20\d{2}-\d{2}-\d{2}$/.test(parsed.gueltigVon),
+    quelle: !parsed.quelle,
+    t24: betragUngueltig(t24, parsed.tagessatz24h, 999, false),
+    t8: betragUngueltig(t8, parsed.tagessatz8h, 999, false),
+    uebern: betragUngueltig(uebern, parsed.uebernachtung, 9999, true),
+    reihenfolge: parsed.reihenfolge !== undefined && !(Number.isInteger(parsed.reihenfolge) && parsed.reihenfolge >= 0),
+  };
+  // Pflichtfelder erst nach dem ersten Speicherversuch rot markieren.
+  const rahmen = (feld: keyof typeof ungueltig) => (versucht && ungueltig[feld] ? 'border-red-400' : '');
 
   const submit = () => {
-    const parsed = {
-      landKey: landKey.trim(),
-      tagessatz24h: Number(t24.replace(',', '.')),
-      tagessatz8h: Number(t8.replace(',', '.')),
-      uebernachtung: Number(uebern.replace(',', '.')),
-      reihenfolge: Number(reihenfolge),
-    };
-    if (!parsed.landKey || !Number.isFinite(parsed.tagessatz24h) || !Number.isFinite(parsed.tagessatz8h) || !Number.isFinite(parsed.uebernachtung)) {
-      return;
-    }
+    setVersucht(true);
+    if (Object.values(ungueltig).some(Boolean)) return;
     onSave(parsed);
   };
 
+  // Neuer Stand mit „gültig ab“ nicht am 01.01.: Korrektur im laufenden Jahr, kein Jahresstand.
+  const istKorrektur = isNew && !ungueltig.gueltigVon && !gueltigVon.endsWith('-01-01');
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-[2fr_1fr_1fr_1fr_0.7fr_auto] gap-3 px-3 py-3 border-2 border-credo-400 bg-credo-50/30 rounded-lg items-center">
-      <input
-        type="text"
-        className="input-field !py-1.5 col-span-2 sm:col-span-1"
-        placeholder="z.B. Frankreich — Paris"
-        value={landKey}
-        onChange={e => setLandKey(e.target.value)}
-        disabled={!isNew}
-      />
-      <input
-        type="text"
-        inputMode="decimal"
-        className="input-field !py-1.5 text-right font-mono"
-        placeholder="0,00"
-        value={t24}
-        onChange={e => setT24(e.target.value)}
-      />
-      <input
-        type="text"
-        inputMode="decimal"
-        className="input-field !py-1.5 text-right font-mono"
-        placeholder="0,00"
-        value={t8}
-        onChange={e => setT8(e.target.value)}
-      />
-      <input
-        type="text"
-        inputMode="decimal"
-        className="input-field !py-1.5 text-right font-mono"
-        placeholder="0,00"
-        value={uebern}
-        onChange={e => setUebern(e.target.value)}
-      />
-      <input
-        type="number"
-        className="input-field !py-1.5 text-right"
-        value={reihenfolge}
-        onChange={e => setReihenfolge(e.target.value)}
-      />
+    <div className={`grid grid-cols-2 ${PAUSCHALEN_SPALTEN} gap-3 px-3 py-3 border-2 border-credo-400 bg-credo-50/30 rounded-lg items-center`}>
+      <EditorFeld label="Land / Stadt" className="col-span-2 lg:col-span-1">
+        <input
+          type="text"
+          maxLength={100}
+          className={`input-field !py-1.5 ${rahmen('landKey')}`}
+          placeholder="z.B. Frankreich — Paris"
+          list={isNew ? 'pauschalen-laender' : undefined}
+          aria-label="Land / Stadt"
+          value={landKey}
+          onChange={e => setLandKey(e.target.value)}
+          disabled={!isNew}
+          // Neuer Stand: erstes offenes Feld fokussieren — holt das Formular (oben in der Liste) in den Blick.
+          autoFocus={isNew && !eintrag.landKey}
+        />
+      </EditorFeld>
+      <EditorFeld label="Gültig ab">
+        <input
+          type="date"
+          className={`input-field !px-2 !py-1.5 ${rahmen('gueltigVon')}`}
+          aria-label="Gültig ab"
+          autoFocus={isNew && !!eintrag.landKey}
+          value={gueltigVon}
+          onChange={e => setGueltigVon(e.target.value)}
+          disabled={!isNew}
+        />
+      </EditorFeld>
+      <EditorFeld label="Quelle">
+        <input
+          type="text"
+          maxLength={200}
+          className={`input-field !py-1.5 ${rahmen('quelle')}`}
+          placeholder="z.B. BMF-Schreiben vom 05.12.2025"
+          aria-label="Quelle"
+          value={quelle}
+          onChange={e => setQuelle(e.target.value)}
+        />
+      </EditorFeld>
+      <EditorFeld label="24h (€)">
+        <input
+          type="text"
+          inputMode="decimal"
+          className={`input-field !px-2 !py-1.5 text-right font-mono ${rahmen('t24')}`}
+          placeholder="0,00"
+          aria-label="Tagessatz 24h"
+          value={t24}
+          onChange={e => setT24(e.target.value)}
+        />
+      </EditorFeld>
+      <EditorFeld label="8h (€)">
+        <input
+          type="text"
+          inputMode="decimal"
+          className={`input-field !px-2 !py-1.5 text-right font-mono ${rahmen('t8')}`}
+          placeholder="0,00"
+          aria-label="Tagessatz 8h"
+          value={t8}
+          onChange={e => setT8(e.target.value)}
+        />
+      </EditorFeld>
+      <EditorFeld label="Übernachtung (€)">
+        <input
+          type="text"
+          inputMode="decimal"
+          className={`input-field !px-2 !py-1.5 text-right font-mono ${rahmen('uebern')}`}
+          placeholder="0,00"
+          aria-label="Übernachtung"
+          value={uebern}
+          onChange={e => setUebern(e.target.value)}
+        />
+      </EditorFeld>
+      <EditorFeld label="Sortierung">
+        <input
+          type="text"
+          inputMode="numeric"
+          className={`input-field !px-2 !py-1.5 text-right ${rahmen('reihenfolge')}`}
+          placeholder={isNew ? 'auto' : undefined}
+          title={isNew ? 'Leer = Sortierung des bisherigen Stands (neues Land: 9999)' : undefined}
+          aria-label="Sortierung"
+          value={reihenfolge}
+          onChange={e => setReihenfolge(e.target.value)}
+        />
+      </EditorFeld>
       <div className="flex items-center gap-1 justify-end">
         <button
           type="button"
@@ -1259,6 +1436,18 @@ function PauschaleZeile({
           <X className="w-4 h-4" />
         </button>
       </div>
+      {istKorrektur && (
+        <p className="col-span-2 lg:col-span-8 text-xs text-amber-700">
+          Gilt ab {datumDe(gueltigVon)} als Korrektur im laufenden Jahr; Reisetage davor behalten den bisherigen Stand.
+          Ein Jahresstand beginnt am 01.01.
+        </p>
+      )}
+      {versucht && Object.values(ungueltig).some(Boolean) && (
+        <p role="alert" className="col-span-2 lg:col-span-8 text-xs text-red-600">
+          Bitte die rot markierten Felder prüfen: Land, „gültig ab“ und Quelle sind Pflicht; 24h und 8h größer
+          als 0 € (höchstens 999 €), Übernachtung 0 bis 9.999 €, Sortierung leer oder ganze Zahl ab 0.
+        </p>
+      )}
     </div>
   );
 }

@@ -14,6 +14,7 @@ const basis = {
   iban: 'DE89370400440532013000',
   kontoinhaber: 'Anna Muster',
   pruefvermerke: [] as string[],
+  pauschalenQuellen: 'Pauschalen: BMF-Schreiben vom 05.12.2025; Inland: § 9 Abs. 4a EStG',
 };
 
 describe('erstelleReisekostenEmailText', () => {
@@ -34,6 +35,12 @@ describe('erstelleReisekostenEmailText', () => {
     expect(text).toContain('maßgebenden Landes');
     expect(text).not.toContain('immer auf den vollen Tagessatz (28 EUR)');
     expect(text).not.toContain('Prüfvermerk');
+  });
+
+  it('Quellen der angewandten Pauschalen unter dem Gesamtbetrag; kein fest eingetragenes BMF-Datum mehr', () => {
+    const text = erstelleReisekostenEmailText({ ...basis, land: 'Belgien', reiseland: ['Belgien'], reisetage: [] });
+    expect(text).toContain('Gesamtbetrag: 166,20 EUR\nPauschalen: BMF-Schreiben vom 05.12.2025; Inland: § 9 Abs. 4a EStG\n');
+    expect(text.match(/05\.12\.2025/g)).toHaveLength(1);
   });
 
   it('Inlandsreise: 28-EUR-Hinweis bleibt, keine Frühstück-19-%-Zeile mehr', () => {

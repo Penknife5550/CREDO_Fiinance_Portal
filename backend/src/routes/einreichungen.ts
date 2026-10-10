@@ -2,7 +2,7 @@ import { Router, type Response } from 'express';
 import { db, schema } from '../db/index.js';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { ERSTATTUNG_KATEGORIE_DEFAULT_KEYS, RESERVIERTE_LAND_KEYS } from '../lib/constants.js';
+import { ERSTATTUNG_KATEGORIE_DEFAULT_KEYS, FALLBACK_LAND_KEY, RESERVIERTE_LAND_KEYS } from '../lib/constants.js';
 import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
 import { erstelleGesamtPdf, erstelleKlassenfahrtPdf } from '../services/pdf.js';
@@ -13,8 +13,8 @@ import { pruefeAnhangGroesse } from '../services/email-utils.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import { berechneKlassenfahrt, KlassenfahrtBerechnungsfehler, rundeAufCent as rundeAufCentKf } from '../lib/klassenfahrt.js';
 import { vmaTag } from '../lib/vma.js';
-import { bildeReisetage, bestimmeTageslaender, satzLandKey, waehleTagesSatz, ReisetageFehler, type ReisetagSoll } from '../lib/reisetage.js';
-import { ordneTageZu, landBezeichnung, reiselandFolge, ueberschneidungsVermerke, type Ueberschneidung } from '../lib/reiseangaben.js';
+import { bildeReisetage, bestimmeTageslaender, satzLandKey, waehleTagesSatz, ReisetageFehler, type ReisetagSoll, type Satzstand } from '../lib/reisetage.js';
+import { ordneTageZu, landBezeichnung, reiselandFolge, quellenVermerk, ueberschneidungsVermerke, type Ueberschneidung } from '../lib/reiseangaben.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -346,40 +346,57 @@ einreichungenRouter.post('/', async (req, res) => {
         .flatMap(t => [t.land24uhr, t.letzterTaetigkeitsort])
         .filter((k): k is string => !!k && !RESERVIERTE_LAND_KEYS.includes(k));
 
-      // Sätze aller benötigten Länder (inkl. Hauptland) in EINER Abfrage — 24 h = Ganztag, 8 h =
-      // An-/Abreise bzw. eintägig > 8 h (BMF-Endbeträge); ANDERES/SEETAG → Luxemburg, Inland 28/14.
-      const satzKeys = [...new Set([hauptland, ...angegebeneLaender, ...laender.map(l => satzLandKey(l.landKey))])]
+      // Satzstände aller benötigten Länder (inkl. Hauptland) in EINER Abfrage — 24 h = Ganztag,
+      // 8 h = An-/Abreise bzw. eintägig > 8 h (BMF-Endbeträge); ANDERES/SEETAG → Luxemburg,
+      // Inland 28/14. Je Tag gilt der Stand seines Kalenderjahres (waehleTagesSatz). Luxemburg
+      // immer mitladen: sein Stand zeigt, ob das Reisejahr überhaupt hinterlegt ist (passende Meldung).
+      const auslandsKeys = [hauptland, ...angegebeneLaender, ...laender.map(l => satzLandKey(l.landKey))]
         .filter((k): k is string => k !== null);
+      const satzKeys = auslandsKeys.length > 0 ? [...new Set([...auslandsKeys, FALLBACK_LAND_KEY])] : [];
       const satzZeilen = satzKeys.length > 0
         ? await db.select({
             landKey: schema.pauschalenAusland.landKey,
+            gueltigVon: schema.pauschalenAusland.gueltigVon,
+            quelle: schema.pauschalenAusland.quelle,
             tagessatz24h: schema.pauschalenAusland.tagessatz24h,
             tagessatz8h: schema.pauschalenAusland.tagessatz8h,
           }).from(schema.pauschalenAusland).where(inArray(schema.pauschalenAusland.landKey, satzKeys))
         : [];
-      const saetze = new Map(satzZeilen.map(z => [z.landKey, { satz24h: Number(z.tagessatz24h), satz8h: Number(z.tagessatz8h) }]));
-      const unbekanntesLand = [hauptland, ...angegebeneLaender].find(k => k && !saetze.has(k));
+      const staende: Satzstand[] = satzZeilen.map(z => ({
+        landKey: z.landKey,
+        gueltigVon: z.gueltigVon,
+        quelle: z.quelle,
+        satz24h: Number(z.tagessatz24h),
+        satz8h: Number(z.tagessatz8h),
+      }));
+      const bekannteLaender = new Set(staende.map(s => s.landKey));
+      const unbekanntesLand = [hauptland, ...angegebeneLaender].find(k => k && !bekannteLaender.has(k));
       if (unbekanntesLand) {
         res.status(400).json({ error: `Unbekanntes Reiseland: ${unbekanntesLand}` });
         return;
       }
 
-      const serverReisetage = tage.map((t, i) => ({
-        ...t,
-        landKey: laender[i].landKey,
-        landFreitext: laender[i].landFreitext,
-        // Eintägig: Anspruch nur bei strikt MEHR als 8 h — aus Abfahrt/Rückkehr (bildeReisetage).
-        ...vmaTag(
-          {
-            typ: t.typ,
-            fruehstueckGestellt: t.fruehstueckGestellt,
-            mittagGestellt: t.mittagGestellt,
-            abendGestellt: t.abendGestellt,
-            eintaegigUeber8h: t.eintaegigUeber8h,
-          },
-          waehleTagesSatz(laender[i].landKey, saetze),
-        ),
-      }));
+      const serverReisetage = tage.map((t, i) => {
+        const satz = waehleTagesSatz(laender[i].landKey, t.datum, staende);
+        return {
+          ...t,
+          landKey: laender[i].landKey,
+          landFreitext: laender[i].landFreitext,
+          satz,
+          // Eintägig: Anspruch nur bei strikt MEHR als 8 h — aus Abfahrt/Rückkehr (bildeReisetage).
+          ...vmaTag(
+            {
+              typ: t.typ,
+              fruehstueckGestellt: t.fruehstueckGestellt,
+              mittagGestellt: t.mittagGestellt,
+              abendGestellt: t.abendGestellt,
+              eintaegigUeber8h: t.eintaegigUeber8h,
+            },
+            satz,
+          ),
+        };
+      });
+      const pauschalenQuellen = quellenVermerk(serverReisetage.map(t => ({ datum: t.datum, landKey: t.landKey, satzQuelle: t.satz.quelle })));
 
       // Überschneidung mit früheren Reisekosten derselben Person (nur die höhere Pauschale bzw.
       // bei zwei eintägigen Reisen Zeiten zusammenrechnen) → Prüfvermerk in PDF und Mail, keine
@@ -437,6 +454,7 @@ einreichungenRouter.post('/', async (req, res) => {
           ueberschneidung: ueberschneidungsTage.has(t.datum),
         })),
         pruefvermerke,
+        pauschalenQuellen,
         weitereKosten: parsed.weitereKosten,
         unterschriftBild: parsed.unterschriftBild,
       }, validatedBelegPfade, pdfPfad);
@@ -498,6 +516,9 @@ einreichungenRouter.post('/', async (req, res) => {
               letzterTaetigkeitsort: tag.letzterTaetigkeitsort,
               landKey: tag.landKey,
               landFreitext: tag.landFreitext,
+              satz24h: String(tag.satz.satz24h),
+              satz8h: String(tag.satz.satz8h),
+              satzQuelle: tag.satz.quelle,
             })),
           );
         }
@@ -574,6 +595,7 @@ einreichungenRouter.post('/', async (req, res) => {
             abendGestellt: t.abendGestellt,
           })),
           pruefvermerke,
+          pauschalenQuellen,
         }),
       });
 

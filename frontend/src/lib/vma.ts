@@ -22,6 +22,9 @@ export interface VmaSatz {
 /** Inland (§ 9 Abs. 4a S. 3 EStG). */
 export const INLAND_SATZ: VmaSatz = { tagessatz24h: PAUSCHALEN.VMA_24H, tagessatz8h: PAUSCHALEN.VMA_8H };
 
+/** Quelle des Inlandssatzes (wie backend/src/lib/vma.ts). */
+export const INLAND_QUELLE = '§ 9 Abs. 4a EStG';
+
 // Reisetage (Tagesbildung), maßgebendes Land je Tag und Satzauswahl: siehe reisetage.ts.
 
 // ── VMA mit Kürzungen berechnen ────────────────────────

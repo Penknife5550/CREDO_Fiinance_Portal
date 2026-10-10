@@ -1,30 +1,46 @@
 /**
- * Erzeugt aus der BMF-Ländertabelle (CSV) die Migration 0014, die Prüfabfrage und den
- * BMF-Satzblock der VMA-Nachkorrektur (backend/scripts/vma-nachkorrektur-2026.sql).
+ * Erzeugt aus der BMF-Ländertabelle (CSV) die Migration der Auslandspauschalen und die Prüfabfrage.
  *
- * Quelle: BMF-Schreiben vom 05.12.2025 (Anlage), als CSV in
- *   src/db/data/bmf-auslandspauschalen-2026.csv (land_key;tagessatz_24h;tagessatz_8h;uebernachtung)
+ * Quelle: BMF-Schreiben (Anlage), als CSV in
+ *   src/db/data/bmf-auslandspauschalen-JJJJ.csv (land_key;tagessatz_24h;tagessatz_8h;uebernachtung)
  * Verweisstaaten aus dem Text des Schreibens (Satz eines anderen Staates, z. B. Mikronesien =
- * Philippinen) stehen in src/db/data/bmf-auslandspauschalen-2026-verweise.csv (land_key;wie_land_key)
+ * Philippinen) stehen in src/db/data/bmf-auslandspauschalen-JJJJ-verweise.csv (land_key;wie_land_key)
  * und erhalten die Werte ihres Bezugsstaates.
  *
- * Ausführung (Repo-Root): npx tsx backend/scripts/bmf-csv-zu-sql.ts [--neu-schreiben]
+ * Zwei Modi (Ausführung im Repo-Root):
+ * 1. Stand 2026 (BMF-Schreiben vom 05.12.2025):
+ *      npx tsx backend/scripts/bmf-csv-zu-sql.ts [--neu-schreiben]
+ *    → Migration 0014, Prüfabfrage scripts/pruefe-auslandspauschalen.sql und BMF-Satzblock der
+ *    VMA-Nachkorrektur (scripts/vma-nachkorrektur-2026.sql). Alte Seed-Werte und Sortierung der
+ *    19 Bestandszeilen kommen aus Migration 0008 (nie umbenennen).
+ * 2. Neuer Satzstand eines Jahres (Release 1c, jährlich nach dem BMF-Schreiben im Dezember):
+ *      npx tsx backend/scripts/bmf-csv-zu-sql.ts --jahr 2027 --quelle 'BMF-Schreiben vom TT.MM.2026' \
+ *        --migration 00NN_pauschalen_ausland_bmf2027 [--neu-schreiben]
+ *    → Migration src/db/migrations/00NN_….sql (INSERT aller Zeilen mit gueltig_von = 2027-01-01,
+ *    ON CONFLICT (land_key, gueltig_von) DO NOTHING; Sortierung vom Vorgängerstand des Landes,
+ *    neue Länder ab 1000 alphabetisch), Journal-Eintrag (falls fehlend) und Prüfabfrage
+ *    scripts/pruefe-auslandspauschalen-2027.sql. Keys müssen denen des Vorjahres entsprechen
+ *    (der Lauf listet fehlende und neue Keys gegenüber der Vorjahres-CSV). Die Verweis-CSV ist
+ *    jedes Jahr Pflicht (ohne Verweisstaaten: nur Kopfzeile), Luxemburg muss in der CSV stehen.
  *
  * Ausgabe ist deterministisch: ein zweiter Lauf erzeugt byte-identische Dateien.
- * Würde sich die Migration ändern, bricht der Lauf ab — eine bereits eingespielte Migration
- * führt Drizzle nie erneut aus (Repo und DB liefen still auseinander). Nach dem Deploy von
- * 0014 Korrekturen daher als NEUE Migration anlegen; --neu-schreiben nur vor dem ersten Deploy.
- * Alte Seed-Werte und Sortierung der 19 Bestandszeilen kommen aus Migration 0008 (nie umbenennen).
+ * Würde sich eine Migration ändern, bricht der Lauf ab — eine bereits eingespielte Migration
+ * führt Drizzle nie erneut aus (Repo und DB liefen still auseinander). Nach dem Deploy
+ * Korrekturen daher als NEUE Migration bzw. im AdminCenter; --neu-schreiben nur, solange die
+ * Migration weder committet noch eingespielt ist. Modus 2 überschreibt außerdem nur die jüngste
+ * Migration im Journal, und nur, wenn sie ein generierter Satzstand desselben Jahres ist.
  */
 
 import fs from 'fs';
 import path from 'path';
 
 const BACKEND = path.resolve(import.meta.dirname, '..');
-const CSV_DATEI = path.join(BACKEND, 'src/db/data/bmf-auslandspauschalen-2026.csv');
-const VERWEIS_DATEI = path.join(BACKEND, 'src/db/data/bmf-auslandspauschalen-2026-verweise.csv');
-const BESTAND_MIGRATION = path.join(BACKEND, 'src/db/migrations/0008_pauschalen_ausland.sql');
-const ZIEL_MIGRATION = path.join(BACKEND, 'src/db/migrations/0014_pauschalen_ausland_bmf2026.sql');
+const csvDatei = (jahr: number) => path.join(BACKEND, `src/db/data/bmf-auslandspauschalen-${jahr}.csv`);
+const verweisDatei = (jahr: number) => path.join(BACKEND, `src/db/data/bmf-auslandspauschalen-${jahr}-verweise.csv`);
+const MIGRATIONEN = path.join(BACKEND, 'src/db/migrations');
+const JOURNAL = path.join(MIGRATIONEN, 'meta/_journal.json');
+const BESTAND_MIGRATION = path.join(MIGRATIONEN, '0008_pauschalen_ausland.sql');
+const ZIEL_MIGRATION = path.join(MIGRATIONEN, '0014_pauschalen_ausland_bmf2026.sql');
 const ZIEL_PRUEFUNG = path.join(BACKEND, 'scripts/pruefe-auslandspauschalen.sql');
 const ZIEL_NACHKORREKTUR = path.join(BACKEND, 'scripts/vma-nachkorrektur-2026.sql');
 const NACHKORREKTUR_ANFANG = '-- BMF-SAETZE ANFANG';
@@ -35,6 +51,7 @@ const VERWEIS_KOPF = 'land_key;wie_land_key';
 const BESTAND_ANZAHL = 19;
 const REIHENFOLGE_START = 1000; // Bestand < 1000 = „Häufige Ziele"
 const BREAKPOINT = '\n--> statement-breakpoint\n';
+const STAND_2026 = 2026; // Modus 1: Bestand aus 0008/0014 (gueltig_von 2026-01-01 seit 0017)
 
 interface Satz {
   landKey: string;
@@ -60,8 +77,8 @@ function leseZeilen(datei: string, kopf: string): string[] {
   return zeilen;
 }
 
-function leseCsv(): Satz[] {
-  const zeilen = leseZeilen(CSV_DATEI, CSV_KOPF);
+function leseCsv(datei: string): Satz[] {
+  const zeilen = leseZeilen(datei, CSV_KOPF);
 
   const keys = new Set<string>();
   return zeilen.slice(1).map((zeile, i) => {
@@ -84,10 +101,10 @@ function leseCsv(): Satz[] {
 }
 
 /** Verweisstaaten: Werte des Bezugsstaates aus der Haupt-CSV übernehmen. */
-function leseVerweise(csv: Satz[]): Satz[] {
+function leseVerweise(datei: string, csv: Satz[]): Satz[] {
   const nachKey = new Map(csv.map((s) => [s.landKey, s]));
   const keys = new Set<string>();
-  return leseZeilen(VERWEIS_DATEI, VERWEIS_KOPF)
+  return leseZeilen(datei, VERWEIS_KOPF)
     .slice(1)
     .map((zeile, i) => {
       const nr = i + 2;
@@ -207,14 +224,15 @@ function erzeugeMigration(csv: Satz[], anzahlVerweise: number, bestand: BestandS
   return kopf + '\n-- a) Bestandszeilen\n' + statements.join(BREAKPOINT) + '\n';
 }
 
-function erzeugePruefung(csv: Satz[]): string {
+function erzeugePruefung(csv: Satz[], jahr: number, ziel: string): string {
   return [
-    '-- Prüfabfrage Auslandspauschalen: listet Zeilen, in denen pauschalen_ausland von der BMF-CSV abweicht.',
-    '-- GENERIERT von backend/scripts/bmf-csv-zu-sql.ts aus backend/src/db/data/bmf-auslandspauschalen-2026*.csv',
+    `-- Prüfabfrage Auslandspauschalen: listet Zeilen des Satzstands ${jahr}-01-01, in denen pauschalen_ausland`,
+    '-- von der BMF-CSV abweicht.',
+    `-- GENERIERT von backend/scripts/bmf-csv-zu-sql.ts aus backend/src/db/data/bmf-auslandspauschalen-${jahr}*.csv`,
     '-- (nicht von Hand ändern). Nur lesend. Leeres Ergebnis = DB entspricht der CSV.',
     '--',
     '-- Aufruf (Server, Repo-Verzeichnis):',
-    '--   docker exec -i credo-finanz-db psql -U credo -d finanzportal < backend/scripts/pruefe-auslandspauschalen.sql',
+    `--   docker exec -i credo-finanz-db psql -U credo -d finanzportal < backend/scripts/${path.basename(ziel)}`,
     '--',
     "-- Befund: 'abweichend' (z. B. im AdminCenter geändert), 'fehlt in DB', 'nicht in CSV' (im AdminCenter angelegt).",
     'WITH soll (land_key, tagessatz_24h, tagessatz_8h, uebernachtung) AS (',
@@ -230,7 +248,12 @@ function erzeugePruefung(csv: Satz[]): string {
     '  p.tagessatz_8h AS ist_8h, s.tagessatz_8h AS soll_8h,',
     '  p.uebernachtung AS ist_uebernachtung, s.uebernachtung AS soll_uebernachtung',
     'FROM soll s',
-    'FULL OUTER JOIN pauschalen_ausland p ON p.land_key = s.land_key',
+    // DEPLOYMENT verlangt den Lauf auch VOR dem Deploy von 0017 — daher to_jsonb statt Spaltenname.
+    '-- Satzstand über to_jsonb: läuft auch vor Migration 0017 (ohne gueltig_von; Bestand = Stand 2026).',
+    'FULL OUTER JOIN (',
+    '  SELECT * FROM pauschalen_ausland pa',
+    `  WHERE COALESCE(to_jsonb(pa) ->> 'gueltig_von', '${STAND_2026}-01-01') = '${jahr}-01-01'`,
+    ') p ON p.land_key = s.land_key',
     'WHERE p.land_key IS NULL OR s.land_key IS NULL',
     '   OR (p.tagessatz_24h, p.tagessatz_8h, p.uebernachtung)',
     '      IS DISTINCT FROM (s.tagessatz_24h, s.tagessatz_8h, s.uebernachtung)',
@@ -256,24 +279,164 @@ function erzeugeNachkorrektur(csv: Satz[]): string {
   );
 }
 
-const csvAnlage = leseCsv();
-const verweise = leseVerweise(csvAnlage);
-const csv = [...csvAnlage, ...verweise];
-const bestand = leseBestand();
+/** Wert eines Kommandozeilenparameters (--name wert); undefined = Parameter fehlt. */
+function argument(name: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  if (i < 0) return undefined;
+  const wert = process.argv[i + 1];
+  return wert && !wert.startsWith('--') ? wert : fehler(`--${name}: Wert fehlt`);
+}
 
-const migration = erzeugeMigration(csv, verweise.length, bestand);
-const bisher = fs.existsSync(ZIEL_MIGRATION) ? fs.readFileSync(ZIEL_MIGRATION, 'utf8') : null;
-if (bisher !== null && bisher !== migration && !process.argv.includes('--neu-schreiben')) {
-  fehler(
-    `${path.basename(ZIEL_MIGRATION)} würde sich ändern. Ist sie schon auf einem Server eingespielt, ` +
-      'die Korrektur als neue Migration anlegen; sonst mit --neu-schreiben erneut ausführen.',
+/**
+ * CSV + Verweisstaaten eines Jahres. Die Verweis-CSV ist jedes Jahr Pflicht (Verweise stehen in
+ * jedem BMF-Schreiben; ohne sie fehlten die Staaten still im neuen Stand) — ohne Verweise nur
+ * die Kopfzeile.
+ */
+function leseJahr(jahr: number): { anlage: Satz[]; verweise: Satz[] } {
+  const anlage = leseCsv(csvDatei(jahr));
+  if (!fs.existsSync(verweisDatei(jahr))) {
+    fehler(`${path.relative(BACKEND, verweisDatei(jahr))} fehlt (Verweisstaaten aus dem Text des BMF-Schreibens; ohne Verweise nur die Kopfzeile „${VERWEIS_KOPF}“)`);
+  }
+  return { anlage, verweise: leseVerweise(verweisDatei(jahr), anlage) };
+}
+
+/** Schreibt eine Migration; bricht ab, wenn sie schon existiert und sich ändern würde. */
+function schreibeMigration(datei: string, inhalt: string): void {
+  const bisher = fs.existsSync(datei) ? fs.readFileSync(datei, 'utf8') : null;
+  if (bisher !== null && bisher !== inhalt && !process.argv.includes('--neu-schreiben')) {
+    fehler(
+      `${path.basename(datei)} würde sich ändern. Ist sie schon committet oder auf einem Server eingespielt, ` +
+        'nie überschreiben: Korrektur im AdminCenter bzw. als neue Migration. Nur eine noch nicht ' +
+        'committete Migration darf mit --neu-schreiben neu erzeugt werden.',
+    );
+  }
+  fs.writeFileSync(datei, inhalt);
+}
+
+// ── Modus 2: neuer Satzstand eines Jahres ─────────────────────────────────────
+
+interface JournalEintrag {
+  idx: number;
+  version: string;
+  when: number;
+  tag: string;
+  breakpoints: boolean;
+}
+
+/**
+ * Drizzle-Journal mit Eintrag für die Migration (ohne Eintrag führt der Migrator sie nie aus);
+ * null = schon eingetragen. Prüft Nummer und Ziel, bevor irgendetwas geschrieben wird: Eine schon
+ * eingetragene Migration darf nur erneut erzeugt werden, wenn sie die JÜNGSTE im Journal und ein
+ * generierter Satzstand desselben Jahres ist — nie eine ältere oder fremde (z. B. 0017 mit der
+ * Spaltenänderung, wenn nur --jahr angepasst, --migration aber vom Vorjahr kopiert wurde).
+ */
+function journalMitEintrag(tag: string, jahr: number, datei: string): string | null {
+  const journal = JSON.parse(fs.readFileSync(JOURNAL, 'utf8')) as { entries: JournalEintrag[] };
+  const letzter = journal.entries[journal.entries.length - 1];
+  if (journal.entries.some((e) => e.tag === tag)) {
+    const bisher = fs.existsSync(datei) ? fs.readFileSync(datei, 'utf8') : '';
+    if (tag !== letzter.tag || !bisher.startsWith(`-- Auslandspauschalen ${jahr}:`)) {
+      fehler(
+        `--migration ${tag}: steht schon im Journal und ist nicht die jüngste Satzstand-Migration für ${jahr} — ` +
+          `nie überschreiben. Neuer Stand: nächste freie Nummer ${String(letzter.idx + 1).padStart(4, '0')}.`,
+      );
+    }
+    return null;
+  }
+  const nr = Number(tag.slice(0, 4));
+  if (nr !== letzter.idx + 1) {
+    fehler(`--migration ${tag}: nächste freie Nummer ist ${String(letzter.idx + 1).padStart(4, '0')}`);
+  }
+  // `when` streng steigend: der Migrator führt nur Migrationen aus, die jünger als die letzte eingespielte sind.
+  journal.entries.push({ idx: nr, version: letzter.version, when: letzter.when + 86_400_000, tag, breakpoints: true });
+  return JSON.stringify(journal, null, '\t');
+}
+
+function erzeugeSatzstand(csv: Satz[], anzahlVerweise: number, jahr: number, quelle: string, tag: string): string {
+  const gueltigVon = `DATE '${jahr}-01-01'`;
+  const collator = new Intl.Collator('de');
+  const sortiert = [...csv].sort((a, b) => collator.compare(a.landKey, b.landKey) || (a.landKey < b.landKey ? -1 : 1));
+  return [
+    `-- Auslandspauschalen ${jahr}: neuer Satzstand ab ${jahr}-01-01 nach ${quelle} — ${csv.length - anzahlVerweise} Zeilen`,
+    `-- der Anlage plus ${anzahlVerweise} Verweisstaaten aus dem Text des Schreibens (Satz des Bezugsstaates).`,
+    `-- GENERIERT von backend/scripts/bmf-csv-zu-sql.ts --jahr ${jahr} aus`,
+    `-- backend/src/db/data/bmf-auslandspauschalen-${jahr}*.csv (nicht von Hand ändern: CSV anpassen und`,
+    `-- Generator mit --migration ${tag} erneut ausführen,`,
+    '-- solange die Migration noch auf keinem Server eingespielt ist).',
+    '--',
+    `-- Legt je Land einen Satzstand mit gueltig_von = ${jahr}-01-01 an (Reisetage ab ${jahr}-01-01). Bestehende`,
+    '-- Stände (Vorjahre, im AdminCenter schon angelegte Stände dieses Datums) bleiben unberührt.',
+    '-- Sortierung (reihenfolge, < 1000 = „Häufige Ziele“) vom Vorgängerstand des Landes; neue Länder',
+    `-- ab ${REIHENFOLGE_START} alphabetisch. Länder/Städte ohne Zeile in der CSV erhalten keinen Stand ${jahr}: Sie`,
+    `-- fehlen ab ${jahr} in der Länderauswahl; für Reisetage ab ${jahr} verweist das Portal auf den Staat`,
+    '-- (übrige Orte) bzw. „Staat nicht in der Liste“ (Satz Luxemburg).',
+    `-- Prüfabfrage nach dem Deploy: backend/scripts/pruefe-auslandspauschalen-${jahr}.sql (muss leer sein).`,
+    '-- Idempotent: ein zweiter Lauf ändert nichts.',
+    'INSERT INTO pauschalen_ausland (land_key, gueltig_von, quelle, tagessatz_24h, tagessatz_8h, uebernachtung, reihenfolge)',
+    `SELECT v.land_key, ${gueltigVon}, ${text(quelle)}, v.tagessatz_24h, v.tagessatz_8h, v.uebernachtung,`,
+    '       COALESCE((SELECT p.reihenfolge FROM pauschalen_ausland p',
+    `                 WHERE p.land_key = v.land_key AND p.gueltig_von < ${gueltigVon}`,
+    '                 ORDER BY p.gueltig_von DESC LIMIT 1), v.reihenfolge)',
+    'FROM (VALUES',
+    valuesZeilen(sortiert, (_s, i) => String(REIHENFOLGE_START + i)),
+    ') AS v (land_key, tagessatz_24h, tagessatz_8h, uebernachtung, reihenfolge)',
+    'ON CONFLICT (land_key, gueltig_von) DO NOTHING;',
+    '',
+  ].join('\n');
+}
+
+function neuerSatzstand(jahrText: string): void {
+  const jahr = /^20\d{2}$/.test(jahrText) && Number(jahrText) > STAND_2026 ? Number(jahrText) : fehler(`--jahr ${jahrText}: Jahr nach ${STAND_2026} erwartet`);
+  const quelle = argument('quelle')?.trim() ?? fehler('--quelle fehlt (z. B. \'BMF-Schreiben vom 01.12.2026\')');
+  if (quelle.length > 200) fehler('--quelle: höchstens 200 Zeichen');
+  const tag = argument('migration') ?? fehler('--migration fehlt (z. B. 0018_pauschalen_ausland_bmf2027)');
+  // Jahr im Namen: fängt einen vom Vorjahr kopierten Befehl ab, in dem nur --jahr angepasst wurde.
+  if (!/^\d{4}_[a-z0-9_]+$/.test(tag) || !tag.includes(`bmf${jahr}`)) {
+    fehler(`--migration ${tag}: Name wie 00NN_pauschalen_ausland_bmf${jahr} erwartet (mit „bmf${jahr}“)`);
+  }
+
+  const { anlage, verweise } = leseJahr(jahr);
+  const csv = [...anlage, ...verweise];
+  // Luxemburg = gesetzlicher Ersatzsatz und Maßstab, ob ein Jahr hinterlegt ist (lib/reisetage.ts).
+  if (!csv.some((s) => s.landKey === 'Luxemburg')) fehler(`CSV ${jahr}: Zeile „Luxemburg“ fehlt (gesetzlicher Ersatzsatz)`);
+  const zielMigration = path.join(MIGRATIONEN, `${tag}.sql`);
+  const zielPruefung = path.join(BACKEND, `scripts/pruefe-auslandspauschalen-${jahr}.sql`);
+  const journal = journalMitEintrag(tag, jahr, zielMigration);
+  schreibeMigration(zielMigration, erzeugeSatzstand(csv, verweise.length, jahr, quelle, tag));
+  if (journal !== null) fs.writeFileSync(JOURNAL, journal);
+  fs.writeFileSync(zielPruefung, erzeugePruefung(csv, jahr, zielPruefung));
+
+  // Vier-Augen-Abgleich: Keys müssen über die Jahre gleich bleiben (Sortierung, Häufige Ziele).
+  const ausgabe = [`${anlage.length} CSV-Zeilen + ${verweise.length} Verweisstaaten → ${path.relative(BACKEND, zielMigration)}, ${path.relative(BACKEND, zielPruefung)}, Journal`];
+  if (fs.existsSync(csvDatei(jahr - 1))) {
+    const vorjahr = leseJahr(jahr - 1);
+    const alt = new Set([...vorjahr.anlage, ...vorjahr.verweise].map((s) => s.landKey));
+    const neu = new Set(csv.map((s) => s.landKey));
+    const fehlend = [...alt].filter((k) => !neu.has(k));
+    const hinzu = [...neu].filter((k) => !alt.has(k));
+    ausgabe.push(`Gegenüber ${jahr - 1} fehlend (${fehlend.length}): ${fehlend.join(', ') || '–'}`);
+    ausgabe.push(`Gegenüber ${jahr - 1} neu (${hinzu.length}): ${hinzu.join(', ') || '–'}`);
+  }
+  process.stdout.write(ausgabe.join('\n') + '\n');
+}
+
+// ── Modus 1: Stand 2026 (Migration 0014) ──────────────────────────────────────
+
+function stand2026(): void {
+  const { anlage: csvAnlage, verweise } = leseJahr(STAND_2026);
+  const csv = [...csvAnlage, ...verweise];
+  const bestand = leseBestand();
+
+  schreibeMigration(ZIEL_MIGRATION, erzeugeMigration(csv, verweise.length, bestand));
+  fs.writeFileSync(ZIEL_PRUEFUNG, erzeugePruefung(csv, STAND_2026, ZIEL_PRUEFUNG));
+  fs.writeFileSync(ZIEL_NACHKORREKTUR, erzeugeNachkorrektur(csv));
+  process.stdout.write(
+    `${csvAnlage.length} CSV-Zeilen + ${verweise.length} Verweisstaaten → ` +
+      [ZIEL_MIGRATION, ZIEL_PRUEFUNG, ZIEL_NACHKORREKTUR].map((d) => path.relative(BACKEND, d)).join(', ') +
+      '\n',
   );
 }
-fs.writeFileSync(ZIEL_MIGRATION, migration);
-fs.writeFileSync(ZIEL_PRUEFUNG, erzeugePruefung(csv));
-fs.writeFileSync(ZIEL_NACHKORREKTUR, erzeugeNachkorrektur(csv));
-process.stdout.write(
-  `${csvAnlage.length} CSV-Zeilen + ${verweise.length} Verweisstaaten → ` +
-    [ZIEL_MIGRATION, ZIEL_PRUEFUNG, ZIEL_NACHKORREKTUR].map((d) => path.relative(BACKEND, d)).join(', ') +
-    '\n',
-);
+
+const jahrArgument = argument('jahr');
+if (jahrArgument === undefined) stand2026();
+else neuerSatzstand(jahrArgument);

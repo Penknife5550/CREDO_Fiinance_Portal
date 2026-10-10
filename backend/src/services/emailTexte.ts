@@ -26,6 +26,8 @@ interface ReisekostenEmailDaten {
   reisetage: Reisetag[];
   /** Prüfvermerke (z. B. Überschneidung mit einer früheren Abrechnung). */
   pruefvermerke: string[];
+  /** Quellen der angewandten Pauschalen (lib/reiseangaben.ts quellenVermerk). */
+  pauschalenQuellen: string;
 }
 
 interface ErstattungEmailDaten {
@@ -97,6 +99,7 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
     `Reiseland: ${data.reiseland.join(' \u2192 ')}`,
     `Reisezeitraum: ${formatiereDatumZeit(data.abfahrtZeit)} \u2013 ${formatiereDatumZeit(data.rueckkehrZeit)}`,
     `Gesamtbetrag: ${formatiereBetrag(data.gesamtbetrag)} EUR`,
+    data.pauschalenQuellen,
     '',
   ];
 
@@ -119,7 +122,7 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
     // Inlandsbeträge nur bei Inlandsreisen — im Ausland gilt der Satz des Reiselandes.
     ...(data.land
       ? [
-          `\u2022 Auslandsreise (${data.land}): Verpflegungspauschalen nach BMF-Schreiben vom 05.12.2025 (24-h-Satz Ganztag, 8-h-Satz An-/Abreisetag bzw. eint\u00e4gig >8h).`,
+          `\u2022 Auslandsreise (${data.land}): Verpflegungspauschalen nach dem BMF-Schreiben des Reisejahres (siehe \u201ePauschalen\u201c oben; 24-h-Satz Ganztag, 8-h-Satz An-/Abreisetag bzw. eint\u00e4gig >8h).`,
           '\u2022 K\u00fcrzungen bei gestellten Mahlzeiten: Fr\u00fchst\u00fcck 20 %, Mittag/Abend je 40 % vom 24-h-Satz des f\u00fcr den Tag ma\u00dfgebenden Landes (Inlandstag: 28 EUR), auch am An-/Abreisetag.',
         ]
       : [
@@ -129,7 +132,7 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
         ]),
     '\u2022 Kilometerpauschale: PKW 0,30 EUR/km, Motorrad 0,20 EUR/km \u2014 kein Vorsteuerabzug.',
     '\u2022 Verpflegungspauschalen sind nach 3 Monaten am selben Einsatzort nicht mehr steuerfrei.',
-    '\u2022 Rechtsgrundlage: \u00a7 9 Abs. 4a EStG, BMF-Schreiben 05.12.2025.',
+    '\u2022 Rechtsgrundlage: \u00a7 9 Abs. 4a EStG; Auslandspauschalen nach dem BMF-Schreiben des Reisejahres.',
     '',
     'Das PDF mit allen Belegen ist als Anhang beigef\u00fcgt.',
     'Diese E-Mail wurde automatisch vom CREDO Finanzportal erstellt.',

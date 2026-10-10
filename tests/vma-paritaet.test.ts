@@ -12,8 +12,10 @@ import {
   bildeReisetage as beBildeReisetage,
   bestimmeTageslaender as beBestimmeTageslaender,
   satzLandKey as beSatzLandKey,
+  waehleSatzstand as beWaehleSatzstand,
   waehleTagesSatz as beWaehleTagesSatz,
   ReisetageFehler as BeReisetageFehler,
+  type Satzstand as BeSatzstand,
   type TagesLandAngabe as BeTagesLandAngabe,
 } from '../backend/src/lib/reisetage';
 import { landBezeichnung as beLandBezeichnung, reiselandFolge as beReiselandFolge } from '../backend/src/lib/reiseangaben';
@@ -22,12 +24,14 @@ import {
   bildeReisetage as feBildeReisetage,
   bestimmeTageslaender as feBestimmeTageslaender,
   satzLandKey as feSatzLandKey,
+  waehleSatzstand as feWaehleSatzstand,
   waehleTagesSatz as feWaehleTagesSatz,
   ReisetageFehler as FeReisetageFehler,
   berechneVmaVorschau,
   laenderfolge as feLaenderfolge,
   landBezeichnung as feLandBezeichnung,
   uebernehmeTagesangaben,
+  type Satzstand as FeSatzstand,
 } from '../frontend/src/lib/reisetage';
 import type { Reisetag, ReisetagEingabe } from '../frontend/src/lib/types';
 
@@ -288,42 +292,181 @@ describe('Landparität bestimmeTageslaender Backend ↔ Frontend', () => {
   });
 });
 
-// ── 3. Satzauswahl (satzLandKey / waehleTagesSatz) ────────────────────────────
+// ── 3. Satzauswahl (satzLandKey / waehleSatzstand / waehleTagesSatz) ──────────
 
-describe('Satzparität satzLandKey / waehleTagesSatz Backend ↔ Frontend', () => {
-  const KEYS = ['INLAND', 'ANDERES', 'SEETAG', 'Belgien', 'Luxemburg', 'Atlantis', 'constructor', 'toString', '__proto__', ''];
-  const mitLuxemburg: Array<[string, number, number]> = [['Belgien', 59, 40], ['Luxemburg', 63, 42]];
-  const ohneLuxemburg: Array<[string, number, number]> = [['Belgien', 59, 40]];
+const BMF_2026 = 'BMF-Schreiben vom 05.12.2025';
+const TEST_2027 = 'Test-Stand 2027'; // fiktiver Stand, Werte nur zur Unterscheidung
+const KORREKTUR = 'Korrektur ab 01.07.2026'; // fiktiver Stand mitten im Jahr
 
-  for (const [name, liste] of [['mit Luxemburg', mitLuxemburg], ['ohne Luxemburg', ohneLuxemburg]] as const) {
-    it(`alle Keys, Ländertabelle ${name}`, () => {
-      const be = new Map<string, TagesSatz>(liste.map(([k, s24, s8]) => [k, { satz24h: s24, satz8h: s8 }]));
-      const fe = new Map<string, VmaSatz>(liste.map(([k, s24, s8]) => [k, { tagessatz24h: s24, tagessatz8h: s8 }]));
-      for (const key of KEYS) {
-        expect(feSatzLandKey(key), key).toBe(beSatzLandKey(key));
-        const b = ergebnis(() => beWaehleTagesSatz(key, be));
-        const f = ergebnis(() => feWaehleTagesSatz(key, fe));
-        const paarBe = 'ok' in b ? { ok: [b.ok.satz24h, b.ok.satz8h] } : b;
-        const paarFe = 'ok' in f ? { ok: [f.ok.tagessatz24h, f.ok.tagessatz8h] } : f;
-        expect(paarFe, key).toEqual(paarBe);
+/** Satzstand als Zeile [Land, gültig ab, 24 h, 8 h, Quelle] — für beide Zwillinge in deren Feldnamen. */
+type StandZeile = readonly [landKey: string, gueltigVon: string, s24: number, s8: number, quelle: string];
+const beStaende = (zeilen: readonly StandZeile[]): BeSatzstand[] =>
+  zeilen.map(([landKey, gueltigVon, satz24h, satz8h, quelle]) => ({ landKey, gueltigVon, quelle, satz24h, satz8h }));
+const feStaende = (zeilen: readonly StandZeile[]): FeSatzstand[] =>
+  zeilen.map(([landKey, gueltigVon, tagessatz24h, tagessatz8h, quelle]) => ({ landKey, gueltigVon, quelle, tagessatz24h, tagessatz8h }));
+
+// Satzstand 2026 (BMF-Schreiben vom 05.12.2025, Endbeträge 24 h / 8 h)
+const STAND_2026: readonly StandZeile[] = [
+  ['Belgien', '2026-01-01', 59, 40, BMF_2026],
+  ['Niederlande', '2026-01-01', 58, 39, BMF_2026],
+  ['Luxemburg', '2026-01-01', 63, 42, BMF_2026],
+];
+const MIT_2027: readonly StandZeile[] = [
+  ...STAND_2026,
+  ['Belgien', '2027-01-01', 61, 41, TEST_2027],
+  ['Luxemburg', '2027-01-01', 65, 44, TEST_2027],
+];
+const MIT_KORREKTUR: readonly StandZeile[] = [...STAND_2026, ['Belgien', '2026-07-01', 60, 41, KORREKTUR]];
+// Jahresstand 2027 mit Lücken: Niederlande und Barcelona nur 2026 (gestrichen), Frankreich erst ab 2027
+const MIT_LUECKEN: readonly StandZeile[] = [
+  ...MIT_2027,
+  ['Spanien', '2026-01-01', 34, 23, BMF_2026],
+  ['Spanien', '2027-01-01', 35, 24, TEST_2027],
+  ['Spanien — Barcelona', '2026-01-01', 34, 23, BMF_2026],
+  ['Frankreich', '2027-01-01', 54, 36, TEST_2027],
+];
+
+/** Alle Kalendertage von `von` bis `bis` als 'YYYY-MM-DD' (UTC-Arithmetik). */
+function kalendertage(von: string, bis: string): string[] {
+  const tage: string[] = [];
+  for (let ms = Date.parse(`${von}T00:00:00Z`); ms <= Date.parse(`${bis}T00:00:00Z`); ms += 86_400_000) {
+    tage.push(new Date(ms).toISOString().slice(0, 10));
+  }
+  return tage;
+}
+
+// Jahreswechsel 2025/26 bis 2027/28 (jeder Tag) und Schalttag 2028
+const DATEN = [...kalendertage('2025-12-20', '2028-01-10'), '2028-02-29', '2028-12-31'];
+const DATEN_TEXT = 'jeder Tag 20.12.2025–10.01.2028, 29.02. und 31.12.2028';
+
+describe('Satzstandparität waehleSatzstand Backend ↔ Frontend (Stand nach Reisedatum)', () => {
+  // Stände EINES Landes, bewusst auch unsortiert
+  const LISTEN: Array<[string, Array<{ gueltigVon: string }>]> = [
+    ['keine Stände', []],
+    ['nur 2026', [{ gueltigVon: '2026-01-01' }]],
+    ['2026 + 2027', [{ gueltigVon: '2026-01-01' }, { gueltigVon: '2027-01-01' }]],
+    ['2027 + 2026 (unsortiert)', [{ gueltigVon: '2027-01-01' }, { gueltigVon: '2026-01-01' }]],
+    ['2026 + Korrektur ab 01.07.2026', [{ gueltigVon: '2026-07-01' }, { gueltigVon: '2026-01-01' }]],
+    ['nur Stand mitten im Jahr (ab 15.03.2027)', [{ gueltigVon: '2027-03-15' }]],
+    ['2026, Korrektur 31.12.2026, 2027, 2028', [
+      { gueltigVon: '2028-01-01' }, { gueltigVon: '2026-12-31' }, { gueltigVon: '2027-01-01' }, { gueltigVon: '2026-01-01' },
+    ]],
+    ['nur 2028 (Schaltjahr) ab 29.02.', [{ gueltigVon: '2028-02-29' }]],
+  ];
+
+  /** Erwartung unabhängig von beiden Zwillingen: größtes gueltigVon ≤ Datum im selben Kalenderjahr. */
+  const referenz = (liste: Array<{ gueltigVon: string }>, datum: string) =>
+    liste
+      .filter(s => s.gueltigVon.slice(0, 4) === datum.slice(0, 4) && s.gueltigVon <= datum)
+      .sort((a, b) => (a.gueltigVon < b.gueltigVon ? 1 : -1))[0] ?? null;
+
+  for (const [name, liste] of LISTEN) {
+    it(`${name}: ${DATEN_TEXT}`, () => {
+      for (const datum of DATEN) {
+        const be = beWaehleSatzstand(liste, datum);
+        expect(feWaehleSatzstand(liste, datum), `${name} @ ${datum}`).toBe(be);
+        expect(be, `${name} @ ${datum}`).toBe(referenz(liste, datum));
       }
     });
   }
 
-  it('Inland → 28/14, Seetag und nicht aufgeführter Staat → Satz Luxemburg', () => {
-    const be = new Map<string, TagesSatz>([['Luxemburg', { satz24h: 63, satz8h: 42 }]]);
-    expect(beWaehleTagesSatz('INLAND', be)).toEqual({ satz24h: 28, satz8h: 14 });
-    expect(beWaehleTagesSatz('SEETAG', be)).toEqual({ satz24h: 63, satz8h: 42 });
-    expect(beWaehleTagesSatz('ANDERES', be)).toEqual({ satz24h: 63, satz8h: 42 });
+  it('Stichproben: Jahreswechsel, Stand mitten im Jahr, kein Vorjahresstand', () => {
+    const [, zwei] = LISTEN[2];
+    const [, korrektur] = LISTEN[4];
+    expect(beWaehleSatzstand(zwei, '2026-12-31')?.gueltigVon).toBe('2026-01-01');
+    expect(beWaehleSatzstand(zwei, '2027-01-01')?.gueltigVon).toBe('2027-01-01');
+    expect(beWaehleSatzstand(korrektur, '2026-06-30')?.gueltigVon).toBe('2026-01-01');
+    expect(beWaehleSatzstand(korrektur, '2026-07-01')?.gueltigVon).toBe('2026-07-01');
+    expect(beWaehleSatzstand(korrektur, '2027-01-01')).toBeNull(); // Vorjahresstand gilt nicht weiter
+    expect(beWaehleSatzstand(zwei, '2025-12-31')).toBeNull(); // nur spätere Stände
+  });
+});
+
+describe('Satzparität satzLandKey / waehleTagesSatz Backend ↔ Frontend', () => {
+  const KEYS = [
+    'INLAND', 'ANDERES', 'SEETAG', 'Belgien', 'Niederlande', 'Luxemburg', 'Spanien', 'Spanien — Barcelona', 'Frankreich',
+    'Atlantis', 'constructor', 'toString', '__proto__', '',
+  ];
+  const TABELLEN: Array<[string, readonly StandZeile[]]> = [
+    ['Stand 2026', STAND_2026],
+    ['Stand 2026 + Test-Stand 2027', MIT_2027],
+    ['Stand 2026 + Korrektur Belgien ab 01.07.', MIT_KORREKTUR],
+    ['Stand 2027 mit gestrichenen und neuen Keys', MIT_LUECKEN],
+    ['Luxemburg erst ab 01.07.2027', [...STAND_2026, ['Luxemburg', '2027-07-01', 65, 44, TEST_2027], ['Belgien', '2027-01-01', 61, 41, TEST_2027]]],
+    ['ohne Luxemburg', STAND_2026.filter(([k]) => k !== 'Luxemburg')],
+    ['umgekehrt sortiert', [...MIT_2027].reverse()],
+    ['leer', []],
+  ];
+
+  // Angewandter Satz beider Seiten in gemeinsamer Form [24 h, 8 h, Quelle] bzw. der Fehler.
+  const paarBe = (r: Ergebnis<ReturnType<typeof beWaehleTagesSatz>>) => ('ok' in r ? { ok: [r.ok.satz24h, r.ok.satz8h, r.ok.quelle] } : r);
+  const paarFe = (r: Ergebnis<ReturnType<typeof feWaehleTagesSatz>>) =>
+    ('ok' in r ? { ok: [r.ok.tagessatz24h, r.ok.tagessatz8h, r.ok.quelle] } : r);
+
+  for (const [name, zeilen] of TABELLEN) {
+    it(`alle Keys × ${DATEN_TEXT}, ${name}`, () => {
+      const be = beStaende(zeilen);
+      const fe = feStaende(zeilen);
+      for (const key of KEYS) {
+        expect(feSatzLandKey(key), key).toBe(beSatzLandKey(key));
+        for (const datum of DATEN) {
+          const b = paarBe(ergebnis(() => beWaehleTagesSatz(key, datum, be)));
+          const f = paarFe(ergebnis(() => feWaehleTagesSatz(key, datum, fe)));
+          expect(f, `${key} @ ${datum}`).toEqual(b);
+        }
+      }
+    });
+  }
+
+  it('Inland → 28/14 (§ 9 Abs. 4a EStG) in jedem Jahr; Seetag und nicht aufgeführter Staat → Luxemburg-Stand des Reisejahres', () => {
+    const be = beStaende(MIT_2027);
+    for (const datum of ['2026-03-16', '2027-01-01', '2030-12-31']) {
+      expect(beWaehleTagesSatz('INLAND', datum, [])).toEqual({ satz24h: 28, satz8h: 14, quelle: '§ 9 Abs. 4a EStG' });
+    }
+    expect(beWaehleTagesSatz('SEETAG', '2026-12-31', be)).toEqual({ satz24h: 63, satz8h: 42, quelle: BMF_2026 });
+    expect(beWaehleTagesSatz('ANDERES', '2027-01-01', be)).toEqual({ satz24h: 65, satz8h: 44, quelle: TEST_2027 });
+    expect(feWaehleTagesSatz('SEETAG', '2027-06-30', feStaende(MIT_2027))).toEqual({ tagessatz24h: 65, tagessatz8h: 44, quelle: TEST_2027 });
+  });
+
+  it('kein Stand im Reisejahr → SATZSTAND_FEHLT mit der Meldung des Servers, unbekanntes Land → UNBEKANNTES_LAND', () => {
+    const erwartet = {
+      code: 'SATZSTAND_FEHLT',
+      meldung: 'Die Auslandspauschalen für 2027 sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung.',
+    };
+    for (const key of ['Belgien', 'Niederlande', 'SEETAG', 'ANDERES']) {
+      expect(ergebnis(() => beWaehleTagesSatz(key, '2027-01-01', beStaende(STAND_2026))), key).toEqual(erwartet);
+      expect(ergebnis(() => feWaehleTagesSatz(key, '2027-01-01', feStaende(STAND_2026))), key).toEqual(erwartet);
+    }
+    expect(ergebnis(() => feWaehleTagesSatz('Atlantis', '2026-03-16', feStaende(STAND_2026))))
+      .toEqual({ code: 'UNBEKANNTES_LAND', meldung: 'Unbekanntes Reiseland: Atlantis' });
+  });
+
+  it('Jahresstand da, nur der Key fehlt → LAND_OHNE_SATZSTAND: Staat → „Staat nicht in der Liste“, Stadt → Staat (übrige Orte)', () => {
+    const faelle: Array<[string, string, string]> = [
+      ['Niederlande', '2027-01-01', 'Für „Niederlande“ ist für 2027 keine Auslandspauschale hinterlegt. Bitte wählen Sie „Staat nicht in der Liste“ (Satz Luxemburg) oder wenden Sie sich an die Buchhaltung.'],
+      ['Frankreich', '2026-12-31', 'Für „Frankreich“ ist für 2026 keine Auslandspauschale hinterlegt. Bitte wählen Sie „Staat nicht in der Liste“ (Satz Luxemburg) oder wenden Sie sich an die Buchhaltung.'],
+      ['Spanien — Barcelona', '2027-01-02', 'Für „Spanien — Barcelona“ ist für 2027 keine eigene Auslandspauschale hinterlegt. Bitte wählen Sie „Spanien“ (übrige Orte) oder wenden Sie sich an die Buchhaltung.'],
+    ];
+    for (const [key, datum, meldung] of faelle) {
+      const erwartet = { code: 'LAND_OHNE_SATZSTAND', meldung };
+      expect(ergebnis(() => beWaehleTagesSatz(key, datum, beStaende(MIT_LUECKEN))), key).toEqual(erwartet);
+      expect(ergebnis(() => feWaehleTagesSatz(key, datum, feStaende(MIT_LUECKEN))), key).toEqual(erwartet);
+    }
+  });
+
+  it('Reisejahr vor dem ersten Luxemburg-Stand → SATZSTAND_FEHLT mit Verweis auf die Buchhaltung', () => {
+    const erwartet = {
+      code: 'SATZSTAND_FEHLT',
+      meldung: 'Für Reisetage im Jahr 2025 sind keine Auslandspauschalen hinterlegt. Bitte wenden Sie sich an die Buchhaltung.',
+    };
+    for (const key of ['Belgien', 'Luxemburg', 'SEETAG', 'ANDERES', 'Frankreich']) {
+      expect(ergebnis(() => beWaehleTagesSatz(key, '2025-12-31', beStaende(MIT_LUECKEN))), key).toEqual(erwartet);
+      expect(ergebnis(() => feWaehleTagesSatz(key, '2025-12-31', feStaende(MIT_LUECKEN))), key).toEqual(erwartet);
+    }
   });
 });
 
 // ── 4. Gesamtbeträge der Spezifikationsfälle (komplette Kette) ────────────────
-
-// BMF-Schreiben vom 05.12.2025 (Endbeträge 24 h / 8 h)
-const LAENDER: Array<[string, number, number]> = [['Belgien', 59, 40], ['Niederlande', 58, 39], ['Luxemburg', 63, 42]];
-const BE_SAETZE = new Map<string, TagesSatz>(LAENDER.map(([k, s24, s8]) => [k, { satz24h: s24, satz8h: s8 }]));
-const FE_SAETZE = new Map<string, VmaSatz>(LAENDER.map(([k, s24, s8]) => [k, { tagessatz24h: s24, tagessatz8h: s8 }]));
 
 type TagAngabe = Partial<Pick<ReisetagEingabe,
   'land24uhr' | 'letzterTaetigkeitsort' | 'landFreitext' | 'fruehstueckGestellt' | 'mittagGestellt' | 'abendGestellt'>>;
@@ -335,20 +478,28 @@ interface Fall {
   uebernachtung?: boolean | null;
   hauptland?: string | null;
   tage?: Record<string, TagAngabe>;
+  /** Satzstände (Vorgabe: Stand 2026). */
+  staende?: readonly StandZeile[];
   /** Betrag je Tag (Reihenfolge der Tage) oder Fehlermeldung (Teilstring). */
   netto?: number[];
   summe?: number;
+  /** Quelle des angewandten Satzes je Tag (optional geprüft). */
+  quellen?: string[];
   fehler?: string;
 }
 
+type Rechnung = { netto: number[]; summe: number; quellen: string[] } | { fehler: string };
+
 const runde = (n: number) => Math.round(n * 100) / 100;
 
-/** Backend-Kette wie die Route: Tage bilden → Angaben per Datum → Land → Satz → vmaTag. */
-function backendRechnung(f: Fall): { netto: number[]; summe: number } | { fehler: string } {
+/** Backend-Kette wie die Route: Tage bilden → Angaben per Datum → Land → Satz zum Datum → vmaTag. */
+function backendRechnung(f: Fall): Rechnung {
   try {
+    const staende = beStaende(f.staende ?? STAND_2026);
     const soll = beBildeReisetage(f.abfahrt, f.rueckkehr, f.uebernachtung ?? null);
     const angaben = soll.map(t => ({ ...t, ...f.tage?.[t.datum] }));
     const laender = beBestimmeTageslaender(angaben, f.hauptland ?? null);
+    const saetze = angaben.map((t, i) => beWaehleTagesSatz(laender[i].landKey, t.datum, staende));
     const netto = angaben.map((t, i) => vmaTag(
       {
         typ: t.typ,
@@ -357,9 +508,9 @@ function backendRechnung(f: Fall): { netto: number[]; summe: number } | { fehler
         mittagGestellt: !!t.mittagGestellt,
         abendGestellt: !!t.abendGestellt,
       },
-      beWaehleTagesSatz(laender[i].landKey, BE_SAETZE),
+      saetze[i],
     ).vmaNetto);
-    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)) };
+    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)), quellen: saetze.map(s => s.quelle) };
   } catch (err) {
     if (err instanceof BeReisetageFehler) return { fehler: err.message };
     throw err;
@@ -367,14 +518,14 @@ function backendRechnung(f: Fall): { netto: number[]; summe: number } | { fehler
 }
 
 /** Frontend-Kette wie das Formular: Tage bilden → Eingaben übernehmen → Vorschau. */
-function frontendRechnung(f: Fall): { netto: number[]; summe: number } | { fehler: string } {
+function frontendRechnung(f: Fall): Rechnung {
   try {
     const soll = feBildeReisetage(f.abfahrt, f.rueckkehr, f.uebernachtung ?? null);
     const tage = uebernehmeTagesangaben(soll, []).map(t => ({ ...t, ...f.tage?.[t.datum] }));
-    const vorschau = berechneVmaVorschau(tage, f.hauptland ?? null, FE_SAETZE);
+    const vorschau = berechneVmaVorschau(tage, f.hauptland ?? null, feStaende(f.staende ?? STAND_2026));
     if (vorschau.fehler) return { fehler: vorschau.fehler };
     const netto = vorschau.tage.map(t => t.vmaNetto);
-    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)) };
+    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)), quellen: vorschau.tage.map(t => t.satz.quelle) };
   } catch (err) {
     if (err instanceof FeReisetageFehler) return { fehler: err.message };
     throw err;
@@ -502,6 +653,75 @@ const FAELLE: Fall[] = [
     abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00',
     netto: [14, 28, 28, 14], summe: 84,
   },
+  // Release 1c: Satzstand je Reisetag nach Datum
+  {
+    name: 'Inland über den Jahreswechsel braucht keinen Satzstand (28/14, § 9 Abs. 4a EStG)',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', staende: [],
+    netto: [14, 28, 28, 14], summe: 84, quellen: Array(4).fill('§ 9 Abs. 4a EStG'),
+  },
+  {
+    name: 'Belgien 3 Tage 2026 = 139,00 mit Satz 2026, auch wenn ein Stand 2027 existiert',
+    abfahrt: '2026-03-16T08:00', rueckkehr: '2026-03-18T18:00', hauptland: 'Belgien', staende: MIT_2027,
+    netto: [40, 59, 40], summe: 139, quellen: [BMF_2026, BMF_2026, BMF_2026],
+  },
+  {
+    name: 'Jahreswechsel Belgien mit Stand 2026 + Test-Stand 2027: Dezember 2026er, Januar 2027er Satz',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Belgien', staende: MIT_2027,
+    netto: [40, 59, 61, 41], summe: 201, quellen: [BMF_2026, BMF_2026, TEST_2027, TEST_2027],
+  },
+  {
+    name: 'Jahreswechsel Belgien ohne Stand 2027 → Fehler (Server: 400)',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Belgien',
+    fehler: 'Die Auslandspauschalen für 2027 sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung.',
+  },
+  {
+    name: 'Jahreswechsel ohne Stand 2027, Januar-Tage im Inland → kein Fehler',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-01T18:00', hauptland: 'Belgien',
+    tage: { '2026-12-31': { land24uhr: 'INLAND' }, '2027-01-01': { letzterTaetigkeitsort: 'INLAND' } },
+    netto: [40, 28, 14], summe: 82, quellen: [BMF_2026, '§ 9 Abs. 4a EStG', '§ 9 Abs. 4a EStG'],
+  },
+  {
+    name: 'Jahreswechsel, Seetag am 01.01.2027 → Luxemburg-Stand 2027',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Belgien', staende: MIT_2027,
+    tage: { '2027-01-01': { land24uhr: 'SEETAG' } },
+    netto: [40, 59, 65, 41], summe: 205, quellen: [BMF_2026, BMF_2026, TEST_2027, TEST_2027],
+  },
+  {
+    name: 'Seetag am 01.01.2027 ohne Luxemburg-Stand 2027 → Fehler, obwohl Belgien 2027 hinterlegt ist',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Belgien',
+    staende: MIT_2027.filter(([k, von]) => !(k === 'Luxemburg' && von === '2027-01-01')),
+    tage: { '2027-01-01': { land24uhr: 'SEETAG' } },
+    fehler: 'Die Auslandspauschalen für 2027 sind noch nicht hinterlegt.',
+  },
+  {
+    name: 'Jahreswechsel, Niederlande im Stand 2027 nicht mehr aufgeführt → Hinweis auf „Staat nicht in der Liste“',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Niederlande', staende: MIT_LUECKEN,
+    fehler: 'Für „Niederlande“ ist für 2027 keine Auslandspauschale hinterlegt. Bitte wählen Sie „Staat nicht in der Liste“ (Satz Luxemburg)',
+  },
+  {
+    name: 'Jahreswechsel, Niederlande 2027 gestrichen: Januar-Tage „Staat nicht in der Liste“ → Luxemburg-Stand 2027',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Niederlande', staende: MIT_LUECKEN,
+    tage: { '2027-01-01': { land24uhr: 'ANDERES', landFreitext: 'Niederlande' } },
+    netto: [39, 58, 65, 44], summe: 206, quellen: [BMF_2026, BMF_2026, TEST_2027, TEST_2027],
+  },
+  {
+    name: 'Jahreswechsel, Barcelona 2027 gestrichen: Januar-Tage Spanien (übrige Orte) 2027',
+    abfahrt: '2026-12-30T08:00', rueckkehr: '2027-01-02T18:00', hauptland: 'Spanien — Barcelona', staende: MIT_LUECKEN,
+    tage: { '2027-01-01': { land24uhr: 'Spanien' } },
+    netto: [23, 34, 35, 24], summe: 116, quellen: [BMF_2026, BMF_2026, TEST_2027, TEST_2027],
+  },
+  {
+    name: 'Verspätete Abrechnung Dezember 2025 (vor dem ersten Stand) → Buchhaltung',
+    abfahrt: '2025-12-29T08:00', rueckkehr: '2025-12-31T18:00', hauptland: 'Belgien',
+    fehler: 'Für Reisetage im Jahr 2025 sind keine Auslandspauschalen hinterlegt. Bitte wenden Sie sich an die Buchhaltung.',
+  },
+  {
+    name: 'Stand mitten im Jahr (Korrektur Belgien ab 01.07.2026): Tage davor alter, ab dem Datum neuer Satz',
+    abfahrt: '2026-06-29T08:00', rueckkehr: '2026-07-02T18:00', hauptland: 'Belgien', staende: MIT_KORREKTUR,
+    tage: { '2026-07-01': { fruehstueckGestellt: true } },
+    // 01.07.: 60 − 20 % von 60 = 48,00; 02.07.: 41 (8-h-Satz der Korrektur)
+    netto: [40, 59, 48, 41], summe: 188, quellen: [BMF_2026, BMF_2026, KORREKTUR, KORREKTUR],
+  },
 ];
 
 describe(`Gesamtbeträge der Spezifikationsfälle Backend ↔ Frontend, TZ=${TZ}`, () => {
@@ -513,7 +733,8 @@ describe(`Gesamtbeträge der Spezifikationsfälle Backend ↔ Frontend, TZ=${TZ}
       if (f.fehler) {
         expect('fehler' in be && be.fehler).toContain(f.fehler);
       } else {
-        expect(be).toEqual({ netto: f.netto, summe: f.summe });
+        expect('netto' in be && { netto: be.netto, summe: be.summe }).toEqual({ netto: f.netto, summe: f.summe });
+        if (f.quellen) expect('quellen' in be && be.quellen).toEqual(f.quellen);
       }
     });
   }

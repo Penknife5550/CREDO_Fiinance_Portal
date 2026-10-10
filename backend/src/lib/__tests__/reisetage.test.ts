@@ -3,20 +3,33 @@ import {
   bildeReisetage,
   bestimmeTageslaender,
   waehleTagesSatz,
+  waehleSatzstand,
   satzLandKey,
   ReisetageFehler,
   type ReisetageFehlerCode,
+  type Satzstand,
   type TagesLandAngabe,
 } from '../reisetage.js';
-import { vmaTag, INLAND_SATZ, type TagesSatz } from '../vma.js';
+import { vmaTag, INLAND_SATZ } from '../vma.js';
 
-// BMF-Schreiben vom 05.12.2025 (Endbeträge 24 h / 8 h)
-const SAETZE: ReadonlyMap<string, TagesSatz> = new Map([
-  ['Belgien', { satz24h: 59, satz8h: 40 }],
-  ['Niederlande', { satz24h: 58, satz8h: 39 }],
-  ['Luxemburg', { satz24h: 63, satz8h: 42 }],
-  ['USA', { satz24h: 59, satz8h: 40 }],
-]);
+const BMF_2026 = 'BMF-Schreiben vom 05.12.2025';
+const stand = (landKey: string, gueltigVon: string, satz24h: number, satz8h: number, quelle = BMF_2026): Satzstand =>
+  ({ landKey, gueltigVon, quelle, satz24h, satz8h });
+
+// Satzstand 2026: BMF-Schreiben vom 05.12.2025 (Endbeträge 24 h / 8 h)
+const STAENDE: readonly Satzstand[] = [
+  stand('Belgien', '2026-01-01', 59, 40),
+  stand('Niederlande', '2026-01-01', 58, 39),
+  stand('Luxemburg', '2026-01-01', 63, 42),
+  stand('USA', '2026-01-01', 59, 40),
+];
+// Fiktiver Test-Stand 2027 (Werte frei gewählt, nur zur Unterscheidung)
+const TEST_2027 = 'Test-Stand 2027';
+const STAENDE_2027: readonly Satzstand[] = [
+  ...STAENDE,
+  stand('Belgien', '2027-01-01', 61, 41, TEST_2027),
+  stand('Luxemburg', '2027-01-01', 65, 44, TEST_2027),
+];
 
 type TagesEingabe = Partial<Pick<TagesLandAngabe, 'land24uhr' | 'letzterTaetigkeitsort' | 'landFreitext'>> & {
   fruehstueck?: boolean;
@@ -28,7 +41,12 @@ type TagesEingabe = Partial<Pick<TagesLandAngabe, 'land24uhr' | 'letzterTaetigke
 function rechne(
   abfahrt: string,
   rueckkehr: string,
-  opts: { uebernachtung?: boolean | null; hauptland?: string | null; tage?: Record<string, TagesEingabe> } = {},
+  opts: {
+    uebernachtung?: boolean | null;
+    hauptland?: string | null;
+    tage?: Record<string, TagesEingabe>;
+    staende?: readonly Satzstand[];
+  } = {},
 ) {
   const tage = bildeReisetage(abfahrt, rueckkehr, opts.uebernachtung ?? null);
   const angaben = tage.map(t => ({ ...t, ...opts.tage?.[t.datum] }));
@@ -43,7 +61,7 @@ function rechne(
           mittagGestellt: !!t.mittag,
           abendGestellt: !!t.abend,
         },
-        waehleTagesSatz(laender[i].landKey, SAETZE),
+        waehleTagesSatz(laender[i].landKey, t.datum, opts.staende ?? STAENDE),
       ).vmaNetto,
   );
   const summe = Math.round(betraege.reduce((a, b) => a + b, 0) * 100) / 100;
@@ -445,31 +463,158 @@ describe('bestimmeTageslaender', () => {
 
 // ── 3. Satzauswahl ────────────────────────────────────────────────────────────
 
+const MELDUNG_2027 =
+  /^Die Auslandspauschalen für 2027 sind noch nicht hinterlegt\. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung\.$/;
+
 describe('waehleTagesSatz / satzLandKey', () => {
-  it('INLAND → gesetzlicher Satz 28/14', () => {
-    expect(waehleTagesSatz('INLAND', SAETZE)).toEqual(INLAND_SATZ);
+  it('INLAND → gesetzlicher Satz 28/14 mit Quelle § 9 Abs. 4a EStG, unabhängig vom Jahr und ohne Stände', () => {
+    for (const datum of ['2026-03-16', '2027-01-01', '2030-12-31']) {
+      expect(waehleTagesSatz('INLAND', datum, [])).toEqual({ ...INLAND_SATZ, quelle: '§ 9 Abs. 4a EStG' });
+    }
     expect(satzLandKey('INLAND')).toBeNull();
   });
 
   it('ANDERES und SEETAG → Satz Luxemburg (63/42)', () => {
-    expect(waehleTagesSatz('ANDERES', SAETZE)).toEqual({ satz24h: 63, satz8h: 42 });
-    expect(waehleTagesSatz('SEETAG', SAETZE)).toEqual({ satz24h: 63, satz8h: 42 });
+    expect(waehleTagesSatz('ANDERES', '2026-03-16', STAENDE)).toEqual({ satz24h: 63, satz8h: 42, quelle: BMF_2026 });
+    expect(waehleTagesSatz('SEETAG', '2026-03-16', STAENDE)).toEqual({ satz24h: 63, satz8h: 42, quelle: BMF_2026 });
     expect(satzLandKey('ANDERES')).toBe('Luxemburg');
     expect(satzLandKey('SEETAG')).toBe('Luxemburg');
   });
 
-  it('sonst der Ländersatz (auch Key in Großbuchstaben wie USA)', () => {
-    expect(waehleTagesSatz('Belgien', SAETZE)).toEqual({ satz24h: 59, satz8h: 40 });
-    expect(waehleTagesSatz('USA', SAETZE)).toEqual({ satz24h: 59, satz8h: 40 });
+  it('sonst der Ländersatz des Reisejahres samt Quelle (auch Key in Großbuchstaben wie USA)', () => {
+    expect(waehleTagesSatz('Belgien', '2026-03-16', STAENDE)).toEqual({ satz24h: 59, satz8h: 40, quelle: BMF_2026 });
+    expect(waehleTagesSatz('USA', '2026-12-31', STAENDE)).toEqual({ satz24h: 59, satz8h: 40, quelle: BMF_2026 });
     expect(satzLandKey('Niederlande')).toBe('Niederlande');
   });
 
   it('unbekanntes Land → Fehler „Unbekanntes Reiseland: X“ (auch Objekt-Schlüssel wie constructor)', () => {
-    erwarteFehler(() => waehleTagesSatz('Atlantis', SAETZE), 'UNBEKANNTES_LAND', /^Unbekanntes Reiseland: Atlantis$/);
-    erwarteFehler(() => waehleTagesSatz('constructor', SAETZE), 'UNBEKANNTES_LAND');
+    erwarteFehler(() => waehleTagesSatz('Atlantis', '2026-03-16', STAENDE), 'UNBEKANNTES_LAND', /^Unbekanntes Reiseland: Atlantis$/);
+    erwarteFehler(() => waehleTagesSatz('constructor', '2026-03-16', STAENDE), 'UNBEKANNTES_LAND');
   });
 
-  it('fehlt Luxemburg in den Sätzen, scheitern ANDERES/SEETAG mit dem Fallback-Key', () => {
-    erwarteFehler(() => waehleTagesSatz('SEETAG', new Map()), 'UNBEKANNTES_LAND', /Luxemburg/);
+  it('fehlt Luxemburg in den Ständen, scheitern ANDERES/SEETAG mit dem Fallback-Key', () => {
+    erwarteFehler(() => waehleTagesSatz('SEETAG', '2026-03-16', []), 'UNBEKANNTES_LAND', /Luxemburg/);
+  });
+
+  it('kein Stand im Reisejahr → SATZSTAND_FEHLT (der Vorjahresstand gilt nicht weiter)', () => {
+    erwarteFehler(() => waehleTagesSatz('Belgien', '2027-01-01', STAENDE), 'SATZSTAND_FEHLT', MELDUNG_2027);
+    erwarteFehler(() => waehleTagesSatz('ANDERES', '2027-06-30', STAENDE), 'SATZSTAND_FEHLT', MELDUNG_2027);
+  });
+
+  it('Reisejahr vor dem ersten Stand (verspätete Abrechnung) → Buchhaltung statt „später einreichen“', () => {
+    for (const key of ['Belgien', 'ANDERES', 'SEETAG', 'Luxemburg']) {
+      erwarteFehler(
+        () => waehleTagesSatz(key, '2025-12-31', STAENDE_2027),
+        'SATZSTAND_FEHLT',
+        /^Für Reisetage im Jahr 2025 sind keine Auslandspauschalen hinterlegt\. Bitte wenden Sie sich an die Buchhaltung\.$/,
+      );
+    }
+    // Ohne Luxemburg-Stände lässt sich das erste Jahr nicht bestimmen → bisherige Meldung
+    erwarteFehler(
+      () => waehleTagesSatz('Belgien', '2025-12-31', STAENDE.filter(s => s.landKey !== 'Luxemburg')),
+      'SATZSTAND_FEHLT',
+      /^Die Auslandspauschalen für 2025 sind noch nicht hinterlegt\./,
+    );
+  });
+
+  it('Jahresstand da (Luxemburg), nur das Land fehlt → LAND_OHNE_SATZSTAND mit Hinweis auf „Staat nicht in der Liste“', () => {
+    // Niederlande und USA haben keinen Stand 2027 (z. B. im BMF-Schreiben gestrichen)
+    erwarteFehler(
+      () => waehleTagesSatz('Niederlande', '2027-03-01', STAENDE_2027),
+      'LAND_OHNE_SATZSTAND',
+      /^Für „Niederlande“ ist für 2027 keine Auslandspauschale hinterlegt\. Bitte wählen Sie „Staat nicht in der Liste“ \(Satz Luxemburg\) oder wenden Sie sich an die Buchhaltung\.$/,
+    );
+    // Land erst ab 2027 aufgenommen: Reisetag 2026 (Jahresstand 2026 vorhanden)
+    const mitNeuemLand = [...STAENDE_2027, stand('Frankreich', '2027-01-01', 54, 36, TEST_2027)];
+    erwarteFehler(() => waehleTagesSatz('Frankreich', '2026-05-01', mitNeuemLand), 'LAND_OHNE_SATZSTAND', /^Für „Frankreich“ ist für 2026 keine/);
+    // Land mitten im Jahr angelegt: Tage davor ohne Stand
+    const abJuli = [...STAENDE, stand('Frankreich', '2026-07-01', 53, 36)];
+    erwarteFehler(() => waehleTagesSatz('Frankreich', '2026-06-30', abJuli), 'LAND_OHNE_SATZSTAND');
+    expect(waehleTagesSatz('Frankreich', '2026-07-01', abJuli).satz24h).toBe(53);
+  });
+
+  it('Stadt ohne Stand im Jahr → Hinweis auf den Staat (übrige Orte)', () => {
+    const staende = [
+      ...STAENDE_2027,
+      stand('Spanien', '2026-01-01', 34, 23), stand('Spanien', '2027-01-01', 35, 24, TEST_2027),
+      stand('Spanien — Barcelona', '2026-01-01', 34, 23),
+    ];
+    erwarteFehler(
+      () => waehleTagesSatz('Spanien — Barcelona', '2027-01-02', staende),
+      'LAND_OHNE_SATZSTAND',
+      /^Für „Spanien — Barcelona“ ist für 2027 keine eigene Auslandspauschale hinterlegt\. Bitte wählen Sie „Spanien“ \(übrige Orte\) oder wenden Sie sich an die Buchhaltung\.$/,
+    );
+    expect(waehleTagesSatz('Spanien', '2027-01-02', staende)).toEqual({ satz24h: 35, satz8h: 24, quelle: TEST_2027 });
+  });
+
+  it('ANDERES/SEETAG → Luxemburg-Stand des Reisejahres', () => {
+    expect(waehleTagesSatz('ANDERES', '2026-12-31', STAENDE_2027)).toEqual({ satz24h: 63, satz8h: 42, quelle: BMF_2026 });
+    expect(waehleTagesSatz('SEETAG', '2027-01-01', STAENDE_2027)).toEqual({ satz24h: 65, satz8h: 44, quelle: TEST_2027 });
+    expect(waehleTagesSatz('ANDERES', '2027-03-01', STAENDE_2027)).toEqual({ satz24h: 65, satz8h: 44, quelle: TEST_2027 });
+  });
+});
+
+describe('waehleSatzstand (Satzstand nach Reisedatum)', () => {
+  const korrektur = [stand('Belgien', '2026-01-01', 59, 40), stand('Belgien', '2026-07-01', 60, 40, 'Korrektur 2026')];
+
+  it('größtes gueltigVon ≤ Datum im selben Kalenderjahr, Reihenfolge der Stände egal', () => {
+    expect(waehleSatzstand(STAENDE_2027.filter(s => s.landKey === 'Belgien'), '2026-12-31')?.quelle).toBe(BMF_2026);
+    expect(waehleSatzstand([...STAENDE_2027].reverse().filter(s => s.landKey === 'Belgien'), '2027-01-01')?.quelle).toBe(TEST_2027);
+    expect(waehleSatzstand([...korrektur].reverse(), '2026-06-30')?.gueltigVon).toBe('2026-01-01');
+    expect(waehleSatzstand(korrektur, '2026-07-01')?.gueltigVon).toBe('2026-07-01');
+    expect(waehleSatzstand(korrektur, '2026-12-31')?.gueltigVon).toBe('2026-07-01');
+  });
+
+  it('kein Stand im Reisejahr → null (auch nicht der jüngste Vorjahresstand)', () => {
+    expect(waehleSatzstand(korrektur, '2027-01-01')).toBeNull();
+    expect(waehleSatzstand(korrektur, '2025-12-31')).toBeNull();
+    expect(waehleSatzstand([], '2026-03-16')).toBeNull();
+    // Stand erst ab Juli: Tage davor im selben Jahr ohne Stand
+    expect(waehleSatzstand([stand('Belgien', '2027-07-01', 61, 41)], '2027-06-30')).toBeNull();
+  });
+});
+
+describe('Sätze nach Reisedatum (komplette Kette)', () => {
+  it('2026er Reise: Belgien 3 Tage = 139,00 mit Satz 2026, auch wenn ein Stand 2027 existiert', () => {
+    const r = rechne('2026-03-16T08:00', '2026-03-18T18:00', { hauptland: 'Belgien', staende: STAENDE_2027 });
+    expect(r.betraege).toEqual([40, 59, 40]);
+    expect(r.summe).toBe(139);
+  });
+
+  it('Jahreswechsel 2026-12-30 → 2027-01-02 mit zwei Ständen: Dezember Satz 2026, Januar Satz 2027', () => {
+    const r = rechne('2026-12-30T08:00', '2027-01-02T18:00', { hauptland: 'Belgien', staende: STAENDE_2027 });
+    expect(r.tage.map(kurz)).toEqual([
+      '2026-12-30 ANREISE', '2026-12-31 GANZTAG', '2027-01-01 GANZTAG', '2027-01-02 ABREISE',
+    ]);
+    expect(r.betraege).toEqual([40, 59, 61, 41]);
+    expect(r.summe).toBe(201);
+  });
+
+  it('Jahreswechsel ohne Stand 2027 → Fehler (Route: 400)', () => {
+    erwarteFehler(
+      () => rechne('2026-12-30T08:00', '2027-01-02T18:00', { hauptland: 'Belgien' }),
+      'SATZSTAND_FEHLT',
+      MELDUNG_2027,
+    );
+  });
+
+  it('Inlandsreise über den Jahreswechsel braucht keinen Stand (28/14)', () => {
+    expect(rechne('2026-12-30T08:00', '2027-01-02T18:00', { staende: [] }).summe).toBe(84);
+  });
+
+  it('gueltig_von mitten im Jahr (Korrektur ab 2026-07-01): Tage davor alter, ab dem Datum neuer Stand', () => {
+    const staende = [...STAENDE, stand('Belgien', '2026-07-01', 61, 41, 'Korrektur 2026')];
+    const r = rechne('2026-06-29T08:00', '2026-07-02T18:00', { hauptland: 'Belgien', staende });
+    expect(r.betraege).toEqual([40, 59, 61, 41]);
+  });
+
+  it('Mehrländerreise über den Jahreswechsel: Seetag 01.01.2027 → Luxemburg 2027', () => {
+    const r = rechne('2026-12-30T08:00', '2027-01-02T18:00', {
+      hauptland: 'Belgien',
+      staende: STAENDE_2027,
+      tage: { '2027-01-01': { land24uhr: 'SEETAG' } },
+    });
+    expect(r.laender).toEqual(['Belgien', 'Belgien', 'SEETAG', 'Belgien']);
+    expect(r.betraege).toEqual([40, 59, 65, 41]);
   });
 });

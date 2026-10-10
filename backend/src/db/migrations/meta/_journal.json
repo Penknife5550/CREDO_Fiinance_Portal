@@ -120,6 +120,13 @@
 			"when": 1779206400000,
 			"tag": "0016_haeufige_ziele_staedte",
 			"breakpoints": true
+		},
+		{
+			"idx": 17,
+			"version": "7",
+			"when": 1779292800000,
+			"tag": "0017_pauschalen_gueltigkeit",
+			"breakpoints": true
 		}
 	]
 }

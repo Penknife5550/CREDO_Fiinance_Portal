@@ -1,9 +1,10 @@
 /**
- * Reisetage und maßgebendes Land je Reisetag — reine, testbare Funktionen (Release 1b).
+ * Reisetage und maßgebendes Land je Reisetag — reine, testbare Funktionen (Release 1b/1c).
  *
  * 1. bildeReisetage: Tagesbildung aus Abfahrt/Rückkehr (Mitternachtsregel).
  * 2. bestimmeTageslaender: maßgebendes Land je Tag aus den Landangaben.
- * 3. waehleTagesSatz: Pauschalen-Paar zum maßgebenden Land.
+ * 3. waehleTagesSatz: Pauschalen-Paar + Quelle zum maßgebenden Land und Datum des Tags
+ *    (Satzstand nach Reisedatum, waehleSatzstand).
  *
  * Der Frontend-Zwilling (Vorschau) MUSS identisch rechnen; die Parität prüft
  * tests/vma-paritaet.test.ts (unter TZ=UTC und TZ=Europe/Berlin).
@@ -11,7 +12,7 @@
  * Rechtsgrundlage: § 9 Abs. 4a EStG, BMF-Schreiben vom 05.12.2025, R 9.6 Abs. 3 LStR.
  */
 
-import { INLAND_SATZ, type ReisetagTyp, type TagesSatz } from './vma.js';
+import { INLAND_QUELLE, INLAND_SATZ, type ReisetagTyp, type TagesSatz } from './vma.js';
 import { FALLBACK_LAND_KEY, LAND_ANDERES, LAND_INLAND, LAND_SEETAG, RESERVIERTE_LAND_KEYS } from './constants.js';
 
 export type ReisetageFehlerCode =
@@ -23,7 +24,9 @@ export type ReisetageFehlerCode =
   | 'FREITEXT_FEHLT'
   | 'SEETAG_NUR_GANZTAG'
   | 'UNGUELTIGE_LANDANGABE'
-  | 'UNBEKANNTES_LAND';
+  | 'UNBEKANNTES_LAND'
+  | 'SATZSTAND_FEHLT'
+  | 'LAND_OHNE_SATZSTAND';
 
 /** Fachlicher Fehler der Tagesbildung/Landbestimmung mit deutscher Meldung (Route: 400). */
 export class ReisetageFehler extends Error {
@@ -253,6 +256,20 @@ export function bestimmeTageslaender(tage: readonly TagesLandAngabe[], hauptland
 
 // ── 3. Satzauswahl ────────────────────────────────────────────────────────────
 
+/** Satzstand eines Landes: eine Zeile aus pauschalen_ausland (Schlüssel landKey + gueltigVon, seit 0017). */
+export interface Satzstand extends TagesSatz {
+  landKey: string;
+  /** Erster Gültigkeitstag 'YYYY-MM-DD' (neuer Jahresstand: 'JJJJ-01-01'). */
+  gueltigVon: string;
+  /** Rechtsquelle, z. B. 'BMF-Schreiben vom 05.12.2025'. */
+  quelle: string;
+}
+
+/** Am Reisetag angewandter Satz samt Quelle (reisetage.satz_24h / satz_8h / satz_quelle). */
+export interface AngewandterSatz extends TagesSatz {
+  quelle: string;
+}
+
 /**
  * Land-Key, dessen Satz für ein maßgebendes Land gilt: null = Inland (gesetzlicher Satz),
  * ANDERES und SEETAG → Luxemburg (BMF 05.12.2025; R 9.6 Abs. 3 LStR), sonst das Land selbst.
@@ -263,11 +280,84 @@ export function satzLandKey(landKey: string): string | null {
   return landKey === LAND_ANDERES || landKey === LAND_SEETAG ? FALLBACK_LAND_KEY : landKey;
 }
 
-/** Pauschalen-Paar zum maßgebenden Land; `saetze` = Ländersätze nach Land-Key (pauschalen_ausland). */
-export function waehleTagesSatz(landKey: string, saetze: ReadonlyMap<string, TagesSatz>): TagesSatz {
+/**
+ * Am Tag `datum` ('YYYY-MM-DD') gültiger Satzstand: der mit dem größten `gueltigVon` ≤ datum
+ * IM SELBEN KALENDERJAHR wie `datum` — die BMF-Sätze gelten je Kalenderjahr; ein Stand des
+ * Vorjahres gilt nie weiter (fehlt der neue Jahresstand, wird nicht still mit dem alten
+ * gerechnet). Ein Stand mitten im Jahr (Korrektur) gilt ab seinem Datum. null = kein Stand.
+ * `staende` = Stände EINES Landes (Reihenfolge beliebig).
+ */
+export function waehleSatzstand<T extends { gueltigVon: string }>(staende: readonly T[], datum: string): T | null {
+  const jahresanfang = `${datum.slice(0, 4)}-01-01`;
+  let treffer: T | null = null;
+  for (const stand of staende) {
+    if (stand.gueltigVon >= jahresanfang && stand.gueltigVon <= datum && (!treffer || stand.gueltigVon > treffer.gueltigVon)) {
+      treffer = stand;
+    }
+  }
+  return treffer;
+}
+
+/**
+ * Ist am Tag `datum` ein Jahresstand hinterlegt? Maßstab ist Luxemburg: Der gesetzliche Ersatzsatz
+ * steht in jedem BMF-Schreiben (Generator prüft das), und das AdminCenter lässt den ersten
+ * Luxemburg-Stand eines Jahres nicht löschen, solange andere Länder Stände in diesem Jahr haben.
+ */
+function jahresstandVorhanden(staende: ReadonlyArray<{ landKey: string; gueltigVon: string }>, datum: string): boolean {
+  return waehleSatzstand(staende.filter(s => s.landKey === FALLBACK_LAND_KEY), datum) !== null;
+}
+
+/**
+ * Fehler, wenn für `key` (Land-Key; ANDERES/SEETAG schon auf Luxemburg abgebildet) am Tag `datum`
+ * kein Satzstand gilt — mit der Handlungsanweisung, die zum Fall passt:
+ * - Jahresstand vorhanden, nur dieser Key nicht (im BMF-Schreiben gestrichen, erst später
+ *   aufgenommen oder erst ab einem späteren Tag angelegt): Stadt → Staat (übrige Orte), Staat →
+ *   „Staat nicht in der Liste“ (Satz Luxemburg, BMF 05.12.2025);
+ * - Reisejahr vor dem ersten Luxemburg-Stand (verspätete Abrechnung): Buchhaltung — ein Stand
+ *   dafür kommt nicht mehr von selbst;
+ * - sonst fehlt der Jahresstand noch (BMF-Schreiben nicht eingespielt): später einreichen.
+ */
+function fehlerOhneSatzstand(key: string, datum: string, staende: readonly Satzstand[]): ReisetageFehler {
+  const jahr = datum.slice(0, 4);
+  if (jahresstandVorhanden(staende, datum)) {
+    const [staat, stadt] = key.split(' — ');
+    return new ReisetageFehler(
+      'LAND_OHNE_SATZSTAND',
+      stadt
+        ? `Für „${key}“ ist für ${jahr} keine eigene Auslandspauschale hinterlegt. Bitte wählen Sie „${staat}“ (übrige Orte) oder wenden Sie sich an die Buchhaltung.`
+        : `Für „${key}“ ist für ${jahr} keine Auslandspauschale hinterlegt. Bitte wählen Sie „Staat nicht in der Liste“ (Satz Luxemburg) oder wenden Sie sich an die Buchhaltung.`,
+    );
+  }
+  const ersterStand = staende
+    .filter(s => s.landKey === FALLBACK_LAND_KEY)
+    .reduce<string | null>((min, s) => (min === null || s.gueltigVon < min ? s.gueltigVon : min), null);
+  if (ersterStand !== null && jahr < ersterStand.slice(0, 4)) {
+    return new ReisetageFehler(
+      'SATZSTAND_FEHLT',
+      `Für Reisetage im Jahr ${jahr} sind keine Auslandspauschalen hinterlegt. Bitte wenden Sie sich an die Buchhaltung.`,
+    );
+  }
+  return new ReisetageFehler(
+    'SATZSTAND_FEHLT',
+    `Die Auslandspauschalen für ${jahr} sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung.`,
+  );
+}
+
+/**
+ * Pauschalen-Paar + Quelle zum maßgebenden Land am Reisetag `datum` ('YYYY-MM-DD').
+ * Inland: gesetzlicher Satz 28/14 € (§ 9 Abs. 4a EStG), unabhängig vom Jahr. Ausland (auch
+ * ANDERES/SEETAG → Luxemburg): Satzstand nach waehleSatzstand; `staende` = Satzstände aller
+ * benötigten Länder (pauschalen_ausland, eine Abfrage) — IMMER samt Luxemburg, dessen Stand
+ * anzeigt, ob das Reisejahr hinterlegt ist.
+ * Wirft ReisetageFehler: UNBEKANNTES_LAND (kein Stand des Landes), LAND_OHNE_SATZSTAND (Jahresstand
+ * vorhanden, nur dieses Land nicht), SATZSTAND_FEHLT (kein Jahresstand für das Reisejahr).
+ */
+export function waehleTagesSatz(landKey: string, datum: string, staende: readonly Satzstand[]): AngewandterSatz {
   const key = satzLandKey(landKey);
-  if (key === null) return INLAND_SATZ;
-  const satz = saetze.get(key);
-  if (!satz) throw new ReisetageFehler('UNBEKANNTES_LAND', `Unbekanntes Reiseland: ${key}`);
-  return satz;
+  if (key === null) return { ...INLAND_SATZ, quelle: INLAND_QUELLE };
+  const staendeLand = staende.filter(s => s.landKey === key);
+  if (staendeLand.length === 0) throw new ReisetageFehler('UNBEKANNTES_LAND', `Unbekanntes Reiseland: ${key}`);
+  const stand = waehleSatzstand(staendeLand, datum);
+  if (!stand) throw fehlerOhneSatzstand(key, datum, staende);
+  return { satz24h: stand.satz24h, satz8h: stand.satz8h, quelle: stand.quelle };
 }

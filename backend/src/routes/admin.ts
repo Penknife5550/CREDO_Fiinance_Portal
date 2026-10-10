@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db, schema } from '../db/index.js';
-import { eq, desc, and, or, lt } from 'drizzle-orm';
+import { eq, ne, desc, and, or, lt, gte, between, exists, notExists, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { sendeTestWebhook, assertSafeWebhookUrl, UnsafeWebhookUrlError } from '../services/webhook.js';
 import { encryptSecret, isEncryptionConfigured, decryptSecretIfNeeded } from '../services/crypto.js';
@@ -299,26 +300,75 @@ adminRouter.delete('/kategorien/:id', async (req, res) => {
 });
 
 // ── Auslandspauschalen ─────────────────────────────────
-// Editierbar im AdminCenter (PauschalenTab). Quelle: BMF-Schreiben (jaehrlich).
+// Editierbar im AdminCenter (PauschalenTab) je Satzstand (landKey + gueltigVon, seit 0017):
+// Einzelstand anlegen/ändern/löschen. Ganze Jahresstände (BMF-Schreiben, jährlich im Dezember)
+// kommen als Migration aus backend/scripts/bmf-csv-zu-sql.ts (--jahr …).
+
+// Erster Gültigkeitstag 'JJJJ-MM-TT' — nur echte Kalenderdaten (kein 30.02.), sonst 500 statt 400.
+const satzstandDatum = z.string().regex(/^20\d{2}-\d{2}-\d{2}$/, 'Datum im Format JJJJ-MM-TT').refine(d => {
+  const ms = Date.parse(`${d}T00:00:00Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === d;
+}, 'Ungültiges Datum');
 
 const auslandspauschaleSchema = z.object({
   landKey: z.string().min(1).max(100),
-  tagessatz24h: z.number().nonnegative().max(999),
-  tagessatz8h: z.number().nonnegative().max(999),
+  gueltigVon: satzstandDatum,
+  quelle: z.string().trim().min(1).max(200),
+  // Tagessätze > 0: das BMF kennt keine 0-€-Sätze (vergessenes Feld würde 0,00 € VMA auszahlen).
+  tagessatz24h: z.number().positive().max(999),
+  tagessatz8h: z.number().positive().max(999),
   uebernachtung: z.number().nonnegative().max(9999),
-  reihenfolge: z.number().int().nonnegative().default(0),
+  // Ohne Angabe: Sortierung des Vorgängerstands (bleibt unter „Häufige Ziele“), neues Land 9999.
+  reihenfolge: z.number().int().nonnegative().optional(),
 });
+const auslandspauschaleUpdateSchema = auslandspauschaleSchema.omit({ landKey: true, gueltigVon: true }).partial();
+const REIHENFOLGE_NEUES_LAND = 9999;
 
-// GET /api/admin/pauschalen-ausland — Liste fuer AdminCenter (mit allen Feldern)
+/** Schlüssel eines Satzstands aus der URL (/:landKey/:gueltigVon); null = ungültiges Datum. */
+function satzstandSchluessel(params: { landKey: string; gueltigVon: string }) {
+  const gueltigVon = satzstandDatum.safeParse(params.gueltigVon);
+  if (!gueltigVon.success) return null;
+  return { landKey: decodeURIComponent(params.landKey), gueltigVon: gueltigVon.data };
+}
+
+const istSatzstand = (landKey: string, gueltigVon: string) =>
+  and(eq(schema.pauschalenAusland.landKey, landKey), eq(schema.pauschalenAusland.gueltigVon, gueltigVon));
+
+/**
+ * Bedingung, unter der ein Luxemburg-Stand (gesetzlicher Ersatzsatz für nicht aufgeführte Staaten
+ * und Seetage) gelöscht werden darf: Im selben Jahr bleibt ein FRÜHERER Luxemburg-Stand (der
+ * gelöschte war eine Korrektur), oder das Jahr hat keine Stände anderer Länder (z. B. Stand mit
+ * Tippfehler im Datum). So bleibt für jedes genutzte Jahr der Ersatzsatz ab dessen erstem Stand.
+ * Wie darfLoeschen im AdminCenter.
+ */
+function luxemburgLoeschbar(gueltigVon: string) {
+  const andere = alias(schema.pauschalenAusland, 'andere');
+  const jahr = gueltigVon.slice(0, 4);
+  return or(
+    exists(db.select({ eins: sql`1` }).from(andere).where(and(
+      eq(andere.landKey, FALLBACK_LAND_KEY),
+      gte(andere.gueltigVon, `${jahr}-01-01`),
+      lt(andere.gueltigVon, gueltigVon),
+    ))),
+    notExists(db.select({ eins: sql`1` }).from(andere).where(and(
+      ne(andere.landKey, FALLBACK_LAND_KEY),
+      between(andere.gueltigVon, `${jahr}-01-01`, `${jahr}-12-31`),
+    ))),
+  );
+}
+
+// GET /api/admin/pauschalen-ausland — alle Satzstände fuer AdminCenter (mit allen Feldern)
 adminRouter.get('/pauschalen-ausland', async (_req, res) => {
   try {
     const result = await db
       .select()
       .from(schema.pauschalenAusland)
-      .orderBy(schema.pauschalenAusland.reihenfolge, schema.pauschalenAusland.landKey);
+      .orderBy(schema.pauschalenAusland.reihenfolge, schema.pauschalenAusland.landKey, schema.pauschalenAusland.gueltigVon);
 
     res.json(result.map(row => ({
       landKey: row.landKey,
+      gueltigVon: row.gueltigVon,
+      quelle: row.quelle,
       tagessatz24h: Number(row.tagessatz24h),
       tagessatz8h: Number(row.tagessatz8h),
       uebernachtung: Number(row.uebernachtung),
@@ -331,7 +381,7 @@ adminRouter.get('/pauschalen-ausland', async (_req, res) => {
   }
 });
 
-// POST /api/admin/pauschalen-ausland — neuer Eintrag
+// POST /api/admin/pauschalen-ausland — neuer Satzstand (neues Land oder neuer Stand eines Landes)
 adminRouter.post('/pauschalen-ausland', async (req, res) => {
   try {
     const parsed = auslandspauschaleSchema.parse(req.body);
@@ -339,21 +389,34 @@ adminRouter.post('/pauschalen-ausland', async (req, res) => {
       res.status(400).json({ error: `„${parsed.landKey.trim()}“ ist ein reservierter Schlüssel und kann nicht als Land angelegt werden.` });
       return;
     }
+    let reihenfolge = parsed.reihenfolge;
+    if (reihenfolge === undefined) {
+      // Vorgängerstand = jüngster Stand vor gueltigVon, sonst jüngster Stand des Landes überhaupt.
+      const [vorgaenger] = await db
+        .select({ reihenfolge: schema.pauschalenAusland.reihenfolge })
+        .from(schema.pauschalenAusland)
+        .where(eq(schema.pauschalenAusland.landKey, parsed.landKey))
+        .orderBy(desc(sql`${schema.pauschalenAusland.gueltigVon} < ${parsed.gueltigVon}`), desc(schema.pauschalenAusland.gueltigVon))
+        .limit(1);
+      reihenfolge = vorgaenger?.reihenfolge ?? REIHENFOLGE_NEUES_LAND;
+    }
     const [row] = await db.insert(schema.pauschalenAusland).values({
       landKey: parsed.landKey,
+      gueltigVon: parsed.gueltigVon,
+      quelle: parsed.quelle,
       tagessatz24h: String(parsed.tagessatz24h),
       tagessatz8h: String(parsed.tagessatz8h),
       uebernachtung: String(parsed.uebernachtung),
-      reihenfolge: parsed.reihenfolge,
+      reihenfolge,
     }).returning();
-    res.status(201).json({ landKey: row.landKey });
+    res.status(201).json({ landKey: row.landKey, gueltigVon: row.gueltigVon });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
       return;
     }
     if (error instanceof Error && error.message.includes('duplicate')) {
-      res.status(409).json({ error: 'Ein Eintrag mit diesem Land existiert bereits' });
+      res.status(409).json({ error: 'Für dieses Land gibt es bereits einen Satzstand ab diesem Datum' });
       return;
     }
     console.error('Fehler:', error);
@@ -361,22 +424,28 @@ adminRouter.post('/pauschalen-ausland', async (req, res) => {
   }
 });
 
-// PUT /api/admin/pauschalen-ausland/:landKey — Update (URL-encoded landKey)
-adminRouter.put('/pauschalen-ausland/:landKey', async (req, res) => {
+// PUT /api/admin/pauschalen-ausland/:landKey/:gueltigVon — Satzstand ändern (URL-encoded landKey).
+// Land und Datum sind der Schlüssel: anderes Datum = neuen Stand anlegen, alten löschen.
+adminRouter.put('/pauschalen-ausland/:landKey/:gueltigVon', async (req, res) => {
   try {
-    const landKey = decodeURIComponent(req.params.landKey);
-    const parsed = auslandspauschaleSchema.partial({ landKey: true }).parse(req.body);
+    const schluessel = satzstandSchluessel(req.params);
+    if (!schluessel) {
+      res.status(400).json({ error: 'Ungültiges Datum des Satzstands (JJJJ-MM-TT)' });
+      return;
+    }
+    const parsed = auslandspauschaleUpdateSchema.parse(req.body);
 
     const result = await db
       .update(schema.pauschalenAusland)
       .set({
+        quelle: parsed.quelle,
         tagessatz24h: parsed.tagessatz24h !== undefined ? String(parsed.tagessatz24h) : undefined,
         tagessatz8h: parsed.tagessatz8h !== undefined ? String(parsed.tagessatz8h) : undefined,
         uebernachtung: parsed.uebernachtung !== undefined ? String(parsed.uebernachtung) : undefined,
         reihenfolge: parsed.reihenfolge,
         updatedAt: new Date(),
       })
-      .where(eq(schema.pauschalenAusland.landKey, landKey))
+      .where(istSatzstand(schluessel.landKey, schluessel.gueltigVon))
       .returning();
 
     if (result.length === 0) {
@@ -394,20 +463,34 @@ adminRouter.put('/pauschalen-ausland/:landKey', async (req, res) => {
   }
 });
 
-// DELETE /api/admin/pauschalen-ausland/:landKey
-adminRouter.delete('/pauschalen-ausland/:landKey', async (req, res) => {
+// DELETE /api/admin/pauschalen-ausland/:landKey/:gueltigVon
+adminRouter.delete('/pauschalen-ausland/:landKey/:gueltigVon', async (req, res) => {
   try {
-    const landKey = decodeURIComponent(req.params.landKey);
-    if (landKey === FALLBACK_LAND_KEY) {
-      res.status(400).json({ error: 'Luxemburg ist der gesetzliche Fallback für nicht aufgeführte Länder und kann nicht gelöscht werden.' });
+    const schluessel = satzstandSchluessel(req.params);
+    if (!schluessel) {
+      res.status(400).json({ error: 'Ungültiges Datum des Satzstands (JJJJ-MM-TT)' });
       return;
     }
+    const { landKey, gueltigVon } = schluessel;
+    const istLuxemburg = landKey === FALLBACK_LAND_KEY;
+    // Prüfung (Luxemburg) und Löschen in EINEM Statement — kein Zeitfenster für ein gleichzeitiges Löschen.
     const result = await db
       .delete(schema.pauschalenAusland)
-      .where(eq(schema.pauschalenAusland.landKey, landKey))
+      .where(and(istSatzstand(landKey, gueltigVon), istLuxemburg ? luxemburgLoeschbar(gueltigVon) : undefined))
       .returning();
 
     if (result.length === 0) {
+      const [vorhanden] = istLuxemburg
+        ? await db.select({ landKey: schema.pauschalenAusland.landKey }).from(schema.pauschalenAusland)
+            .where(istSatzstand(landKey, gueltigVon)).limit(1)
+        : [];
+      if (vorhanden) {
+        const jahr = gueltigVon.slice(0, 4);
+        res.status(400).json({
+          error: `Luxemburg ist der gesetzliche Fallback für nicht aufgeführte Länder und Seetage: Der erste Luxemburg-Stand für ${jahr} kann nicht gelöscht werden, solange es für ${jahr} Sätze anderer Länder gibt.`,
+        });
+        return;
+      }
       res.status(404).json({ error: 'Auslandspauschale nicht gefunden' });
       return;
     }

@@ -80,6 +80,7 @@ async function main() {
         },
       ],
       pruefvermerke: [],
+      pauschalenQuellen: 'Pauschalen: § 9 Abs. 4a EStG',
       weitereKosten: [
         { typ: 'Bahnticket', beschreibung: 'Hin- und Rückfahrt München–Stuttgart', betrag: 52.5 },
         { typ: 'Parkgebühr', beschreibung: 'Parkhaus Hauptbahnhof München', betrag: 15.0 },

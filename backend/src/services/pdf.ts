@@ -73,6 +73,8 @@ interface ReisekostenPdfData {
   }>;
   /** Prüfvermerke zu Überschneidungen (Fußnote unter der VMA-Tabelle). */
   pruefvermerke: string[];
+  /** Quellen der angewandten Pauschalen (lib/reiseangaben.ts quellenVermerk), letzte Zeile unter der VMA-Tabelle. */
+  pauschalenQuellen: string;
   weitereKosten: Array<{ typ: string; beschreibung: string; betrag: number }>;
   unterschriftBild?: string;
 }
@@ -322,7 +324,7 @@ export async function erstelleGesamtPdf(
       // Fußnoten nur für vorkommende Fälle, fortlaufend nummeriert (¹ ² ³ sind WinAnsi).
       const fussnoten: Array<{ art: 'ANDERES' | 'SEETAG' | 'UEBERSCHNEIDUNG'; texte: string[] }> = [];
       if (data.reisetage.some(t => t.landKey === LAND_ANDERES)) {
-        fussnoten.push({ art: 'ANDERES', texte: ['Staat nicht in der BMF-Übersicht: Satz Luxemburg (BMF 05.12.2025). Bitte prüfen.'] });
+        fussnoten.push({ art: 'ANDERES', texte: ['Staat nicht in der BMF-Übersicht: Satz Luxemburg (Quelle siehe „Pauschalen“). Bitte prüfen.'] });
       }
       if (data.reisetage.some(t => t.landKey === LAND_SEETAG)) {
         fussnoten.push({ art: 'SEETAG', texte: ['Seetag: Satz Luxemburg (R 9.6 Abs. 3 LStR)'] });
@@ -377,6 +379,8 @@ export async function erstelleGesamtPdf(
           drawUmbrochen(text, 58, R_BETRAG, 8, 11);
         }
       });
+      checkPageBreak(ctx);
+      drawUmbrochen(data.pauschalenQuellen, 50, R_BETRAG, 8, 11);
 
       ctx.y -= 10;
       drawLine();

@@ -131,27 +131,37 @@ export function useKategorien(mandantId: string) {
 
 // ── Auslandspauschalen laden (DB-gepflegt im AdminCenter) ──
 
+/** Ein Satzstand eines Landes (GET /api/pauschalen/ausland liefert je Land alle Stände). */
 export interface AuslandsPauschale {
   landKey: string;
+  /** Erster Gültigkeitstag 'YYYY-MM-DD'. */
+  gueltigVon: string;
+  /** Rechtsquelle, z. B. 'BMF-Schreiben vom 05.12.2025'. */
+  quelle: string;
   tagessatz24h: number;
   tagessatz8h: number;
   uebernachtung: number;
   reihenfolge: number;
 }
 
+/**
+ * Alle Satzstände aller Länder. Den Satz je Reisetag wählt die Vorschau mit derselben reinen
+ * Funktion wie der Server (waehleTagesSatz in lib/reisetage.ts); die Länderauswahl braucht jedes
+ * Land einmal (laenderZumDatum).
+ */
 export function useAuslandsPauschalen() {
-  const [pauschalen, setPauschalen] = useState<AuslandsPauschale[]>([]);
+  const [staende, setStaende] = useState<AuslandsPauschale[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<AuslandsPauschale[]>('/pauschalen/ausland')
       .then((data) => {
-        setPauschalen(data);
+        setStaende(data);
         setError(null);
       })
       .catch((err) => {
-        setPauschalen([]);
+        setStaende([]);
         setError(
           err instanceof Error
             ? err.message
@@ -161,11 +171,5 @@ export function useAuslandsPauschalen() {
       .finally(() => setLoading(false));
   }, []);
 
-  // Lookup-Map analog zur frueheren AUSLANDSPAUSCHALEN-Konstante
-  const map = pauschalen.reduce<Record<string, AuslandsPauschale>>((acc, p) => {
-    acc[p.landKey] = p;
-    return acc;
-  }, {});
-
-  return { pauschalen, map, loading, error };
+  return { staende, loading, error };
 }

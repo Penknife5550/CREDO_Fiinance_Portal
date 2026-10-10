@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { ordneTageZu, landBezeichnung, reiselandFolge, ueberschneidungsVermerke, datumDe } from '../reiseangaben.js';
-import { bildeReisetage, bestimmeTageslaender, waehleTagesSatz, type TagesLand } from '../reisetage.js';
-import { vmaTag, type TagesSatz } from '../vma.js';
+import { ordneTageZu, landBezeichnung, reiselandFolge, quellenVermerk, ueberschneidungsVermerke, datumDe } from '../reiseangaben.js';
+import { bildeReisetage, bestimmeTageslaender, waehleTagesSatz, type Satzstand, type TagesLand } from '../reisetage.js';
+import { vmaTag } from '../vma.js';
 
-const SAETZE: ReadonlyMap<string, TagesSatz> = new Map([
-  ['Belgien', { satz24h: 59, satz8h: 40 }],
-  ['Niederlande', { satz24h: 58, satz8h: 39 }],
-  ['Luxemburg', { satz24h: 63, satz8h: 42 }],
-]);
+// Satzstand 2026 (BMF-Schreiben vom 05.12.2025)
+const STAENDE: readonly Satzstand[] = [
+  { landKey: 'Belgien', satz24h: 59, satz8h: 40 },
+  { landKey: 'Niederlande', satz24h: 58, satz8h: 39 },
+  { landKey: 'Luxemburg', satz24h: 63, satz8h: 42 },
+].map(s => ({ ...s, gueltigVon: '2026-01-01', quelle: 'BMF-Schreiben vom 05.12.2025' }));
 
 interface ClientTag {
   datum: string;
@@ -32,7 +33,7 @@ function routenKette(abfahrt: string, rueckkehr: string, uebernachtung: boolean 
     (s, t, i) =>
       s + vmaTag(
         { typ: t.typ, eintaegigUeber8h: t.eintaegigUeber8h, fruehstueckGestellt: t.fruehstueckGestellt, mittagGestellt: false, abendGestellt: false },
-        waehleTagesSatz(laender[i].landKey, SAETZE),
+        waehleTagesSatz(laender[i].landKey, t.datum, STAENDE),
       ).vmaNetto,
     0,
   );
@@ -103,6 +104,49 @@ describe('landBezeichnung / reiselandFolge', () => {
     expect(reiselandFolge([l('INLAND'), l('Belgien'), l('Belgien')])).toEqual(['Inland', 'Belgien']);
     expect(reiselandFolge([l('Belgien'), l('Niederlande'), l('Belgien')])).toEqual(['Belgien', 'Niederlande', 'Belgien']);
     expect(reiselandFolge([l('INLAND'), l('INLAND')])).toEqual(['Inland']);
+  });
+});
+
+describe('quellenVermerk (Fußnote PDF/Mail)', () => {
+  const BMF_2026 = 'BMF-Schreiben vom 05.12.2025';
+  const BMF_2027 = 'BMF-Schreiben vom 01.12.2026';
+  const KORREKTUR = 'Korrektur ab 01.07.2026';
+  const EStG = '§ 9 Abs. 4a EStG';
+  // Tage ab `start` (lückenlos, wie bildeReisetage) mit [Land, Quelle]
+  const tage = (start: string, ...liste: Array<[string, string]>) => {
+    const [j, m, t] = start.split('-').map(Number);
+    return liste.map(([landKey, satzQuelle], i) => ({
+      datum: new Date(Date.UTC(j, m - 1, t + i)).toISOString().slice(0, 10),
+      landKey,
+      satzQuelle,
+    }));
+  };
+
+  it('Auslandsreise mit Inlandstag: Auslandsquelle, dann Inland (eine Quelle: ohne Tage)', () => {
+    expect(quellenVermerk(tage('2026-03-16', ['INLAND', EStG], ['Belgien', BMF_2026], ['SEETAG', BMF_2026])))
+      .toBe(`Pauschalen: ${BMF_2026}; Inland: ${EStG}`);
+  });
+
+  it('reine Inlands- bzw. Auslandsreise: nur die eine Quelle', () => {
+    expect(quellenVermerk(tage('2026-03-16', ['INLAND', EStG], ['INLAND', EStG]))).toBe(`Pauschalen: ${EStG}`);
+    expect(quellenVermerk(tage('2026-03-16', ['Belgien', BMF_2026]))).toBe(`Pauschalen: ${BMF_2026}`);
+  });
+
+  it('Jahreswechsel: jedes Schreiben mit den Tagen, an denen es galt (Reihenfolge der Tage)', () => {
+    expect(quellenVermerk(tage('2026-12-30',
+      ['Belgien', BMF_2026], ['ANDERES', BMF_2026], ['Belgien', BMF_2027], ['Belgien', BMF_2027],
+    ))).toBe(`Pauschalen: ${BMF_2026} (30.12.–31.12.2026); ${BMF_2027} (01.01.–02.01.2027)`);
+  });
+
+  it('Korrekturstand mitten in der Reise, nicht zusammenhängende Tage und Inlandstag', () => {
+    expect(quellenVermerk(tage('2026-06-30',
+      ['Belgien', BMF_2026], ['Frankreich', KORREKTUR], ['Belgien', BMF_2026], ['INLAND', EStG], ['Belgien', BMF_2026],
+    ))).toBe(`Pauschalen: ${BMF_2026} (30.06.2026, 02.07.2026, 04.07.2026); ${KORREKTUR} (01.07.2026); Inland: ${EStG}`);
+  });
+
+  it('gleiche Quelle über den Jahreswechsel hinweg: Zeitraum mit beiden Jahreszahlen', () => {
+    expect(quellenVermerk(tage('2026-12-31', ['Belgien', BMF_2026], ['Belgien', BMF_2026], ['Niederlande', KORREKTUR])))
+      .toBe(`Pauschalen: ${BMF_2026} (31.12.2026–01.01.2027); ${KORREKTUR} (02.01.2027)`);
   });
 });
 

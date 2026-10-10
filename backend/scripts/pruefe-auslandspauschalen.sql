@@ -1,4 +1,5 @@
--- Prüfabfrage Auslandspauschalen: listet Zeilen, in denen pauschalen_ausland von der BMF-CSV abweicht.
+-- Prüfabfrage Auslandspauschalen: listet Zeilen des Satzstands 2026-01-01, in denen pauschalen_ausland
+-- von der BMF-CSV abweicht.
 -- GENERIERT von backend/scripts/bmf-csv-zu-sql.ts aus backend/src/db/data/bmf-auslandspauschalen-2026*.csv
 -- (nicht von Hand ändern). Nur lesend. Leeres Ergebnis = DB entspricht der CSV.
 --
@@ -241,7 +242,11 @@ SELECT
   p.tagessatz_8h AS ist_8h, s.tagessatz_8h AS soll_8h,
   p.uebernachtung AS ist_uebernachtung, s.uebernachtung AS soll_uebernachtung
 FROM soll s
-FULL OUTER JOIN pauschalen_ausland p ON p.land_key = s.land_key
+-- Satzstand über to_jsonb: läuft auch vor Migration 0017 (ohne gueltig_von; Bestand = Stand 2026).
+FULL OUTER JOIN (
+  SELECT * FROM pauschalen_ausland pa
+  WHERE COALESCE(to_jsonb(pa) ->> 'gueltig_von', '2026-01-01') = '2026-01-01'
+) p ON p.land_key = s.land_key
 WHERE p.land_key IS NULL OR s.land_key IS NULL
    OR (p.tagessatz_24h, p.tagessatz_8h, p.uebernachtung)
       IS DISTINCT FROM (s.tagessatz_24h, s.tagessatz_8h, s.uebernachtung)
