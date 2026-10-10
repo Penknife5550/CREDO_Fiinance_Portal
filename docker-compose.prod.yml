@@ -46,6 +46,8 @@ services:
       WEBHOOK_URL_REISEKOSTEN: ${WEBHOOK_URL_REISEKOSTEN:-}
       WEBHOOK_URL_ERSTATTUNG: ${WEBHOOK_URL_ERSTATTUNG:-}
       NODE_ENV: production
+      # Lösch-Moratorium (VMA-Nachkorrektur 2026), Prüftermin 31.03.2027 — siehe DEPLOYMENT.md
+      RETENTION_TAGE: ${RETENTION_TAGE:-3650}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

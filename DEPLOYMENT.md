@@ -223,6 +223,26 @@ git pull
 
 ---
 
+## 13. Loesch-Moratorium (VMA-Nachkorrektur 2026)
+
+Der 90-Tage-Loeschjob (`services/retention.ts`) ist ausgesetzt: `docker-compose.prod.yml` setzt
+`RETENTION_TAGE` standardmaessig auf **3650**. Grund: Die Auslands-VMA wurden bis zum VMA-Fix
+um rund 20 % zu hoch berechnet; Reisetage und Reiseland werden fuer die lohnsteuerliche
+Nachkorrektur 2026 gebraucht (Art. 17 Abs. 3 lit. b/e DSGVO). **Pruefermin: 31.03.2027** —
+danach mit Datenschutzbeauftragtem neu entscheiden (Aufhebung erst mit Archivquittung aus DokuBit).
+
+Aktivieren bzw. aendern (NICHT `./deploy.sh restart` — das uebernimmt geaenderte Umgebungswerte nicht):
+
+```bash
+git pull
+# optional abweichender Wert in .env.production: RETENTION_TAGE=3650
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d app
+docker exec credo-finanz-app printenv RETENTION_TAGE        # erwartet: 3650
+docker logs credo-finanz-app 2>&1 | grep Retention           # "Scheduler aktiv (3650-Tage-Frist ..."
+```
+
+---
+
 ## Notfall-Kontakte
 
 - Server-Admin: (eintragen)
