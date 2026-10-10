@@ -182,7 +182,7 @@
 | 12.3 | Public-Endpoint `GET /api/pauschalen/ausland` für Reisekosten-Wizard | ✅ | 2026-05-09 |
 | 12.4 | Admin-Endpoints `GET/POST/PUT/DELETE /api/admin/pauschalen-ausland[/:landKey]` mit Zod-Validation | ✅ | 2026-05-09 |
 | 12.5 | Frontend-Hook `useAuslandsPauschalen` (analog `useMandanten`) — liefert sowohl Liste als auch Lookup-Map | ✅ | 2026-05-09 |
-| 12.6 | ReisekostenFormular umgestellt: nutzt Hook statt Code-Konstante `AUSLANDSPAUSCHALEN`. Konstante in `vma.ts` bleibt als Default-Seed-Quelle für Tests/Fallback | ✅ | 2026-05-09 |
+| 12.6 | ReisekostenFormular umgestellt: nutzt Hook statt Code-Konstante `AUSLANDSPAUSCHALEN`. Konstante in `vma.ts` bleibt als Default-Seed-Quelle für Tests/Fallback — **überholt (Phase 17):** Konstante (falsche Werte) entfernt, Sätze nur noch aus der DB | ✅ | 2026-05-09 |
 | 12.7 | AdminCenter PauschalenTab: editierbare Liste mit Inline-Editor pro Zeile (24h/8h/Übernachtung/Reihenfolge), Plus-Button für neuen Eintrag, Delete pro Eintrag, optimistic-via-reload | ✅ | 2026-05-09 |
 | 12.8 | Hinweis-Box im Tab klarer formuliert: "Inland im Code, Ausland in der Datenbank" | ✅ | 2026-05-09 |
 
@@ -303,6 +303,26 @@ Auslöser: Wunsch Dimitri — gründliche Prüfung (Korrektheit/Sicherheit/Perfo
 **Verifikation:** Backend+Frontend-tsc grün, **156 Vitest**, ESLint 0 Fehler. Dev-DB-E2E: KF-Submit (inkl. Emoji/Kyrillisch) → GESENDET + PDF-Anhang mit Beleg; SSRF-Bypässe blockiert. Nebenbei: Startseiten-Hero-Logo entfernt (nur „Finanzportal" + Frage).
 
 **Nachtrag (Wunsch Dimitri): DIREKT-Kostenverteilung mit Auto-Rest.** Bei „direkt"-Kostenzeilen im KF-Wizard gibt man jetzt einen **Gesamtbetrag** ein und verteilt ihn je Klasse; die **letzte Klasse ist der automatische Rest** (= Gesamtbetrag − Summe der übrigen), fest im State gehalten (bleibt beim Hinzufügen/Entfernen von Klassen erhalten). **Über-Verteilungs-Check:** es kann nie mehr als der Gesamtbetrag verteilt werden — Live-Warnung + „Weiter"/„Einreichen" blockiert. Rein Frontend (`KlassenfahrtFormular.tsx`); der Server rechnet ohnehin autoritativ neu. Verifiziert im Browser (250 → Rest 250; ändern → Rest passt sich an; Über-Verteilung 600/500 blockiert; Klasse-Hinzufügen erhält Verteilung) + Backend-Calc (500 → [200, 300] → Zuschuss 9,52/27,27, gesamt 36,79 €). Frontend-tsc/ESLint grün.
+
+### Phase 17: VMA-Fix Ausland — Release 1a (10.10.2026)
+
+Auslöser: Kritische Bewertung 10/2026 — die Auslands-VMA rechnete die BMF-Endbeträge zusätzlich × 1,2 / × 0,8 (rund 20 % zu hoch, 8-h-Spalte ignoriert), eintägig genau 8:00 h wurde vergütet, und die Tagesbildung im Browser hing von der Zeitzone ab (Zeitumstellung, Abfahrt vor 02:00 Uhr).
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 17.1 | `backend/src/lib/vma.ts`: `vmaTag(tag, { satz24h, satz8h })` mit BMF-Endbeträgen (24 h = Ganztag, 8 h = An-/Abreise bzw. eintägig > 8 h), Kürzung 20/40/40 % vom 24-h-Satz, auf die Pauschale gedeckelt (§ 9 Abs. 4a S. 8 EStG); REISEKOSTEN lädt beide Sätze | ✅ | 2026-10-10 |
+| 17.2 | Eintägig nur bei strikt mehr als 8 h (> 480 min), Frontend und Backend; Feld `Reisetag.eintaegigUeber8h` | ✅ | 2026-10-10 |
+| 17.3 | Tagesbildung zeitzonenunabhängig (String-Teile + `Date.UTC`); Server prüft Datum + Typ jedes Client-Tages gegen Abfahrt/Rückkehr (sonst 400 „Die Reisetage passen nicht zum Reisezeitraum …“) | ✅ | 2026-10-10 |
+| 17.4 | Formular: Land bei Auslandsreise Pflicht, Länderauswahl „Häufige Ziele“ (Sortierung < 1000) / „Alle Länder A–Z“, Hinweis bei Ladefehler, Kürzungstext je Inland/Ausland; tote Konstante `AUSLANDSPAUSCHALEN` entfernt | ✅ | 2026-10-10 |
+| 17.5 | Migration `0014_pauschalen_ausland_bmf2026.sql`: vollständige BMF-Tabelle (214 Zeilen + 9 Verweisstaaten, z. B. Mikronesien = Philippinen), bedingte UPDATEs nur auf alte Seed-Werte, fehlende Zeilen per `INSERT … ON CONFLICT DO NOTHING`; generiert aus `backend/src/db/data/bmf-auslandspauschalen-2026*.csv` mit `backend/scripts/bmf-csv-zu-sql.ts`; Prüfabfrage `backend/scripts/pruefe-auslandspauschalen.sql` | ✅ | 2026-10-10 |
+| 17.6 | Admin: Schlüssel INLAND/ANDERES/SEETAG gesperrt (400), Luxemburg (gesetzlicher Ersatzsatz) nicht löschbar, neue Einträge mit Sortierung 9999 | ✅ | 2026-10-10 |
+| 17.7 | Mail an die Buchhaltung: Inlands-Kürzungsbeträge (5,60/11,20 €) nur noch bei Inlandsreisen | ✅ | 2026-10-10 |
+| 17.8 | `backend/scripts/vma-nachkorrektur-2026.sql`: Ist/Soll je Tag und Beleg seit 01.01.2026 (Soll aus Abfahrt/Rückkehr und BMF-Sätzen, nicht aus DB/Tagesliste); Überzahlung geteilt in pauschalierbar (≤ 100 % der ungekürzten Pauschale, BMF 25.11.2020 Rz. 58) und individuell; Ausgabe außerhalb des Repos (`.gitignore`) | ✅ | 2026-10-10 |
+| 17.9 | Paritätstest `tests/vma-paritaet.test.ts` (Beträge + Tagesbildung inkl. Zeitumstellung, typgeprüft über `tests/tsconfig.json`); CI `.github/workflows/ci.yml` mit TZ-Matrix UTC / Europe/Berlin | ✅ | 2026-10-10 |
+
+**Offen (Release 1b):** Land je Reisetag (Mehrländerreisen), serverseitige Tagesbildung mit Pflichtfrage „Auswärtige Übernachtung?“ (über Mitternacht unter 24 h ohne Übernachtung = höchstens ein Tag), PDF-Tabelle je Tag. Bis dahin zählt eine solche Reise als An- und Abreisetag.
+
+**Verifikation:** Backend-tsc und Tests-tsc grün, Frontend-Build grün, **218 Vitest** unter TZ=UTC und TZ=Europe/Berlin, ESLint 0 Fehler. Migrationen 0000–0014 + Seed auf frischer PG-16-DB: 223 Auslandszeilen (19 „Häufige Ziele“), Prüfabfrage leer; Altbestand-Szenario (alte Seed-Werte, im AdminCenter geänderter Satz, gelöschtes Luxemburg) und zweiter Lauf von 0014 geprüft. Nachkorrektur gegen 13 Testbelege geprüft (u. a. BMF-Beispiel 51: 14 € pauschal, 16 € individuell).
 
 ---
 

@@ -18,3 +18,12 @@ export const ERSTATTUNG_KATEGORIEN_DEFAULT = [
 
 export const ERSTATTUNG_KATEGORIE_DEFAULT_KEYS: readonly string[] =
   ERSTATTUNG_KATEGORIEN_DEFAULT.map(k => k.key);
+
+// Auslandspauschalen: reservierte Schlüssel der Länderauswahl (Inland bzw. Sonderfälle
+// „Staat nicht in der Liste“ und „Seetag“) — dürfen nicht als Land in
+// `pauschalen_ausland` angelegt werden (Vergleich ohne Groß-/Kleinschreibung).
+export const RESERVIERTE_LAND_KEYS: readonly string[] = ['INLAND', 'ANDERES', 'SEETAG'];
+
+// Gesetzlicher Ersatzsatz für nicht aufgeführte Staaten (BMF-Schreiben vom 05.12.2025)
+// und Seetage (R 9.6 Abs. 3 LStR) — dieser Eintrag darf nie gelöscht werden.
+export const FALLBACK_LAND_KEY = 'Luxemburg';

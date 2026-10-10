@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { berechneReisetage, berechneVmaTag, berechneKmBetrag, berechneVmaGesamt, berechneVmaTagAusland, AUSLANDSPAUSCHALEN } from '../vma';
+import { berechneReisetage, berechneVmaTag, berechneKmBetrag, berechneVmaGesamt, berechneVmaTagMitSatz, INLAND_SATZ, type VmaSatz } from '../vma';
 import type { Reisetag } from '../types';
 
 describe('berechneReisetage', () => {
@@ -22,7 +22,20 @@ describe('berechneReisetage', () => {
     const tage = berechneReisetage('2026-03-15T06:00', '2026-03-15T16:00');
     expect(tage).toHaveLength(1);
     expect(tage[0].typ).toBe('EINTAEGIG');
+    expect(tage[0].eintaegigUeber8h).toBe(true);
     expect(tage[0].vmaBrutto).toBe(14);
+  });
+
+  it('eintägig genau 8:00 h → kein Anspruch (strikt mehr als 8 h nötig)', () => {
+    const [t] = berechneReisetage('2026-03-15T08:00', '2026-03-15T16:00');
+    expect(t.eintaegigUeber8h).toBe(false);
+    expect(t.vmaNetto).toBe(0);
+  });
+
+  it('eintägig 8:01 h → 14,00 (Inland)', () => {
+    const [t] = berechneReisetage('2026-03-15T08:00', '2026-03-15T16:01');
+    expect(t.eintaegigUeber8h).toBe(true);
+    expect(t.vmaNetto).toBe(14);
   });
 
   it('berechnet mehrtägige Reise korrekt', () => {
@@ -140,82 +153,68 @@ describe('berechneVmaGesamt', () => {
   });
 });
 
-describe('berechneVmaTagAusland', () => {
-  const ganzTag: Reisetag = {
+describe('berechneVmaTagMitSatz — BMF-Endbeträge ohne Faktor (Belgien 59/40)', () => {
+  const BELGIEN: VmaSatz = { tagessatz24h: 59, tagessatz8h: 40 };
+  const tag = (over: Partial<Reisetag>): Reisetag => ({
     datum: '2026-03-16',
     typ: 'GANZTAG',
     fruehstueckGestellt: false,
     mittagGestellt: false,
     abendGestellt: false,
-    vmaBrutto: 28,
+    vmaBrutto: 0,
     vmaKuerzung: 0,
-    vmaNetto: 28,
-  };
+    vmaNetto: 0,
+    ...over,
+  });
+  const VOLLPENSION = { fruehstueckGestellt: true, mittagGestellt: true, abendGestellt: true };
 
-  it('berechnet Ganztag Ausland (120% des Tagessatzes)', () => {
-    const result = berechneVmaTagAusland(ganzTag, 40);
-    expect(result.vmaBrutto).toBe(48); // 40 * 1.2
-    expect(result.vmaNetto).toBe(48);
+  it('Ganztag → 59,00 (24-h-Spalte, kein × 1,2)', () => {
+    const r = berechneVmaTagMitSatz(tag({ typ: 'GANZTAG' }), BELGIEN);
+    expect([r.vmaBrutto, r.vmaKuerzung, r.vmaNetto]).toEqual([59, 0, 59]);
   });
 
-  it('berechnet An-/Abreisetag Ausland (80%)', () => {
-    const anreise = { ...ganzTag, typ: 'ANREISE' as const };
-    const result = berechneVmaTagAusland(anreise, 40);
-    expect(result.vmaBrutto).toBe(32); // 40 * 0.8
+  it('Anreisetag → 40,00 (8-h-Spalte, kein × 0,8)', () => {
+    const r = berechneVmaTagMitSatz(tag({ typ: 'ANREISE' }), BELGIEN);
+    expect([r.vmaBrutto, r.vmaKuerzung, r.vmaNetto]).toEqual([40, 0, 40]);
   });
 
-  it('kürzt vom Auslands-Tagessatz', () => {
-    const result = berechneVmaTagAusland({ ...ganzTag, fruehstueckGestellt: true }, 40);
-    expect(result.vmaKuerzung).toBe(8); // 40 * 0.20
-    expect(result.vmaNetto).toBe(40); // 48 - 8
-  });
-});
-
-describe('AUSLANDSPAUSCHALEN 2026 (BMF v. 05.12.2025)', () => {
-  it('enthaelt alle Stamm-Laender', () => {
-    const erwartet = ['Belgien', 'Dänemark', 'Frankreich', 'Großbritannien', 'Italien',
-                      'Luxemburg', 'Niederlande', 'Österreich', 'Polen', 'Schweiz',
-                      'Spanien', 'Tschechien', 'USA'];
-    erwartet.forEach(land => {
-      expect(AUSLANDSPAUSCHALEN[land]).toBeDefined();
-      expect(AUSLANDSPAUSCHALEN[land].tagessatz24h).toBeGreaterThan(0);
-      expect(AUSLANDSPAUSCHALEN[land].tagessatz8h).toBeGreaterThan(0);
-    });
+  it('Ganztag + Frühstück → 47,20', () => {
+    const r = berechneVmaTagMitSatz(tag({ typ: 'GANZTAG', fruehstueckGestellt: true }), BELGIEN);
+    expect([r.vmaBrutto, r.vmaKuerzung, r.vmaNetto]).toEqual([59, 11.8, 47.2]);
   });
 
-  it('enthaelt Stadt-Differenzierung fuer Metropolen', () => {
-    expect(AUSLANDSPAUSCHALEN['Frankreich — Paris']).toBeDefined();
-    expect(AUSLANDSPAUSCHALEN['Italien — Rom']).toBeDefined();
-    expect(AUSLANDSPAUSCHALEN['Großbritannien — London']).toBeDefined();
-    expect(AUSLANDSPAUSCHALEN['Schweiz — Genf']).toBeDefined();
-    expect(AUSLANDSPAUSCHALEN['Spanien — Barcelona']).toBeDefined();
-    expect(AUSLANDSPAUSCHALEN['Spanien — Madrid']).toBeDefined();
+  it('Anreisetag + Frühstück → 28,20 (Kürzung vom 24-h-Satz)', () => {
+    const r = berechneVmaTagMitSatz(tag({ typ: 'ANREISE', fruehstueckGestellt: true }), BELGIEN);
+    expect([r.vmaBrutto, r.vmaKuerzung, r.vmaNetto]).toEqual([40, 11.8, 28.2]);
   });
 
-  it('hat plausibles Verhaeltnis 8h ≈ 2/3 des 24h-Satzes', () => {
-    Object.entries(AUSLANDSPAUSCHALEN).forEach(([land, p]) => {
-      const ratio = p.tagessatz8h / p.tagessatz24h;
-      expect(ratio).toBeGreaterThan(0.6); // mind. ~60%
-      expect(ratio).toBeLessThan(0.8);    // hoechstens ~80%
-      expect(p.tagessatz8h, `${land}: 8h ≤ 24h`).toBeLessThan(p.tagessatz24h);
-    });
+  it('Vollpension Ganztag und Anreisetag → 0,00', () => {
+    expect(berechneVmaTagMitSatz(tag({ typ: 'GANZTAG', ...VOLLPENSION }), BELGIEN).vmaNetto).toBe(0);
+    expect(berechneVmaTagMitSatz(tag({ typ: 'ANREISE', ...VOLLPENSION }), BELGIEN).vmaNetto).toBe(0);
   });
 
-  it('Stadt-Variante hat hoeheren oder gleichen Satz als Default-Land', () => {
-    // Paris ≥ Frankreich, Rom ≥ Italien, London ≥ GB, Genf ≥ Schweiz
-    expect(AUSLANDSPAUSCHALEN['Frankreich — Paris'].tagessatz24h)
-      .toBeGreaterThan(AUSLANDSPAUSCHALEN['Frankreich'].tagessatz24h);
-    expect(AUSLANDSPAUSCHALEN['Italien — Rom'].tagessatz24h)
-      .toBeGreaterThan(AUSLANDSPAUSCHALEN['Italien'].tagessatz24h);
-    expect(AUSLANDSPAUSCHALEN['Großbritannien — London'].tagessatz24h)
-      .toBeGreaterThan(AUSLANDSPAUSCHALEN['Großbritannien'].tagessatz24h);
+  it('BMF-Beispiel: Anreisetag + Frühstück bei 75/50 → 35,00', () => {
+    const r = berechneVmaTagMitSatz(tag({ typ: 'ANREISE', fruehstueckGestellt: true }), { tagessatz24h: 75, tagessatz8h: 50 });
+    expect(r.vmaNetto).toBe(35);
   });
 
-  it('Daenemark wurde 2026 stark angehoben (75 EUR)', () => {
-    expect(AUSLANDSPAUSCHALEN['Dänemark'].tagessatz24h).toBe(75);
+  it('Belgien 3 Tage (An/Ganz/Ab, keine Mahlzeiten) = 139,00', () => {
+    const tage = berechneReisetage('2026-03-15T08:00', '2026-03-17T18:00')
+      .map(t => berechneVmaTagMitSatz(t, BELGIEN));
+    expect(tage.map(t => t.typ)).toEqual(['ANREISE', 'GANZTAG', 'ABREISE']);
+    expect(berechneVmaGesamt(tage)).toBe(139);
   });
 
-  it('Oesterreich 2026 ist 50 EUR (+10 vs. alt)', () => {
-    expect(AUSLANDSPAUSCHALEN['Österreich'].tagessatz24h).toBe(50);
+  it('Eintägig 8:00 h → 0, 8:01 h → 40,00', () => {
+    const [genau8] = berechneReisetage('2026-03-16T08:00', '2026-03-16T16:00');
+    const [ueber8] = berechneReisetage('2026-03-16T08:00', '2026-03-16T16:01');
+    expect(berechneVmaTagMitSatz(genau8, BELGIEN).vmaNetto).toBe(0);
+    expect(berechneVmaTagMitSatz(ueber8, BELGIEN).vmaNetto).toBe(40);
+  });
+
+  it('Inland-Wrapper rechnet mit 28/14', () => {
+    expect(INLAND_SATZ).toEqual({ tagessatz24h: 28, tagessatz8h: 14 });
+    expect(berechneVmaTag(tag({ typ: 'ANREISE', mittagGestellt: true })))
+      .toEqual(berechneVmaTagMitSatz(tag({ typ: 'ANREISE', mittagGestellt: true }), INLAND_SATZ));
   });
 });

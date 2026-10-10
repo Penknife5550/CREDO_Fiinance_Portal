@@ -99,6 +99,13 @@
 			"when": 1778947200000,
 			"tag": "0013_email_config_singleton",
 			"breakpoints": true
+		},
+		{
+			"idx": 14,
+			"version": "7",
+			"when": 1779033600000,
+			"tag": "0014_pauschalen_ausland_bmf2026",
+			"breakpoints": true
 		}
 	]
 }

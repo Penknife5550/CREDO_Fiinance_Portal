@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { vmaTagInland, vmaTagAusland, type VmaTagInput } from '../vma.js';
+import { vmaTag, vmaTagInland, dauertLaengerAls8h, reisetageAusZeitraum, INLAND_SATZ, type VmaTagInput, type TagesSatz } from '../vma.js';
 
 const tag = (over: Partial<VmaTagInput>): VmaTagInput => ({
   typ: 'GANZTAG', fruehstueckGestellt: false, mittagGestellt: false, abendGestellt: false, ...over,
 });
+
+const VOLLPENSION = { fruehstueckGestellt: true, mittagGestellt: true, abendGestellt: true };
+const BELGIEN: TagesSatz = { satz24h: 59, satz8h: 40 };
 
 describe('vmaTagInland', () => {
   it('Ganztag ohne Mahlzeiten → 28', () => {
@@ -11,7 +14,7 @@ describe('vmaTagInland', () => {
     expect(r.vmaBrutto).toBe(28); expect(r.vmaKuerzung).toBe(0); expect(r.vmaNetto).toBe(28);
   });
   it('Ganztag mit F+M+A → Kürzung 28, Netto 0', () => {
-    const r = vmaTagInland(tag({ typ: 'GANZTAG', fruehstueckGestellt: true, mittagGestellt: true, abendGestellt: true }));
+    const r = vmaTagInland(tag({ typ: 'GANZTAG', ...VOLLPENSION }));
     expect(r.vmaKuerzung).toBeCloseTo(28, 2); expect(r.vmaNetto).toBeCloseTo(0, 2);
   });
   it('Anreisetag ohne Mahlzeiten → 14', () => {
@@ -21,31 +24,95 @@ describe('vmaTagInland', () => {
     const r = vmaTagInland(tag({ typ: 'ABREISE', fruehstueckGestellt: true }));
     expect(r.vmaBrutto).toBe(14); expect(r.vmaKuerzung).toBeCloseTo(5.6, 2); expect(r.vmaNetto).toBeCloseTo(8.4, 2);
   });
-  it('Anreisetag F+M+A: Kürzung vom Volltagessatz (28) > Brutto (14) → Netto 0', () => {
-    const r = vmaTagInland(tag({ typ: 'ANREISE', fruehstueckGestellt: true, mittagGestellt: true, abendGestellt: true }));
-    expect(r.vmaKuerzung).toBeCloseTo(28, 2); expect(r.vmaNetto).toBe(0);
+  it('Inlandstag mit Frühstück → 28 − 5,60 = 22,40', () => {
+    expect(vmaTagInland(tag({ typ: 'GANZTAG', fruehstueckGestellt: true })).vmaNetto).toBe(22.4);
   });
-  it('Eintägig ≥ 8h → 14, < 8h → 0', () => {
+  it('Anreisetag F+M+A: Kürzung (28) auf die Pauschale (14) gedeckelt → Netto 0', () => {
+    const r = vmaTagInland(tag({ typ: 'ANREISE', ...VOLLPENSION }));
+    expect(r).toEqual({ vmaBrutto: 14, vmaKuerzung: 14, vmaNetto: 0 });
+  });
+  it('Eintägig > 8h → 14, sonst 0', () => {
     expect(vmaTagInland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: true })).vmaNetto).toBe(14);
     expect(vmaTagInland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: false })).vmaNetto).toBe(0);
   });
+  it('ist identisch mit vmaTag(…, INLAND_SATZ = 28/14)', () => {
+    expect(INLAND_SATZ).toEqual({ satz24h: 28, satz8h: 14 });
+    expect(vmaTagInland(tag({ typ: 'ANREISE', mittagGestellt: true }))).toEqual(vmaTag(tag({ typ: 'ANREISE', mittagGestellt: true }), INLAND_SATZ));
+  });
 });
 
-describe('vmaTagAusland (Tagessatz24h = 59, z.B. Belgien)', () => {
-  it('Ganztag ohne Mahlzeiten → 59 × 1,2 = 70,80', () => {
-    const r = vmaTagAusland(tag({ typ: 'GANZTAG' }), 59);
-    expect(r.vmaBrutto).toBeCloseTo(70.8, 2); expect(r.vmaNetto).toBeCloseTo(70.8, 2);
+describe('vmaTag Ausland — BMF-Endbeträge ohne Faktor (Belgien 59/40)', () => {
+  it('Ganztag → 59,00 (24-h-Spalte, kein × 1,2)', () => {
+    expect(vmaTag(tag({ typ: 'GANZTAG' }), BELGIEN)).toEqual({ vmaBrutto: 59, vmaKuerzung: 0, vmaNetto: 59 });
   });
-  it('Ganztag mit Frühstück → Kürzung 11,80, Netto 59', () => {
-    const r = vmaTagAusland(tag({ typ: 'GANZTAG', fruehstueckGestellt: true }), 59);
-    expect(r.vmaKuerzung).toBeCloseTo(11.8, 2); expect(r.vmaNetto).toBeCloseTo(59, 2);
+  it('Anreisetag → 40,00 (8-h-Spalte, kein × 0,8)', () => {
+    expect(vmaTag(tag({ typ: 'ANREISE' }), BELGIEN)).toEqual({ vmaBrutto: 40, vmaKuerzung: 0, vmaNetto: 40 });
   });
-  it('An-/Abreisetag → 59 × 0,8 = 47,20', () => {
-    expect(vmaTagAusland(tag({ typ: 'ANREISE' }), 59).vmaBrutto).toBeCloseTo(47.2, 2);
+  it('Abreisetag → 40,00', () => {
+    expect(vmaTag(tag({ typ: 'ABREISE' }), BELGIEN).vmaNetto).toBe(40);
   });
-  it('Eintägig ≥ 8h → 47,20, < 8h → 0', () => {
-    expect(vmaTagAusland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: true }), 59).vmaNetto).toBeCloseTo(47.2, 2);
-    expect(vmaTagAusland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: false }), 59).vmaNetto).toBe(0);
+  it('Ganztag + Frühstück → 59 − 11,80 = 47,20', () => {
+    expect(vmaTag(tag({ typ: 'GANZTAG', fruehstueckGestellt: true }), BELGIEN))
+      .toEqual({ vmaBrutto: 59, vmaKuerzung: 11.8, vmaNetto: 47.2 });
+  });
+  it('Anreisetag + Frühstück → 40 − 11,80 = 28,20 (Kürzung vom 24-h-Satz)', () => {
+    expect(vmaTag(tag({ typ: 'ANREISE', fruehstueckGestellt: true }), BELGIEN))
+      .toEqual({ vmaBrutto: 40, vmaKuerzung: 11.8, vmaNetto: 28.2 });
+  });
+  it('Vollpension Ganztag → 0,00', () => {
+    expect(vmaTag(tag({ typ: 'GANZTAG', ...VOLLPENSION }), BELGIEN).vmaNetto).toBe(0);
+  });
+  it('Vollpension Anreisetag → 0,00 (nie negativ, Kürzung höchstens die Pauschale)', () => {
+    expect(vmaTag(tag({ typ: 'ANREISE', ...VOLLPENSION }), BELGIEN))
+      .toEqual({ vmaBrutto: 40, vmaKuerzung: 40, vmaNetto: 0 });
+  });
+  it('Eintägig > 8h → 40,00, sonst 0', () => {
+    expect(vmaTag(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: true }), BELGIEN).vmaNetto).toBe(40);
+    expect(vmaTag(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: false }), BELGIEN).vmaNetto).toBe(0);
+    expect(vmaTag(tag({ typ: 'EINTAEGIG' }), BELGIEN).vmaNetto).toBe(0);
+  });
+  it('Belgien 3 Tage (An/Ganz/Ab, keine Mahlzeiten) = 139,00', () => {
+    const summe = (['ANREISE', 'GANZTAG', 'ABREISE'] as const)
+      .map(typ => vmaTag(tag({ typ }), BELGIEN).vmaNetto)
+      .reduce((a, b) => a + b, 0);
+    expect(summe).toBe(139);
+  });
+  it('BMF-Beispiel: Anreisetag + Frühstück bei 75/50 → 50 − 15 = 35,00', () => {
+    expect(vmaTag(tag({ typ: 'ANREISE', fruehstueckGestellt: true }), { satz24h: 75, satz8h: 50 }).vmaNetto).toBe(35);
+  });
+  it('Netto = Brutto − Kürzung exakt in Cent (keine Float-Reste)', () => {
+    const r = vmaTag(tag({ typ: 'GANZTAG', fruehstueckGestellt: true, mittagGestellt: true }), { satz24h: 34, satz8h: 23 });
+    expect(r).toEqual({ vmaBrutto: 34, vmaKuerzung: 20.4, vmaNetto: 13.6 });
+  });
+});
+
+describe('dauertLaengerAls8h (eintägig: strikt mehr als 8 h)', () => {
+  it('8:00 h → kein Anspruch (Inland 0, Ausland 0)', () => {
+    const ueber8h = dauertLaengerAls8h('2026-03-16T08:00', '2026-03-16T16:00');
+    expect(ueber8h).toBe(false);
+    expect(vmaTagInland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: ueber8h })).vmaNetto).toBe(0);
+    expect(vmaTag(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: ueber8h }), BELGIEN).vmaNetto).toBe(0);
+  });
+  it('8:01 h → Inland 14,00, Ausland (Belgien) 40,00', () => {
+    const ueber8h = dauertLaengerAls8h('2026-03-16T08:00', '2026-03-16T16:01');
+    expect(ueber8h).toBe(true);
+    expect(vmaTagInland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: ueber8h })).vmaNetto).toBe(14);
+    expect(vmaTag(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: ueber8h }), BELGIEN).vmaNetto).toBe(40);
+  });
+});
+
+describe('reisetageAusZeitraum (Prüfung der Client-Tagesliste)', () => {
+  it('liefert null bei fremdem Format und bei mehr als 60 Reisetagen', () => {
+    expect(reisetageAusZeitraum('16.03.2026 08:00', '2026-03-16T18:00')).toBeNull();
+    expect(reisetageAusZeitraum('2026-01-01T08:00', '2026-03-01T18:00')).toHaveLength(60);
+    expect(reisetageAusZeitraum('2026-01-01T08:00', '2026-03-02T18:00')).toBeNull();
+  });
+  it('Rückkehr nicht nach Abfahrt → keine Tage', () => {
+    expect(reisetageAusZeitraum('2026-03-16T10:00', '2026-03-16T10:00')).toEqual([]);
+  });
+  it('akzeptiert ISO-Zeitpunkte mit Sekunden/Z (gleiche Wanduhrzeit wie gespeichert)', () => {
+    expect(reisetageAusZeitraum('2026-03-16T08:00:00.000Z', '2026-03-16T16:01:00.000Z'))
+      .toEqual([{ datum: '2026-03-16', typ: 'EINTAEGIG', eintaegigUeber8h: true }]);
   });
 });
 

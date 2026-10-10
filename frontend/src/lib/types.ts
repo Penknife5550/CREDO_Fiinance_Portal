@@ -60,6 +60,8 @@ export interface PersoenlicheDaten {
 export interface Reisetag {
   datum: string;
   typ: 'ANREISE' | 'GANZTAG' | 'ABREISE' | 'EINTAEGIG';
+  /** Nur für EINTAEGIG: Abwesenheit strikt länger als 8 h (> 480 min)? Wird von berechneReisetage gesetzt. */
+  eintaegigUeber8h?: boolean;
   fruehstueckGestellt: boolean;
   mittagGestellt: boolean;
   abendGestellt: boolean;

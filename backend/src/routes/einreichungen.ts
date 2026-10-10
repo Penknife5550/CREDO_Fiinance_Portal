@@ -12,7 +12,7 @@ import { versendeEinreichung } from '../services/versand.js';
 import { pruefeAnhangGroesse } from '../services/email-utils.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import { berechneKlassenfahrt, KlassenfahrtBerechnungsfehler, rundeAufCent as rundeAufCentKf } from '../lib/klassenfahrt.js';
-import { berechneVmaServer } from '../lib/vma.js';
+import { vmaTag, INLAND_SATZ, dauertLaengerAls8h, reisetageAusZeitraum, type TagesSatz } from '../lib/vma.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -250,22 +250,34 @@ einreichungenRouter.post('/', async (req, res) => {
       // wäre der Auszahlungsbetrag client-manipulierbar (Audit #2).
       const serverKmBetrag = berechneKmBetrag(parsed.kmGefahren, parsed.verkehrsmittel);
 
-      // Bei Auslandsreise den 24h-Tagessatz laden (parsed.land = landKey aus pauschalen_ausland).
-      let auslandTagessatz24h: number | null = null;
+      // Bei Auslandsreise beide BMF-Sätze laden (parsed.land = landKey aus pauschalen_ausland):
+      // 24 h = Ganztag, 8 h = An-/Abreise bzw. eintägig > 8 h (Endbeträge, kein Faktor).
+      let satz: TagesSatz = INLAND_SATZ;
       if (parsed.land) {
         const [ap] = await db.select().from(schema.pauschalenAusland).where(eq(schema.pauschalenAusland.landKey, parsed.land));
         if (!ap) {
           res.status(400).json({ error: `Unbekanntes Reiseland: ${parsed.land}` });
           return;
         }
-        auslandTagessatz24h = Number(ap.tagessatz24h);
+        satz = { satz24h: Number(ap.tagessatz24h), satz8h: Number(ap.tagessatz8h) };
       }
-      // Eintägig->8h aus Abfahrt/Rückkehr (der Server traut auch der Dauer nicht).
-      const eintaegigUeber8h =
-        new Date(parsed.rueckkehrZeit).getTime() - new Date(parsed.abfahrtZeit).getTime() >= 8 * 60 * 60 * 1000;
+      // Tagesliste gegen den Reisezeitraum prüfen (Datum + Typ je Tag, zeitzonenunabhängig):
+      // Der Server traut weder Anzahl noch Datum noch Typ der Client-Tage.
+      const sollTage = reisetageAusZeitraum(parsed.abfahrtZeit, parsed.rueckkehrZeit);
+      if (
+        !sollTage ||
+        sollTage.length !== parsed.reisetage.length ||
+        sollTage.some((s, i) => s.datum !== parsed.reisetage[i].datum || s.typ !== parsed.reisetage[i].typ)
+      ) {
+        res.status(400).json({ error: 'Die Reisetage passen nicht zum Reisezeitraum. Bitte laden Sie die Seite neu und prüfen Sie Ihre Angaben.' });
+        return;
+      }
+      // Eintägig: Anspruch nur bei strikt MEHR als 8 h (§ 9 Abs. 4a S. 3 Nr. 3 EStG) — aus
+      // Abfahrt/Rückkehr (der Server traut auch der Dauer nicht).
+      const eintaegigUeber8h = dauertLaengerAls8h(parsed.abfahrtZeit, parsed.rueckkehrZeit);
       const serverReisetage = parsed.reisetage.map(t => ({
         ...t,
-        ...berechneVmaServer(
+        ...vmaTag(
           {
             typ: t.typ,
             fruehstueckGestellt: t.fruehstueckGestellt,
@@ -273,7 +285,7 @@ einreichungenRouter.post('/', async (req, res) => {
             abendGestellt: t.abendGestellt,
             eintaegigUeber8h,
           },
-          auslandTagessatz24h,
+          satz,
         ),
       }));
 
@@ -438,6 +450,7 @@ einreichungenRouter.post('/', async (req, res) => {
           reiseziel: parsed.reiseziel,
           abfahrtZeit: parsed.abfahrtZeit,
           rueckkehrZeit: parsed.rueckkehrZeit,
+          land: parsed.land || null,
           gesamtbetrag: serverGesamtbetrag,
           iban: parsed.persoenlich.iban,
           kontoinhaber: parsed.persoenlich.kontoinhaber,

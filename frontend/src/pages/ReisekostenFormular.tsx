@@ -8,7 +8,7 @@ import { VerpflegungStep } from '@/components/forms/VerpflegungStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
 import { DezimalInput } from '@/components/forms/DezimalInput';
-import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagAusland } from '@/lib/vma';
+import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagMitSatz } from '@/lib/vma';
 import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenReisekosten } from '@/lib/api';
 import { pruefeDreiMonatsFrist, speichereReiseziel } from '@/lib/dreiMonatsFrist';
@@ -67,7 +67,15 @@ export function ReisekostenFormular() {
   const gesamtbetrag = kmBetrag + vmaGesamt + weitereKostenSumme;
 
   // ── Auslandspauschalen aus DB (AdminCenter-pflegbar) ────
-  const { map: auslandsPauschalenMap } = useAuslandsPauschalen();
+  const {
+    pauschalen: auslandsPauschalen,
+    map: auslandsPauschalenMap,
+    loading: laenderLaden,
+    error: laenderFehler,
+  } = useAuslandsPauschalen();
+  // Länderauswahl: „Häufige Ziele“ = Sortierung < 1000 (im AdminCenter pflegbar), darunter alle Einträge A–Z.
+  const haeufigeZiele = auslandsPauschalen.filter(p => p.reihenfolge < 1000);
+  const alleLaenderAZ = [...auslandsPauschalen].sort((a, b) => a.landKey.localeCompare(b.landKey, 'de'));
 
   // ── Aktives Auslandsland für VMA ─────────────────────
   const aktivesAuslandsLand = inlandAusland === 'ausland' && auslandsLand ? auslandsPauschalenMap[auslandsLand] : null;
@@ -76,7 +84,7 @@ export function ReisekostenFormular() {
   useEffect(() => {
     const tage = berechneReisetage(abfahrtZeit, rueckkehrZeit);
     if (aktivesAuslandsLand) {
-      setReisetage(tage.map(t => berechneVmaTagAusland(t, aktivesAuslandsLand.tagessatz24h)));
+      setReisetage(tage.map(t => berechneVmaTagMitSatz(t, aktivesAuslandsLand)));
     } else {
       setReisetage(tage.map(t => berechneVmaTag(t)));
     }
@@ -104,6 +112,8 @@ export function ReisekostenFormular() {
       if (abfahrtZeit && rueckkehrZeit && new Date(rueckkehrZeit) <= new Date(abfahrtZeit)) {
         errs.rueckkehrZeit = 'Rückkehr muss nach Abfahrt liegen';
       }
+      // Ohne Land würde still mit Inlandssätzen gerechnet — bei Ausland daher Pflicht.
+      if (inlandAusland === 'ausland' && !aktivesAuslandsLand) errs.auslandsLand = 'Bitte Land wählen';
     }
 
     if (step === 2) {
@@ -312,7 +322,7 @@ export function ReisekostenFormular() {
             {abfahrtZeit && rueckkehrZeit && reisetage.length > 0 && (
               <div className="bg-credo-50 rounded-lg p-3 text-sm text-credo-600">
                 Reisedauer: <strong>{reisetage.length} {reisetage.length === 1 ? 'Tag' : 'Tage'}</strong>
-                {reisetage.length === 1 && reisetage[0].vmaBrutto === 0 && ' (unter 8 Stunden — kein VMA)'}
+                {reisetage.length === 1 && reisetage[0].typ === 'EINTAEGIG' && !reisetage[0].eintaegigUeber8h && ' (nicht mehr als 8 Stunden — kein VMA)'}
               </div>
             )}
             <div>
@@ -333,15 +343,37 @@ export function ReisekostenFormular() {
               <div>
                 <label className="label">Land *</label>
                 <select
-                  className="input-field"
+                  className={`input-field ${errors.auslandsLand ? 'border-red-400' : ''}`}
                   value={auslandsLand}
                   onChange={e => setAuslandsLand(e.target.value)}
                 >
-                  <option value="">Bitte Land wählen...</option>
-                  {Object.keys(auslandsPauschalenMap).map(land => (
-                    <option key={land} value={land}>{land}</option>
-                  ))}
+                  <option value="">{laenderLaden ? 'Länder werden geladen...' : 'Bitte Land wählen...'}</option>
+                  {haeufigeZiele.length > 0 && (
+                    <optgroup label="Häufige Ziele">
+                      {haeufigeZiele.map(p => (
+                        <option key={p.landKey} value={p.landKey}>{p.landKey}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {alleLaenderAZ.length > 0 && (
+                    <optgroup label="Alle Länder A–Z">
+                      {alleLaenderAZ.map(p => (
+                        <option key={p.landKey} value={p.landKey}>{p.landKey}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
+                {laenderFehler ? (
+                  <p className="text-xs text-red-500 mt-1">
+                    Die Länderliste konnte nicht geladen werden. Bitte laden Sie die Seite neu.
+                  </p>
+                ) : (
+                  errors.auslandsLand && <p className="text-xs text-red-500 mt-1">{errors.auslandsLand}</p>
+                )}
+                <p className="text-xs text-credo-500 mt-1">
+                  Staat nicht in der Liste? Dann „Luxemburg“ wählen (gesetzlicher Ersatzsatz). Übersee- und
+                  Außengebiete zählen zum Mutterland (z. B. Grönland → Dänemark, Madeira → Portugal).
+                </p>
                 {aktivesAuslandsLand && (
                   <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
                     Tagessatz {auslandsLand}: {formatCurrency(aktivesAuslandsLand.tagessatz24h)} (24h) / {formatCurrency(aktivesAuslandsLand.tagessatz8h)} (8h) | Übernachtung: {formatCurrency(aktivesAuslandsLand.uebernachtung)}
@@ -408,7 +440,7 @@ export function ReisekostenFormular() {
 
         {/* Step 4: Verpflegung */}
         {currentStep === 3 && (
-          <VerpflegungStep reisetage={reisetage} onChange={setReisetage} auslandsTagessatz24h={aktivesAuslandsLand?.tagessatz24h} />
+          <VerpflegungStep reisetage={reisetage} onChange={setReisetage} auslandsSatz={aktivesAuslandsLand ?? undefined} />
         )}
 
         {/* Step 5: Weitere Kosten & Belege */}

@@ -25,3 +25,6 @@ n8n/Textdokument*.txt
 
 # Versehentlich verschachtelter Repo-Klon
 /CREDO_Fiinance_Portal/
+
+# Personenbezogene Exporte (VMA-Nachkorrektur) — nie ins Repo
+vma-nachkorrektur*.csv

@@ -15,6 +15,8 @@ interface ReisekostenEmailDaten {
   reiseziel: string;
   abfahrtZeit: string;
   rueckkehrZeit: string;
+  /** Reiseland (landKey aus pauschalen_ausland); null/leer = Inland. */
+  land?: string | null;
   gesamtbetrag: number;
   iban: string;
   kontoinhaber: string;
@@ -104,9 +106,17 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
     '',
     'Kurzinfo Reisekosten (FAQ)',
     '',
-    '\u2022 Die Verpflegungspauschalen betragen 14 EUR (>8h/An-Abreisetag) bzw. 28 EUR (Ganztag).',
-    '\u2022 K\u00fcrzungen bei gestellten Mahlzeiten: Fr\u00fchst\u00fcck 5,60 EUR, Mittag/Abend je 11,20 EUR.',
-    '\u2022 Die K\u00fcrzung bezieht sich immer auf den vollen Tagessatz (28 EUR), auch am An-/Abreisetag.',
+    // Inlandsbeträge nur bei Inlandsreisen — im Ausland gilt der Satz des Reiselandes.
+    ...(data.land
+      ? [
+          `\u2022 Auslandsreise (${data.land}): Verpflegungspauschalen nach BMF-Schreiben vom 05.12.2025 (24-h-Satz Ganztag, 8-h-Satz An-/Abreisetag bzw. eint\u00e4gig >8h).`,
+          '\u2022 K\u00fcrzungen bei gestellten Mahlzeiten: Fr\u00fchst\u00fcck 20 %, Mittag/Abend je 40 % vom 24-h-Satz des Reiselandes, auch am An-/Abreisetag.',
+        ]
+      : [
+          '\u2022 Die Verpflegungspauschalen betragen 14 EUR (>8h/An-Abreisetag) bzw. 28 EUR (Ganztag).',
+          '\u2022 K\u00fcrzungen bei gestellten Mahlzeiten: Fr\u00fchst\u00fcck 5,60 EUR, Mittag/Abend je 11,20 EUR.',
+          '\u2022 Die K\u00fcrzung bezieht sich immer auf den vollen Tagessatz (28 EUR), auch am An-/Abreisetag.',
+        ]),
     '\u2022 Kilometerpauschale: PKW 0,30 EUR/km, Motorrad 0,20 EUR/km \u2014 kein Vorsteuerabzug.',
     '\u2022 Bei Hotelrechnungen mit Fr\u00fchst\u00fcck bitte USt trennen: \u00dcbernachtung 7%, Fr\u00fchst\u00fcck 19%.',
     '\u2022 Verpflegungspauschalen sind nach 3 Monaten am selben Einsatzort nicht mehr steuerfrei.',

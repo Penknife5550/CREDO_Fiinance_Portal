@@ -7,7 +7,7 @@ import { encryptSecret, isEncryptionConfigured, decryptSecretIfNeeded } from '..
 import { testSmtpVerbindung } from '../services/email.js';
 import { ladeEmailConfigRow } from '../db/emailConfig.js';
 import { versendeErneut } from '../services/versand.js';
-import { TYP_FILTER_VALUES } from '../lib/constants.js';
+import { TYP_FILTER_VALUES, RESERVIERTE_LAND_KEYS, FALLBACK_LAND_KEY } from '../lib/constants.js';
 
 class EncryptionConfigError extends Error {
   constructor(message: string) {
@@ -335,6 +335,10 @@ adminRouter.get('/pauschalen-ausland', async (_req, res) => {
 adminRouter.post('/pauschalen-ausland', async (req, res) => {
   try {
     const parsed = auslandspauschaleSchema.parse(req.body);
+    if (RESERVIERTE_LAND_KEYS.includes(parsed.landKey.trim().toUpperCase())) {
+      res.status(400).json({ error: `„${parsed.landKey.trim()}“ ist ein reservierter Schlüssel und kann nicht als Land angelegt werden.` });
+      return;
+    }
     const [row] = await db.insert(schema.pauschalenAusland).values({
       landKey: parsed.landKey,
       tagessatz24h: String(parsed.tagessatz24h),
@@ -394,6 +398,10 @@ adminRouter.put('/pauschalen-ausland/:landKey', async (req, res) => {
 adminRouter.delete('/pauschalen-ausland/:landKey', async (req, res) => {
   try {
     const landKey = decodeURIComponent(req.params.landKey);
+    if (landKey === FALLBACK_LAND_KEY) {
+      res.status(400).json({ error: 'Luxemburg ist der gesetzliche Fallback für nicht aufgeführte Länder und kann nicht gelöscht werden.' });
+      return;
+    }
     const result = await db
       .delete(schema.pauschalenAusland)
       .where(eq(schema.pauschalenAusland.landKey, landKey))

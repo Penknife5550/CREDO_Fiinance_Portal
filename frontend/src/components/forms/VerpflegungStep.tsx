@@ -1,15 +1,16 @@
 import { useState, useEffect } from 'react';
 import type { Reisetag } from '@/lib/types';
-import { berechneVmaTag, berechneVmaTagAusland, formatReisetagTyp, formatDatumKurz } from '@/lib/vma';
+import { berechneVmaTag, berechneVmaTagMitSatz, formatReisetagTyp, formatDatumKurz, type VmaSatz } from '@/lib/vma';
 import { formatCurrency } from '@/lib/utils';
 
 interface Props {
   reisetage: Reisetag[];
   onChange: (tage: Reisetag[]) => void;
-  auslandsTagessatz24h?: number;
+  /** Sätze des Reiselandes (24 h / 8 h) — undefined = Inland. */
+  auslandsSatz?: VmaSatz;
 }
 
-export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: Props) {
+export function VerpflegungStep({ reisetage, onChange, auslandsSatz }: Props) {
   // Master-Toggle: hat irgendwer eine Mahlzeit gestellt?
   // Initial: aus den Daten ableiten — wenn ein Tag bereits Mahlzeit-Flags hat, ist es "Ja".
   const initialGestellt = reisetage.some(
@@ -22,13 +23,13 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
     if (!verpflegungGestellt && reisetage.some(t => t.fruehstueckGestellt || t.mittagGestellt || t.abendGestellt)) {
       const cleared = reisetage.map(t => {
         const reset = { ...t, fruehstueckGestellt: false, mittagGestellt: false, abendGestellt: false };
-        return auslandsTagessatz24h
-          ? berechneVmaTagAusland(reset, auslandsTagessatz24h)
+        return auslandsSatz
+          ? berechneVmaTagMitSatz(reset, auslandsSatz)
           : berechneVmaTag(reset);
       });
       onChange(cleared);
     }
-  }, [verpflegungGestellt, reisetage, onChange, auslandsTagessatz24h]);
+  }, [verpflegungGestellt, reisetage, onChange, auslandsSatz]);
 
   if (reisetage.length === 0) {
     return (
@@ -39,14 +40,14 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
     );
   }
 
-  // Eintaegige Reise unter 8h: kein Anspruch — kompakter Hinweis, keine Eingabe
-  const hatEintaegigOhneVma = reisetage.length === 1 && reisetage[0].vmaBrutto === 0;
+  // Eintaegige Reise bis einschl. 8 h: kein Anspruch — kompakter Hinweis, keine Eingabe
+  const hatEintaegigOhneVma = reisetage.length === 1 && reisetage[0].typ === 'EINTAEGIG' && !reisetage[0].eintaegigUeber8h;
   if (hatEintaegigOhneVma) {
     return (
       <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
         <p className="text-amber-900 font-medium mb-1">Kein Verpflegungsmehraufwand</p>
         <p className="text-sm text-amber-800">
-          Bei einer Abwesenheit unter 8 Stunden besteht kein Anspruch auf
+          Bei einer Abwesenheit von nicht mehr als 8 Stunden besteht kein Anspruch auf
           Verpflegungspauschale (§ 9 Abs. 4a EStG).
         </p>
       </div>
@@ -57,8 +58,8 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
     const updated = reisetage.map((tag, i) => {
       if (i !== index) return tag;
       const toggled = { ...tag, [field]: !tag[field] };
-      return auslandsTagessatz24h
-        ? berechneVmaTagAusland(toggled, auslandsTagessatz24h)
+      return auslandsSatz
+        ? berechneVmaTagMitSatz(toggled, auslandsSatz)
         : berechneVmaTag(toggled);
     });
     onChange(updated);
@@ -234,8 +235,10 @@ export function VerpflegungStep({ reisetage, onChange, auslandsTagessatz24h }: P
           </div>
 
           <p className="text-xs text-credo-500">
-            Kürzung: Frühstück 20 %, Mittag 40 %, Abend 40 % — immer vom Volltagessatz (28,00 EUR Inland).
-            Das Ergebnis pro Tag wird nie negativ.
+            {auslandsSatz
+              ? <>Kürzung: Frühstück 20 %, Mittag 40 %, Abend 40 % — vom 24-Stunden-Satz des Reiselandes ({formatCurrency(auslandsSatz.tagessatz24h)}).</>
+              : <>Kürzung: Frühstück 20 %, Mittag 40 %, Abend 40 % — immer vom Volltagessatz (28,00 EUR).</>}
+            {' '}Das Ergebnis pro Tag wird nie negativ.
           </p>
         </>
       )}

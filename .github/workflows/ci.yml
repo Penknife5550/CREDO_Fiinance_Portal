@@ -1,0 +1,80 @@
+# CI für das CREDO Finanzportal: Tests (unter zwei Zeitzonen), Typprüfung,
+# Frontend-Build, ESLint und Docker-Build. Es wird nichts veröffentlicht.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Vitest (TZ=${{ matrix.tz }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Reisetage/VMA dürfen nicht von der Zeitzone des Rechners abhängen.
+        tz: [UTC, Europe/Berlin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Vitest
+        env:
+          TZ: ${{ matrix.tz }}
+        run: TZ=$TZ npx vitest run
+
+  backend:
+    name: Backend (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -p backend --noEmit
+      # Repo-Tests (Paritätstest Frontend ↔ Backend) liegen außerhalb beider Workspaces.
+      - run: npx tsc -p tests --noEmit
+
+  frontend:
+    name: Frontend (Build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace=frontend
+
+  lint:
+    name: ESLint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx eslint .
+
+  docker:
+    name: Docker-Build (ohne Push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t credo-finanzportal:ci .

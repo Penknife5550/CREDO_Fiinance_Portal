@@ -1074,6 +1074,7 @@ function PauschalenTab() {
             <h3 className="text-lg font-semibold text-credo-900">Auslandspauschalen</h3>
             <p className="text-xs text-credo-500 mt-0.5">
               Aktuell: BMF-Schreiben vom 05.12.2025 (gültig ab 01.01.2026). Bei neuem BMF-Schreiben hier aktualisieren.
+              Sortierung unter 1000 erscheint im Reisekosten-Formular unter „Häufige Ziele“.
             </p>
           </div>
           <button
@@ -1107,7 +1108,7 @@ function PauschalenTab() {
             {/* Neuer Eintrag */}
             {creating && (
               <PauschaleZeile
-                eintrag={{ landKey: '', tagessatz24h: 0, tagessatz8h: 0, uebernachtung: 0, reihenfolge: 999 }}
+                eintrag={{ landKey: '', tagessatz24h: 0, tagessatz8h: 0, uebernachtung: 0, reihenfolge: 9999 }}
                 isNew
                 onSave={p => handleSave(p, true)}
                 onCancel={() => setCreating(false)}
@@ -1142,14 +1143,17 @@ function PauschalenTab() {
                     >
                       <Edit className="w-4 h-4" />
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(eintrag.landKey)}
-                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
-                      aria-label={`${eintrag.landKey} löschen`}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {/* Luxemburg = gesetzlicher Fallback für nicht aufgeführte Länder (Server sperrt das Löschen ebenfalls). */}
+                    {eintrag.landKey !== 'Luxemburg' && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(eintrag.landKey)}
+                        className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                        aria-label={`${eintrag.landKey} löschen`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               )
