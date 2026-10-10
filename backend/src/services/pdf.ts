@@ -4,6 +4,8 @@ import path from 'path';
 import sharp from 'sharp';
 import QRCode from 'qrcode';
 import { kmSatzAlsString } from '../lib/kmSaetze.js';
+import { LAND_ANDERES, LAND_SEETAG } from '../lib/constants.js';
+import { datumDe } from '../lib/reiseangaben.js';
 
 // WinAnsi (CP1252) deckt Latin-1 + einige Sonderzeichen ab. pdf-lib's StandardFonts
 // werfen bei nicht darstellbaren Zeichen (Emoji, Kyrillisch, CJK …) — was die gesamte
@@ -51,7 +53,26 @@ interface ReisekostenPdfData {
   vmaNetto: number;
   weitereKostenSumme: number;
   gesamtbetrag: number;
-  reisetage: Array<{ datum: string; typ: string; vmaNetto: number; fruehstueckGestellt: boolean; mittagGestellt: boolean; abendGestellt: boolean }>;
+  /** Länderfolge der Reise (maßgebende Länder ohne direkte Wiederholung). */
+  reiseland: string[];
+  reisetage: Array<{
+    datum: string; // 'YYYY-MM-DD'
+    typ: string;
+    /** Maßgebendes Land: 'INLAND' | 'ANDERES' | 'SEETAG' | Land-Key */
+    landKey: string;
+    /** Anzeigename des Landes (bei ANDERES der angegebene Staat). */
+    land: string;
+    vmaBrutto: number;
+    vmaKuerzung: number;
+    vmaNetto: number;
+    fruehstueckGestellt: boolean;
+    mittagGestellt: boolean;
+    abendGestellt: boolean;
+    /** Gemeinsamer Tag mit einer früheren Abrechnung derselben Person (Prüfvermerk). */
+    ueberschneidung: boolean;
+  }>;
+  /** Prüfvermerke zu Überschneidungen (Fußnote unter der VMA-Tabelle). */
+  pruefvermerke: string[];
   weitereKosten: Array<{ typ: string; beschreibung: string; betrag: number }>;
   unterschriftBild?: string;
 }
@@ -145,6 +166,33 @@ export async function erstelleGesamtPdf(
   const drawLine = () => {
     checkPageBreak(ctx);
     ctx.page.drawLine({ start: { x: 50, y: ctx.y }, end: { x: width - 50, y: ctx.y }, thickness: 0.5, color: rgb(0.7, 0.7, 0.7) });
+  };
+
+  /** Zeichnet Text rechtsbündig an der Kante `rechts` (Tabellenspalten mit Beträgen). */
+  const drawTextRechts = (text: string, rechts: number, size = 10, bold = false) => {
+    const safe = winAnsiSafe(text);
+    drawTextAt(safe, rechts - (bold ? fontBold : font).widthOfTextAtSize(safe, size), ctx.y, size, bold);
+  };
+
+  /** Zeichnet Text mit Umbruch an Wortgrenzen bis maxX; je Zeile Seitenumbruch-Prüfung. */
+  const drawUmbrochen = (text: string, x: number, maxX: number, size = 10, zeilenhoehe = 14) => {
+    let zeile = '';
+    for (const rohwort of winAnsiSafe(text).split(' ')) {
+      // Ein Wort, das allein breiter als die Zeile ist (z. B. Freitext ohne Leerzeichen), wird gekürzt.
+      const wort = passtInSpalte(rohwort, maxX - x, font, size);
+      const probe = zeile ? `${zeile} ${wort}` : wort;
+      if (zeile && font.widthOfTextAtSize(probe, size) > maxX - x) {
+        drawText(zeile, x, size);
+        ctx.y -= zeilenhoehe;
+        zeile = wort;
+      } else {
+        zeile = probe;
+      }
+    }
+    if (zeile) {
+      drawText(zeile, x, size);
+      ctx.y -= zeilenhoehe;
+    }
   };
 
   // ── Swiss QR Code generieren (wird oben rechts platziert) ──
@@ -243,6 +291,8 @@ export async function erstelleGesamtPdf(
     ctx.y -= 15;
     drawText(`Ziel: ${data.reiseziel}`, 50);
     ctx.y -= 15;
+    // Länderfolge; „–“ statt Pfeil (WinAnsi kennt keinen Pfeil).
+    drawUmbrochen(`Reiseland: ${data.reiseland.join(' – ')}`, 50, width - 50, 10, 15);
     drawText(`Abfahrt: ${formatDatumZeit(data.abfahrtZeit)} (${data.abfahrtOrt === 'WOHNUNG' ? 'Wohnung' : 'Erste Tätigkeitsstätte'})`, 50);
     ctx.y -= 15;
     drawText(`Rückkehr: ${formatDatumZeit(data.rueckkehrZeit)}`, 50);
@@ -263,21 +313,72 @@ export async function erstelleGesamtPdf(
       ctx.y -= 20;
     }
 
-    // VMA
-    if (data.vmaNetto > 0) {
+    // VMA: Tabelle ALLER Reisetage (auch 0,00) mit dem für den Tag maßgebenden Land
+    if (data.reisetage.length > 0) {
       checkPageBreak(ctx);
       drawText('VERPFLEGUNGSMEHRAUFWAND', 50, 11, true);
       ctx.y -= 18;
-      for (const tag of data.reisetage) {
-        if (tag.vmaNetto > 0) {
-          checkPageBreak(ctx);
-          drawText(`${tag.datum}  ${tag.typ}`, 50);
-          drawTextAt(formatEur(tag.vmaNetto), 450, ctx.y);
-          ctx.y -= 14;
-        }
+
+      // Fußnoten nur für vorkommende Fälle, fortlaufend nummeriert (¹ ² ³ sind WinAnsi).
+      const fussnoten: Array<{ art: 'ANDERES' | 'SEETAG' | 'UEBERSCHNEIDUNG'; texte: string[] }> = [];
+      if (data.reisetage.some(t => t.landKey === LAND_ANDERES)) {
+        fussnoten.push({ art: 'ANDERES', texte: ['Staat nicht in der BMF-Übersicht: Satz Luxemburg (BMF 05.12.2025). Bitte prüfen.'] });
       }
-      drawText(`Gesamt VMA: ${formatEur(data.vmaNetto)}`, 50, 10, true);
-      ctx.y -= 25;
+      if (data.reisetage.some(t => t.landKey === LAND_SEETAG)) {
+        fussnoten.push({ art: 'SEETAG', texte: ['Seetag: Satz Luxemburg (R 9.6 Abs. 3 LStR)'] });
+      }
+      if (data.pruefvermerke.length > 0) {
+        fussnoten.push({ art: 'UEBERSCHNEIDUNG', texte: data.pruefvermerke });
+      }
+      const marke = (art: (typeof fussnoten)[number]['art']) => {
+        const i = fussnoten.findIndex(f => f.art === art);
+        return i < 0 ? '' : HOCHZAHLEN[i];
+      };
+
+      // Spalten: Datum | Art | Land | Pauschale | Kürzung | Betrag (Beträge rechtsbündig)
+      const X_ART = 128;
+      const X_LAND = 185;
+      const R_PAUSCHALE = 405;
+      const R_KUERZUNG = 475;
+      const R_BETRAG = width - 50;
+      drawText('Datum', 50, 9, true);
+      drawTextAt('Art', X_ART, ctx.y, 9, true);
+      drawTextAt('Land', X_LAND, ctx.y, 9, true);
+      drawTextRechts('Pauschale', R_PAUSCHALE, 9, true);
+      drawTextRechts('Kürzung', R_KUERZUNG, 9, true);
+      drawTextRechts('Betrag', R_BETRAG, 9, true);
+      ctx.y -= 12;
+      drawLine();
+      ctx.y -= 12;
+
+      for (const tag of data.reisetage) {
+        checkPageBreak(ctx);
+        const landMarke = tag.landKey === LAND_ANDERES ? marke('ANDERES') : tag.landKey === LAND_SEETAG ? marke('SEETAG') : '';
+        drawText(`${formatTagDatum(tag.datum)}${tag.ueberschneidung ? marke('UEBERSCHNEIDUNG') : ''}`, 50, 9);
+        drawTextAt(REISETAG_ART[tag.typ] ?? tag.typ, X_ART, ctx.y, 9);
+        drawTextAt(passtInSpalte(tag.land, R_PAUSCHALE - 65 - X_LAND, font, 9) + landMarke, X_LAND, ctx.y, 9);
+        drawTextRechts(formatEur(tag.vmaBrutto), R_PAUSCHALE, 9);
+        drawTextRechts(formatEur(tag.vmaKuerzung), R_KUERZUNG, 9);
+        drawTextRechts(formatEur(tag.vmaNetto), R_BETRAG, 9);
+        ctx.y -= 13;
+      }
+
+      ctx.y -= 2;
+      drawLine();
+      ctx.y -= 14;
+      drawText('Gesamt VMA', 50, 10, true);
+      drawTextRechts(formatEur(data.vmaNetto), R_BETRAG, 10, true);
+      ctx.y -= 16;
+
+      fussnoten.forEach((f, i) => {
+        for (const text of f.texte) {
+          checkPageBreak(ctx);
+          drawText(HOCHZAHLEN[i], 50, 8);
+          drawUmbrochen(text, 58, R_BETRAG, 8, 11);
+        }
+      });
+
+      ctx.y -= 10;
       drawLine();
       ctx.y -= 20;
     }
@@ -831,6 +932,22 @@ export async function erstelleKlassenfahrtPdf(
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────
+
+const HOCHZAHLEN = ['¹', '²', '³'];
+
+const REISETAG_ART: Record<string, string> = {
+  ANREISE: 'Anreise',
+  GANZTAG: 'Ganztag',
+  ABREISE: 'Abreise',
+  EINTAEGIG: 'Eintägig',
+};
+
+/** 'YYYY-MM-DD' → 'Mo 16.03.2026' (Wochentag per UTC — unabhängig von der Server-Zeitzone). */
+function formatTagDatum(datum: string): string {
+  const [j, m, t] = datum.split('-').map(Number);
+  const wochentag = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][new Date(Date.UTC(j, m - 1, t)).getUTCDay()];
+  return `${wochentag} ${datumDe(datum)}`;
+}
 
 function formatDezimal(n: number): string {
   return (Number.isInteger(n) ? String(n) : n.toFixed(2).replace('.', ',')).replace(/,00$/, '');

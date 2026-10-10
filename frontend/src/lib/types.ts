@@ -57,14 +57,24 @@ export interface PersoenlicheDaten {
   kostenstelleId: string;
 }
 
-export interface Reisetag {
+/** Eingaben je Reisetag (Formular-State) — Beträge werden daraus berechnet, nie gespeichert. */
+export interface ReisetagEingabe {
   datum: string;
   typ: 'ANREISE' | 'GANZTAG' | 'ABREISE' | 'EINTAEGIG';
-  /** Nur für EINTAEGIG: Abwesenheit strikt länger als 8 h (> 480 min)? Wird von berechneReisetage gesetzt. */
+  /** Nur für EINTAEGIG: Abwesenheit strikt länger als 8 h (> 480 min)? Wird von bildeReisetage gesetzt. */
   eintaegigUeber8h?: boolean;
   fruehstueckGestellt: boolean;
   mittagGestellt: boolean;
   abendGestellt: boolean;
+  /** Anreise-/Zwischentag: Land um 24 Uhr ('INLAND', 'ANDERES', 'SEETAG' oder Land-Key); null = keine Angabe. */
+  land24uhr?: string | null;
+  /** Land der letzten beruflichen Tätigkeit an diesem Tag; null = keine Angabe. */
+  letzterTaetigkeitsort?: string | null;
+  /** Pflicht bei 'ANDERES': Name des nicht aufgeführten Staats. */
+  landFreitext?: string | null;
+}
+
+export interface Reisetag extends ReisetagEingabe {
   vmaBrutto: number;
   vmaKuerzung: number;
   vmaNetto: number;

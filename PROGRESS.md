@@ -320,9 +320,30 @@ Auslöser: Kritische Bewertung 10/2026 — die Auslands-VMA rechnete die BMF-End
 | 17.8 | `backend/scripts/vma-nachkorrektur-2026.sql`: Ist/Soll je Tag und Beleg seit 01.01.2026 (Soll aus Abfahrt/Rückkehr und BMF-Sätzen, nicht aus DB/Tagesliste); Überzahlung geteilt in pauschalierbar (≤ 100 % der ungekürzten Pauschale, BMF 25.11.2020 Rz. 58) und individuell; Ausgabe außerhalb des Repos (`.gitignore`) | ✅ | 2026-10-10 |
 | 17.9 | Paritätstest `tests/vma-paritaet.test.ts` (Beträge + Tagesbildung inkl. Zeitumstellung, typgeprüft über `tests/tsconfig.json`); CI `.github/workflows/ci.yml` mit TZ-Matrix UTC / Europe/Berlin | ✅ | 2026-10-10 |
 
-**Offen (Release 1b):** Land je Reisetag (Mehrländerreisen), serverseitige Tagesbildung mit Pflichtfrage „Auswärtige Übernachtung?“ (über Mitternacht unter 24 h ohne Übernachtung = höchstens ein Tag), PDF-Tabelle je Tag. Bis dahin zählt eine solche Reise als An- und Abreisetag.
+**Release 1b (Land je Reisetag) — siehe unten.**
 
 **Verifikation:** Backend-tsc und Tests-tsc grün, Frontend-Build grün, **218 Vitest** unter TZ=UTC und TZ=Europe/Berlin, ESLint 0 Fehler. Migrationen 0000–0014 + Seed auf frischer PG-16-DB: 223 Auslandszeilen (19 „Häufige Ziele“), Prüfabfrage leer; Altbestand-Szenario (alte Seed-Werte, im AdminCenter geänderter Satz, gelöschtes Luxemburg) und zweiter Lauf von 0014 geprüft. Nachkorrektur gegen 13 Testbelege geprüft (u. a. BMF-Beispiel 51: 14 € pauschal, 16 € individuell).
+
+### Phase 17: VMA-Fix Ausland — Release 1b: Land je Reisetag (10.10.2026)
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 17.10 | `backend/src/lib/reisetage.ts` (Zwilling `frontend/src/lib/reisetage.ts`): Server bildet die Reisetage selbst aus Abfahrt/Rückkehr (`bildeReisetage`); über Mitternacht unter 24 h Pflichtfrage „Auswärtige Übernachtung?“ (ohne Übernachtung höchstens EIN eintägiger Tag auf dem Tag mit dem größeren Zeitanteil); zwei Kalendertage ab 24 h ohne Übernachtung = EIN Ganztag mit 24-h-Satz (BMF 25.11.2020 Bsp. 31) | ✅ | 2026-10-10 |
+| 17.11 | Maßgebendes Land je Tag (`bestimmeTageslaender`, § 9 Abs. 4a S. 5 EStG): An-/Zwischentag Ort um 24 Uhr, im Inland → letzter Tätigkeitsort im Ausland; Abreisetag/eintägig letzter Tätigkeitsort im Ausland; Seetag und „Staat nicht in der Liste“ → Satz Luxemburg; Satzauswahl `waehleTagesSatz` | ✅ | 2026-10-10 |
+| 17.12 | Migration `0015_reisetage_land.sql`: `reisetage.land_24uhr/letzter_taetigkeitsort/land_key/land_freitext`, `einreichungen.uebernachtung` (nullable, kein Backfill) | ✅ | 2026-10-10 |
+| 17.13 | Route REISEKOSTEN: Client-Tage nur per Datum zugeordnet, jede Landangabe gegen die Ländertabelle geprüft, Sätze in einer Abfrage; alter Browser-Tab ohne Übernachtungsfeld bekommt den Hinweis „Seite neu laden“ | ✅ | 2026-10-10 |
+| 17.14 | Überschneidung mit früheren Reisekosten derselben Person (Personalnr. + Nachname, sonst Name + Vorname + IBAN) → Prüfvermerk in PDF und Mail (höhere Pauschale + Kürzung beider Abrechnungen; zwei eintägige Reisen: Zeiten zusammenrechnen, Rz. 47) | ✅ | 2026-10-10 |
+| 17.15 | PDF: Reiseland-Zeile, VMA-Tabelle aller Tage (Datum/Art/Land/Pauschale/Kürzung/Betrag), Fußnoten Seetag/„Staat nicht in der Liste“/Überschneidung, lange Wörter gekürzt; Mail: Reiseland, Land je Mahlzeitenzeile, FAQ-Zeile „Frühstück 19 %“ entfernt | ✅ | 2026-10-10 |
+| 17.16 | Wizard: Länderauswahl je Tag (Hilfetexte Flug inkl. Zwischenlandung/„Österreich“, Schiff, Übersee), Übernachtungsfrage (ab 24 h mit „Ja“ vorbelegt), Eingaben bleiben bei Änderung des Zeitraums und beim Wechsel Inland/Ausland erhalten, „Staat nicht in der Liste“ gilt für die Folgetage, Freitext-Abgleich mit der Liste („Südkorea“ → „Korea, Republik“), Barrierefreiheit (fieldset/legend je Tag, aria-describedby/-invalid) | ✅ | 2026-10-10 |
+| 17.17 | `vma-nachkorrektur-2026.sql` schließt Belege ab 1b (mit `land_key`) aus; Paritätstest um Tagesbildung, Landbestimmung, Satzauswahl, Gesamtkette und Anzeige (Landname, Länderfolge) erweitert | ✅ | 2026-10-10 |
+
+**Bewusste Vereinfachung:** Dauer = Differenz der Wanduhrzeiten (zeitzonenunabhängig); in den beiden Nächten der Zeitumstellung weicht sie um eine Stunde von der tatsächlichen Abwesenheit ab.
+
+**Steuerberater klären:** Abreisetag — BMF-Wortlaut „letzter Tätigkeitsort“, Gesetz „letzter Tätigkeitsort im Ausland“; das Portal fragt nach dem Ausland (auch Vortag).
+
+**Offen (Release 1c):** Sätze nach Reisedatum (Satzstände je Jahr), Länder-Dropdown ohne Dubletten, Seed legt bei jedem Start Inlandspauschalen-Duplikate an, Muster-PDFs neu erzeugen.
+
+**Verifikation:** Backend-tsc grün, Frontend-Build grün, **348 Vitest** unter TZ=UTC und TZ=Europe/Berlin, ESLint 0 Fehler. Migrationen 0000–0015 + Seed auf frischer PG-16-DB (16 Migrationen, 5 neue Spalten nullable). API-E2E gegen die Test-DB: 33/33 (u. a. BE → NL → LU 166,20; 26 h ohne Übernachtung Belgien 59,00; alter Client; unbekannte Landangabe 400; Überschneidungsvermerke). Nachkorrektur lesend: nur Altbelege, keine 1b-Belege.
 
 ---
 

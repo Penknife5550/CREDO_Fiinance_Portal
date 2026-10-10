@@ -1,6 +1,7 @@
 interface Reisetag {
   datum: string;
-  typ: string;
+  /** Maßgebendes Land des Tags (Anzeigename, z. B. 'Belgien', 'Inland'). */
+  land: string;
   fruehstueckGestellt: boolean;
   mittagGestellt: boolean;
   abendGestellt: boolean;
@@ -17,10 +18,14 @@ interface ReisekostenEmailDaten {
   rueckkehrZeit: string;
   /** Reiseland (landKey aus pauschalen_ausland); null/leer = Inland. */
   land?: string | null;
+  /** Länderfolge der Reise (maßgebende Länder, ohne direkte Wiederholung). */
+  reiseland: string[];
   gesamtbetrag: number;
   iban: string;
   kontoinhaber: string;
   reisetage: Reisetag[];
+  /** Prüfvermerke (z. B. Überschneidung mit einer früheren Abrechnung). */
+  pruefvermerke: string[];
 }
 
 interface ErstattungEmailDaten {
@@ -70,7 +75,7 @@ function erstelleMahlzeitenInfo(reisetage: Reisetag[]): string {
     if (t.fruehstueckGestellt) mahlzeiten.push('F');
     if (t.mittagGestellt) mahlzeiten.push('M');
     if (t.abendGestellt) mahlzeiten.push('A');
-    return `  ${formatiereDatum(t.datum)}: ${mahlzeiten.join(', ')} gestellt`;
+    return `  ${formatiereDatum(t.datum)} (${t.land}): ${mahlzeiten.join(', ')} gestellt`;
   });
 
   return [
@@ -89,10 +94,15 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
     `Mitarbeiter: ${data.vorname} ${data.nachname} (Personal-Nr.: ${data.personalNr})`,
     `Mandant: ${data.mandantName} (${data.mandantNr})`,
     `Reiseziel: ${data.reiseziel}`,
+    `Reiseland: ${data.reiseland.join(' \u2192 ')}`,
     `Reisezeitraum: ${formatiereDatumZeit(data.abfahrtZeit)} \u2013 ${formatiereDatumZeit(data.rueckkehrZeit)}`,
     `Gesamtbetrag: ${formatiereBetrag(data.gesamtbetrag)} EUR`,
     '',
   ];
+
+  if (data.pruefvermerke.length > 0) {
+    zeilen.push('Pr\u00fcfvermerk:', ...data.pruefvermerke.map(v => `  ${v}`), '');
+  }
 
   if (mahlzeitenInfo) {
     zeilen.push(mahlzeitenInfo, '');
@@ -110,7 +120,7 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
     ...(data.land
       ? [
           `\u2022 Auslandsreise (${data.land}): Verpflegungspauschalen nach BMF-Schreiben vom 05.12.2025 (24-h-Satz Ganztag, 8-h-Satz An-/Abreisetag bzw. eint\u00e4gig >8h).`,
-          '\u2022 K\u00fcrzungen bei gestellten Mahlzeiten: Fr\u00fchst\u00fcck 20 %, Mittag/Abend je 40 % vom 24-h-Satz des Reiselandes, auch am An-/Abreisetag.',
+          '\u2022 K\u00fcrzungen bei gestellten Mahlzeiten: Fr\u00fchst\u00fcck 20 %, Mittag/Abend je 40 % vom 24-h-Satz des f\u00fcr den Tag ma\u00dfgebenden Landes (Inlandstag: 28 EUR), auch am An-/Abreisetag.',
         ]
       : [
           '\u2022 Die Verpflegungspauschalen betragen 14 EUR (>8h/An-Abreisetag) bzw. 28 EUR (Ganztag).',
@@ -118,7 +128,6 @@ export function erstelleReisekostenEmailText(data: ReisekostenEmailDaten): strin
           '\u2022 Die K\u00fcrzung bezieht sich immer auf den vollen Tagessatz (28 EUR), auch am An-/Abreisetag.',
         ]),
     '\u2022 Kilometerpauschale: PKW 0,30 EUR/km, Motorrad 0,20 EUR/km \u2014 kein Vorsteuerabzug.',
-    '\u2022 Bei Hotelrechnungen mit Fr\u00fchst\u00fcck bitte USt trennen: \u00dcbernachtung 7%, Fr\u00fchst\u00fcck 19%.',
     '\u2022 Verpflegungspauschalen sind nach 3 Monaten am selben Einsatzort nicht mehr steuerfrei.',
     '\u2022 Rechtsgrundlage: \u00a7 9 Abs. 4a EStG, BMF-Schreiben 05.12.2025.',
     '',

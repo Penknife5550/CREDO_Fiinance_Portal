@@ -97,7 +97,7 @@ Das Script:
 4. Wartet auf DB-Health, fuehrt automatisch alle Migrationen aus (`docker-entrypoint.sh`)
 5. Seedet 7 Mandanten + Pauschalen + Admin-Konto
 
-**Migrationen 0000–0014 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`), 0000–0014 erneut am 10.10.2026. Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012), `email_config` als Singleton (0013), vollständige BMF-Auslandspauschalen 2026 (0014).
+**Migrationen 0000–0015 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`), 0000–0014 erneut am 10.10.2026, 0000–0015 ebenfalls am 10.10.2026. Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012), `email_config` als Singleton (0013), vollständige BMF-Auslandspauschalen 2026 (0014), Land je Reisetag + Übernachtungsangabe (0015).
 
 **0014 (Auslandspauschalen nach BMF-Schreiben vom 05.12.2025):** legt alle Länder/Städte an (223 Zeilen inkl. 9 Verweisstaaten) und korrigiert die 19 Bestandszeilen nur dort, wo noch der alte Seed-Wert steht — im AdminCenter gepflegte Werte bleiben unberührt. Vor und nach dem Deploy prüfen:
 
@@ -106,6 +106,8 @@ docker exec -i credo-finanz-db psql -U credo -d finanzportal < backend/scripts/p
 ```
 
 Vorher zeigt die Abfrage die anstehenden Korrekturen und fehlende Länder, nachher muss sie **leer** sein. Bleibt eine Zeile `abweichend`, wurde der Satz im AdminCenter geändert — bewusst klären und dort auf den BMF-Wert setzen. Die Migration wird aus `backend/src/db/data/bmf-auslandspauschalen-2026*.csv` erzeugt (`npx tsx backend/scripts/bmf-csv-zu-sql.ts`); nach dem Deploy Korrekturen nur noch als **neue** Migration, nie 0014 neu schreiben. Für die lohnsteuerliche Nachkorrektur siehe `backend/scripts/vma-nachkorrektur-2026.sql` (Kopfkommentar) und Abschnitt 13.
+
+**0015 (Land je Reisetag, Release 1b):** fünf neue, nullable Spalten ohne Backfill und ohne Fremdschlüssel — `reisetage.land_24uhr`, `reisetage.letzter_taetigkeitsort` (Angaben des Mitarbeiters), `reisetage.land_key` (maßgebendes Land, vom Server bestimmt: `INLAND`, `ANDERES`, `SEETAG` oder Land-Key), `reisetage.land_freitext` (Staat bei „Staat nicht in der Liste“) und `einreichungen.uebernachtung`. Reine Metadaten: Altbelege behalten `NULL` (maßgebend war dort `einreichungen.land`), Beträge ändern sich nicht. Ab 1b bildet der Server die Reisetage selbst aus Abfahrt/Rückkehr; ein noch geöffneter alter Browser-Tab bekommt bei Reisen unter 24 h über Mitternacht die Meldung, die Seite neu zu laden. Die Nachkorrektur (`vma-nachkorrektur-2026.sql`) schließt Belege mit gesetztem `land_key` aus — sie sind bereits je Tag richtig gerechnet.
 
 Nach erfolgreichem Start:
 

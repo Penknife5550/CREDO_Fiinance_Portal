@@ -85,6 +85,8 @@ export const einreichungen = pgTable('einreichungen', {
   abfahrtZeit: timestamp('abfahrt_zeit'),
   rueckkehrZeit: timestamp('rueckkehr_zeit'),
   land: varchar('land', { length: 100 }), // NULL = Inland
+  // Auswärtige Übernachtung (Pflichtangabe nur bei < 24 h über zwei Kalendertage), seit 0015
+  uebernachtung: boolean('uebernachtung'),
   verkehrsmittel: verkehrsmittelEnum('verkehrsmittel'),
   kmGefahren: decimal('km_gefahren', { precision: 8, scale: 2 }),
   kmBerechnet: decimal('km_berechnet', { precision: 8, scale: 2 }),
@@ -129,6 +131,11 @@ export const reisetage = pgTable('reisetage', {
   vmaBrutto: decimal('vma_brutto', { precision: 10, scale: 2 }).notNull(),
   vmaKuerzung: decimal('vma_kuerzung', { precision: 10, scale: 2 }).notNull().default('0'),
   vmaNetto: decimal('vma_netto', { precision: 10, scale: 2 }).notNull(),
+  // Land je Reisetag (seit 0015, Altbestand NULL): Angaben des Nutzers + maßgebendes Land vom Server
+  land24uhr: varchar('land_24uhr', { length: 100 }),
+  letzterTaetigkeitsort: varchar('letzter_taetigkeitsort', { length: 100 }),
+  landKey: varchar('land_key', { length: 100 }), // 'INLAND' | 'ANDERES' | 'SEETAG' | Land-Key
+  landFreitext: varchar('land_freitext', { length: 100 }), // Staat bei 'ANDERES'
 }, (t) => ({
   einreichungIdx: index('reisetage_einreichung_idx').on(t.einreichungId),
 }));

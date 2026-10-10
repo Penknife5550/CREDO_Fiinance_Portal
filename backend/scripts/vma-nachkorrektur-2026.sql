@@ -11,7 +11,8 @@
 --   VMA (Soll) gegenüber — je Kalendertag und je Beleg. Es ändert nichts an der Datenbank.
 --
 -- VORAUSSETZUNG
---   Tabellenstand VOR Release 1c (pauschalen_ausland mit Primärschlüssel land_key).
+--   Tabellenstand VOR Release 1c (pauschalen_ausland mit Primärschlüssel land_key); läuft vor
+--   und nach Migration 0015 (Release 1b).
 --   Das Soll rechnet mit den BMF-Sätzen 2026 aus der CTE `bmf` (generiert aus
 --   backend/src/db/data/bmf-auslandspauschalen-2026*.csv), NICHT mit dem DB-Inhalt von
 --   pauschalen_ausland. Im AdminCenter abweichend gepflegte Sätze fließen also nicht ins
@@ -29,6 +30,10 @@
 --   Mahlzeiten werden je Datum aus der gespeicherten Tagesliste übernommen.
 --   Bis Release 1b gibt es nur ein Land je Beleg — bei Mehrländerreisen das Soll je Tag
 --   von Hand anpassen.
+--   Belege ab Release 1b (mindestens ein Reisetag mit reisetage.land_key) sind AUSGESCHLOSSEN:
+--   Der Server hat sie bereits je Tag mit dem maßgebenden Land und der Übernachtungsangabe
+--   gerechnet; das Soll dieses Skripts (ein Land je Beleg, Übernachtung unbekannt) wiese dort
+--   falsche Differenzen aus.
 --
 -- AUSGABE (eine Ergebnismenge, nach Beleg sortiert)
 --   zeile = 'TAG'   : je Kalendertag Ist (gespeichert) / Soll / Differenz
@@ -326,6 +331,9 @@ rk AS (
   LEFT JOIN pauschalen_ausland pa ON pa.land_key = e.land
   WHERE e.typ = 'REISEKOSTEN'
     AND (e.created_at >= DATE '2026-01-01' OR e.abfahrt_zeit >= DATE '2026-01-01')
+    -- ab Release 1b je Tag korrekt gerechnet (land_key ist dann an jedem Tag gesetzt, auch INLAND);
+    -- über to_jsonb, damit das Skript auch vor Migration 0015 (ohne Spalte land_key) läuft
+    AND NOT EXISTS (SELECT 1 FROM reisetage r1b WHERE r1b.einreichung_id = e.id AND to_jsonb(r1b) ->> 'land_key' IS NOT NULL)
 ),
 -- Gespeicherte Tage je Kalenderdatum (doppelte Daten zusammengefasst)
 ist_tag AS (

@@ -39,7 +39,10 @@ interface ReisekostenPayload {
   abfahrtOrt: 'WOHNUNG' | 'TAETIGKEIT';
   abfahrtZeit: string;
   rueckkehrZeit: string;
+  /** Hauptland-Key; null = Inlandsreise. */
   land: string | null;
+  /** Pflicht bei Reisen unter 24 h über zwei Kalendertage; ab 24 h über zwei Kalendertage null = mit Übernachtung. */
+  uebernachtung: boolean | null;
   verkehrsmittel: string;
   kmGefahren: number;
   kmBetrag: number;
@@ -77,10 +80,25 @@ export async function einreichenReisekosten(payload: ReisekostenPayload): Promis
       abfahrtZeit: payload.abfahrtZeit,
       rueckkehrZeit: payload.rueckkehrZeit,
       land: payload.land,
+      uebernachtung: payload.uebernachtung,
       verkehrsmittel: payload.verkehrsmittel,
       kmGefahren: payload.kmGefahren,
       kmBetrag: payload.kmBetrag,
-      reisetage: payload.reisetage,
+      // Je Tag Mahlzeiten + Landangaben (leere Angabe = null); der Server bildet die Tage selbst,
+      // ordnet sie per Datum zu und rechnet Land, Satz und VMA neu.
+      reisetage: payload.reisetage.map(t => ({
+        datum: t.datum,
+        typ: t.typ,
+        fruehstueckGestellt: t.fruehstueckGestellt,
+        mittagGestellt: t.mittagGestellt,
+        abendGestellt: t.abendGestellt,
+        vmaBrutto: t.vmaBrutto,
+        vmaKuerzung: t.vmaKuerzung,
+        vmaNetto: t.vmaNetto,
+        land24uhr: t.land24uhr || null,
+        letzterTaetigkeitsort: t.letzterTaetigkeitsort || null,
+        landFreitext: t.landFreitext?.trim() || null,
+      })),
       vmaNetto: payload.vmaNetto,
       weitereKosten: payload.weitereKosten.filter(k => k.betrag > 0),
       weitereKostenSumme: payload.weitereKostenSumme,

@@ -1,63 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { berechneReisetage, berechneVmaTag, berechneKmBetrag, berechneVmaGesamt, berechneVmaTagMitSatz, INLAND_SATZ, type VmaSatz } from '../vma';
+import { berechneVmaTag, berechneKmBetrag, berechneVmaGesamt, berechneVmaTagMitSatz, formatDatumKurz, INLAND_SATZ, type VmaSatz } from '../vma';
+import { bildeReisetage } from '../reisetage';
 import type { Reisetag } from '../types';
-
-describe('berechneReisetage', () => {
-  it('gibt leeres Array bei leerem Input', () => {
-    expect(berechneReisetage('', '')).toEqual([]);
-  });
-
-  it('gibt leeres Array wenn Rückkehr vor Abfahrt', () => {
-    expect(berechneReisetage('2026-03-15T10:00', '2026-03-15T08:00')).toEqual([]);
-  });
-
-  it('erkennt eintägige Reise unter 8h ohne VMA', () => {
-    const tage = berechneReisetage('2026-03-15T09:00', '2026-03-15T14:00');
-    expect(tage).toHaveLength(1);
-    expect(tage[0].typ).toBe('EINTAEGIG');
-    expect(tage[0].vmaBrutto).toBe(0);
-  });
-
-  it('erkennt eintägige Reise über 8h mit VMA', () => {
-    const tage = berechneReisetage('2026-03-15T06:00', '2026-03-15T16:00');
-    expect(tage).toHaveLength(1);
-    expect(tage[0].typ).toBe('EINTAEGIG');
-    expect(tage[0].eintaegigUeber8h).toBe(true);
-    expect(tage[0].vmaBrutto).toBe(14);
-  });
-
-  it('eintägig genau 8:00 h → kein Anspruch (strikt mehr als 8 h nötig)', () => {
-    const [t] = berechneReisetage('2026-03-15T08:00', '2026-03-15T16:00');
-    expect(t.eintaegigUeber8h).toBe(false);
-    expect(t.vmaNetto).toBe(0);
-  });
-
-  it('eintägig 8:01 h → 14,00 (Inland)', () => {
-    const [t] = berechneReisetage('2026-03-15T08:00', '2026-03-15T16:01');
-    expect(t.eintaegigUeber8h).toBe(true);
-    expect(t.vmaNetto).toBe(14);
-  });
-
-  it('berechnet mehrtägige Reise korrekt', () => {
-    const tage = berechneReisetage('2026-03-15T08:00', '2026-03-17T18:00');
-    expect(tage).toHaveLength(3);
-    expect(tage[0].typ).toBe('ANREISE');
-    expect(tage[0].vmaBrutto).toBe(14);
-    expect(tage[1].typ).toBe('GANZTAG');
-    expect(tage[1].vmaBrutto).toBe(28);
-    expect(tage[2].typ).toBe('ABREISE');
-    expect(tage[2].vmaBrutto).toBe(14);
-  });
-
-  it('setzt alle Mahlzeiten auf false', () => {
-    const tage = berechneReisetage('2026-03-15T08:00', '2026-03-16T18:00');
-    tage.forEach(tag => {
-      expect(tag.fruehstueckGestellt).toBe(false);
-      expect(tag.mittagGestellt).toBe(false);
-      expect(tag.abendGestellt).toBe(false);
-    });
-  });
-});
 
 describe('berechneVmaTag', () => {
   const ganzTag: Reisetag = {
@@ -199,22 +143,29 @@ describe('berechneVmaTagMitSatz — BMF-Endbeträge ohne Faktor (Belgien 59/40)'
   });
 
   it('Belgien 3 Tage (An/Ganz/Ab, keine Mahlzeiten) = 139,00', () => {
-    const tage = berechneReisetage('2026-03-15T08:00', '2026-03-17T18:00')
-      .map(t => berechneVmaTagMitSatz(t, BELGIEN));
+    const tage = bildeReisetage('2026-03-15T08:00', '2026-03-17T18:00', null)
+      .map(t => berechneVmaTagMitSatz(tag(t), BELGIEN));
     expect(tage.map(t => t.typ)).toEqual(['ANREISE', 'GANZTAG', 'ABREISE']);
     expect(berechneVmaGesamt(tage)).toBe(139);
   });
 
   it('Eintägig 8:00 h → 0, 8:01 h → 40,00', () => {
-    const [genau8] = berechneReisetage('2026-03-16T08:00', '2026-03-16T16:00');
-    const [ueber8] = berechneReisetage('2026-03-16T08:00', '2026-03-16T16:01');
-    expect(berechneVmaTagMitSatz(genau8, BELGIEN).vmaNetto).toBe(0);
-    expect(berechneVmaTagMitSatz(ueber8, BELGIEN).vmaNetto).toBe(40);
+    const [genau8] = bildeReisetage('2026-03-16T08:00', '2026-03-16T16:00', null);
+    const [ueber8] = bildeReisetage('2026-03-16T08:00', '2026-03-16T16:01', null);
+    expect(berechneVmaTagMitSatz(tag(genau8), BELGIEN).vmaNetto).toBe(0);
+    expect(berechneVmaTagMitSatz(tag(ueber8), BELGIEN).vmaNetto).toBe(40);
   });
 
   it('Inland-Wrapper rechnet mit 28/14', () => {
     expect(INLAND_SATZ).toEqual({ tagessatz24h: 28, tagessatz8h: 14 });
     expect(berechneVmaTag(tag({ typ: 'ANREISE', mittagGestellt: true })))
       .toEqual(berechneVmaTagMitSatz(tag({ typ: 'ANREISE', mittagGestellt: true }), INLAND_SATZ));
+  });
+});
+
+describe('formatDatumKurz', () => {
+  it('zeigt das Kalenderdatum unabhängig von der Zeitzone des Browsers', () => {
+    expect(formatDatumKurz('2026-10-12')).toBe('Mo 12.10.');
+    expect(formatDatumKurz('2027-01-01')).toBe('Fr 01.01.');
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { vmaTag, vmaTagInland, dauertLaengerAls8h, reisetageAusZeitraum, INLAND_SATZ, type VmaTagInput, type TagesSatz } from '../vma.js';
+import { vmaTag, vmaTagInland, INLAND_SATZ, type VmaTagInput, type TagesSatz } from '../vma.js';
+import { dauertLaengerAls8h } from '../reisetage.js';
 
 const tag = (over: Partial<VmaTagInput>): VmaTagInput => ({
   typ: 'GANZTAG', fruehstueckGestellt: false, mittagGestellt: false, abendGestellt: false, ...over,
@@ -98,21 +99,6 @@ describe('dauertLaengerAls8h (eintägig: strikt mehr als 8 h)', () => {
     expect(ueber8h).toBe(true);
     expect(vmaTagInland(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: ueber8h })).vmaNetto).toBe(14);
     expect(vmaTag(tag({ typ: 'EINTAEGIG', eintaegigUeber8h: ueber8h }), BELGIEN).vmaNetto).toBe(40);
-  });
-});
-
-describe('reisetageAusZeitraum (Prüfung der Client-Tagesliste)', () => {
-  it('liefert null bei fremdem Format und bei mehr als 60 Reisetagen', () => {
-    expect(reisetageAusZeitraum('16.03.2026 08:00', '2026-03-16T18:00')).toBeNull();
-    expect(reisetageAusZeitraum('2026-01-01T08:00', '2026-03-01T18:00')).toHaveLength(60);
-    expect(reisetageAusZeitraum('2026-01-01T08:00', '2026-03-02T18:00')).toBeNull();
-  });
-  it('Rückkehr nicht nach Abfahrt → keine Tage', () => {
-    expect(reisetageAusZeitraum('2026-03-16T10:00', '2026-03-16T10:00')).toEqual([]);
-  });
-  it('akzeptiert ISO-Zeitpunkte mit Sekunden/Z (gleiche Wanduhrzeit wie gespeichert)', () => {
-    expect(reisetageAusZeitraum('2026-03-16T08:00:00.000Z', '2026-03-16T16:01:00.000Z'))
-      .toEqual([{ datum: '2026-03-16', typ: 'EINTAEGIG', eintaegigUeber8h: true }]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useUnsavedWarning, useAuslandsPauschalen } from '@/lib/hooks';
 import { ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { useNavigate, Link } from 'react-router-dom';
@@ -8,11 +8,16 @@ import { VerpflegungStep } from '@/components/forms/VerpflegungStep';
 import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
 import { DezimalInput } from '@/components/forms/DezimalInput';
-import { berechneReisetage, berechneKmBetrag, berechneVmaGesamt, berechneVmaTag, berechneVmaTagMitSatz } from '@/lib/vma';
+import { LandAuswahl } from '@/components/forms/LandAuswahl';
+import { berechneKmBetrag, berechneVmaGesamt } from '@/lib/vma';
+import {
+  berechneVmaVorschau, bildeReisetage, laenderfolge, ReisetageFehler, uebernachtungsfrage,
+  uebernehmeTagesangaben, type ReisetagSoll,
+} from '@/lib/reisetage';
 import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
 import { einreichenReisekosten } from '@/lib/api';
 import { pruefeDreiMonatsFrist, speichereReiseziel } from '@/lib/dreiMonatsFrist';
-import type { PersoenlicheDaten, Reisetag, WeitereKostenPosition, ReisekostenFormData } from '@/lib/types';
+import type { PersoenlicheDaten, ReisetagEingabe, WeitereKostenPosition, ReisekostenFormData } from '@/lib/types';
 import { VERKEHRSMITTEL, WEITERE_KOSTEN_TYPEN } from '@/lib/types';
 
 const STEPS = [
@@ -30,6 +35,20 @@ const INITIAL_PERSOENLICH: PersoenlicheDaten = {
   mandantId: '', kostenstelleId: '',
 };
 
+/** Tagesbildung wie der Server; der Fehler (z. B. fehlende Übernachtungsangabe) steuert Hinweise und Validierung. */
+function bildeTageSicher(
+  abfahrt: string,
+  rueckkehr: string,
+  uebernachtung: boolean | null,
+): { soll: ReisetagSoll[] | null; fehler: ReisetageFehler | null } {
+  try {
+    return { soll: bildeReisetage(abfahrt, rueckkehr, uebernachtung), fehler: null };
+  } catch (err) {
+    if (err instanceof ReisetageFehler) return { soll: null, fehler: err };
+    throw err;
+  }
+}
+
 export function ReisekostenFormular() {
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -44,11 +63,14 @@ export function ReisekostenFormular() {
   const [abfahrtOrt, setAbfahrtOrt] = useState<'WOHNUNG' | 'TAETIGKEIT'>('WOHNUNG');
   const [abfahrtZeit, setAbfahrtZeit] = useState('');
   const [rueckkehrZeit, setRueckkehrZeit] = useState('');
+  // Nur bei Reisen über genau zwei Kalendertage gefragt (sonst null); Pflicht nur unter 24 h.
+  const [uebernachtung, setUebernachtung] = useState<boolean | null>(null);
   const [inlandAusland, setInlandAusland] = useState<'inland' | 'ausland'>('inland');
   const [auslandsLand, setAuslandsLand] = useState('');
   const [verkehrsmittel, setVerkehrsmittel] = useState('');
   const [kmGefahren, setKmGefahren] = useState<number>(0);
-  const [reisetage, setReisetage] = useState<Reisetag[]>([]);
+  // Eingaben je Reisetag (Mahlzeiten, Landangaben) — auch für Tage, die gerade nicht im Zeitraum liegen.
+  const [reisetage, setReisetage] = useState<ReisetagEingabe[]>([]);
   const [weitereKosten, setWeitereKosten] = useState<WeitereKostenPosition[]>([]);
   const [belege, setBelege] = useState<File[]>([]);
   const [unterschrift, setUnterschrift] = useState<string | undefined>();
@@ -60,12 +82,6 @@ export function ReisekostenFormular() {
   // ── 3-Monats-Frist prüfen ─────────────────────────
   const dreiMonatsFrist = pruefeDreiMonatsFrist(reiseziel);
 
-  // ── Berechnete Werte ───────────────────────────────
-  const kmBetrag = berechneKmBetrag(kmGefahren, verkehrsmittel);
-  const vmaGesamt = berechneVmaGesamt(reisetage);
-  const weitereKostenSumme = weitereKosten.reduce((sum, k) => sum + (k.betrag || 0), 0);
-  const gesamtbetrag = kmBetrag + vmaGesamt + weitereKostenSumme;
-
   // ── Auslandspauschalen aus DB (AdminCenter-pflegbar) ────
   const {
     pauschalen: auslandsPauschalen,
@@ -73,22 +89,47 @@ export function ReisekostenFormular() {
     loading: laenderLaden,
     error: laenderFehler,
   } = useAuslandsPauschalen();
-  // Länderauswahl: „Häufige Ziele“ = Sortierung < 1000 (im AdminCenter pflegbar), darunter alle Einträge A–Z.
-  const haeufigeZiele = auslandsPauschalen.filter(p => p.reihenfolge < 1000);
-  const alleLaenderAZ = [...auslandsPauschalen].sort((a, b) => a.landKey.localeCompare(b.landKey, 'de'));
+  const auslandsSaetze = new Map(auslandsPauschalen.map(p => [p.landKey, p]));
 
-  // ── Aktives Auslandsland für VMA ─────────────────────
+  // ── Aktives Auslandsland (Hauptland; Vorbelegung der Tage) ─
   const aktivesAuslandsLand = inlandAusland === 'ausland' && auslandsLand ? auslandsPauschalenMap[auslandsLand] : null;
+  const hauptland = inlandAusland === 'ausland' && auslandsLand ? auslandsLand : null;
 
-  // ── Reisetage automatisch berechnen ────────────────
-  useEffect(() => {
-    const tage = berechneReisetage(abfahrtZeit, rueckkehrZeit);
-    if (aktivesAuslandsLand) {
-      setReisetage(tage.map(t => berechneVmaTagMitSatz(t, aktivesAuslandsLand)));
-    } else {
-      setReisetage(tage.map(t => berechneVmaTag(t)));
-    }
-  }, [abfahrtZeit, rueckkehrZeit, auslandsLand, inlandAusland]);
+  // ── Reisetage: nur aus Abfahrt/Rückkehr/Übernachtung gebildet (Serverlogik), ──
+  //    Mahlzeiten und Landangaben je Datum aus den bisherigen Eingaben übernommen.
+  // Übernachtungsfrage: 'pflicht' unter 24 h über zwei Kalendertage, 'vorbelegt' (Ja) ab 24 h.
+  const frageUebernachtung = abfahrtZeit && rueckkehrZeit ? uebernachtungsfrage(abfahrtZeit, rueckkehrZeit) : null;
+  const uebernachtungAnzeige = frageUebernachtung === 'vorbelegt' ? uebernachtung ?? true : uebernachtung;
+  const zeitraum = abfahrtZeit && rueckkehrZeit
+    ? bildeTageSicher(abfahrtZeit, rueckkehrZeit, uebernachtung)
+    : { soll: null, fehler: null };
+  const tage = zeitraum.soll ? uebernehmeTagesangaben(zeitraum.soll, reisetage) : [];
+
+  const aendereZeitraum = (abfahrt: string, rueckkehr: string) => {
+    setAbfahrtZeit(abfahrt);
+    setRueckkehrZeit(rueckkehr);
+    // Die Antwort zur Übernachtung gilt nur, solange die Frage gestellt wird.
+    if (!uebernachtungsfrage(abfahrt, rueckkehr)) setUebernachtung(null);
+  };
+
+  // Geänderte Tage per Datum übernehmen — Eingaben zu Tagen, die gerade außerhalb des Zeitraums
+  // liegen, bleiben erhalten (z. B. Rückkehr kurz verkürzt und wieder verlängert).
+  const aendereReisetage = (neu: ReisetagEingabe[]) => {
+    const daten = new Set(neu.map(t => t.datum));
+    setReisetage(alt => [...alt.filter(t => !daten.has(t.datum)), ...neu]);
+  };
+
+  // ── Berechnete Werte (Vorschau = Serverrechnung aus den Rohdaten) ──
+  // Inlandsreise: Landangaben je Tag zählen nicht (alle Tage Inland), bleiben aber im State —
+  // ein versehentlicher Wechsel auf „Inland“ und zurück verliert nichts.
+  const tageFuerRechnung = hauptland
+    ? tage
+    : tage.map(t => ({ ...t, land24uhr: null, letzterTaetigkeitsort: null, landFreitext: null }));
+  const vorschau = berechneVmaVorschau(tageFuerRechnung, hauptland, auslandsSaetze);
+  const kmBetrag = berechneKmBetrag(kmGefahren, verkehrsmittel);
+  const vmaGesamt = berechneVmaGesamt(vorschau.tage);
+  const weitereKostenSumme = weitereKosten.reduce((sum, k) => sum + (k.betrag || 0), 0);
+  const gesamtbetrag = kmBetrag + vmaGesamt + weitereKostenSumme;
 
   // ── Validierung pro Step ───────────────────────────
   const validateStep = (step: number): boolean => {
@@ -109,9 +150,10 @@ export function ReisekostenFormular() {
       if (!reiseziel.trim()) errs.reiseziel = 'Pflichtfeld';
       if (!abfahrtZeit) errs.abfahrtZeit = 'Pflichtfeld';
       if (!rueckkehrZeit) errs.rueckkehrZeit = 'Pflichtfeld';
-      if (abfahrtZeit && rueckkehrZeit && new Date(rueckkehrZeit) <= new Date(abfahrtZeit)) {
-        errs.rueckkehrZeit = 'Rückkehr muss nach Abfahrt liegen';
-      }
+      // Gleiche Prüfung wie der Server (Format, Rückkehr nach Abfahrt, höchstens 60 Tage, Übernachtung)
+      if (zeitraum.fehler?.code === 'UEBERNACHTUNG_FEHLT') errs.uebernachtung = 'Bitte wählen Sie „Ja“ oder „Nein“.';
+      else if (zeitraum.fehler?.code === 'FORMAT') errs.abfahrtZeit = zeitraum.fehler.message;
+      else if (zeitraum.fehler) errs.rueckkehrZeit = zeitraum.fehler.message;
       // Ohne Land würde still mit Inlandssätzen gerechnet — bei Ausland daher Pflicht.
       if (inlandAusland === 'ausland' && !aktivesAuslandsLand) errs.auslandsLand = 'Bitte Land wählen';
     }
@@ -122,6 +164,9 @@ export function ReisekostenFormular() {
         errs.kmGefahren = 'Kilometer angeben';
       }
     }
+
+    // Landangaben je Tag: gleiche Meldung, mit der auch der Server ablehnen würde (z. B. Staat fehlt).
+    if (step === 3 && vorschau.fehler) errs.verpflegung = vorschau.fehler;
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
@@ -159,11 +204,12 @@ export function ReisekostenFormular() {
         abfahrtOrt,
         abfahrtZeit,
         rueckkehrZeit,
-        land: inlandAusland === 'ausland' && auslandsLand ? auslandsLand : null,
+        land: hauptland,
+        uebernachtung,
         verkehrsmittel,
         kmGefahren,
         kmBetrag,
-        reisetage,
+        reisetage: vorschau.tage,
         vmaNetto: vmaGesamt,
         weitereKosten,
         weitereKostenSumme,
@@ -304,7 +350,7 @@ export function ReisekostenFormular() {
                   type="datetime-local"
                   className={`input-field ${errors.abfahrtZeit ? 'border-red-400' : ''}`}
                   value={abfahrtZeit}
-                  onChange={e => setAbfahrtZeit(e.target.value)}
+                  onChange={e => aendereZeitraum(e.target.value, rueckkehrZeit)}
                 />
                 {errors.abfahrtZeit && <p className="text-xs text-red-500 mt-1">{errors.abfahrtZeit}</p>}
               </div>
@@ -314,15 +360,59 @@ export function ReisekostenFormular() {
                   type="datetime-local"
                   className={`input-field ${errors.rueckkehrZeit ? 'border-red-400' : ''}`}
                   value={rueckkehrZeit}
-                  onChange={e => setRueckkehrZeit(e.target.value)}
+                  onChange={e => aendereZeitraum(abfahrtZeit, e.target.value)}
                 />
                 {errors.rueckkehrZeit && <p className="text-xs text-red-500 mt-1">{errors.rueckkehrZeit}</p>}
               </div>
             </div>
-            {abfahrtZeit && rueckkehrZeit && reisetage.length > 0 && (
+            {frageUebernachtung && (
+              <fieldset>
+                <legend className="label">Auswärtige Übernachtung?{frageUebernachtung === 'pflicht' && ' *'}</legend>
+                <p className="text-xs text-credo-500 mb-3">
+                  {frageUebernachtung === 'pflicht'
+                    ? 'Ihre Reise dauert weniger als 24 Stunden und geht über Mitternacht.'
+                    : 'Ihre Reise geht über zwei Kalendertage.'}
+                  {' '}Auch Schlafen im Bus, Zug oder Schlafwagen zählt als Übernachtung, eine kurze Pause unterwegs nicht.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {([true, false] as const).map(wert => (
+                    <label
+                      key={String(wert)}
+                      className={`relative flex flex-col gap-1 px-5 py-4 rounded-xl border cursor-pointer transition-all
+                                 focus-within:ring-2 focus-within:ring-credo-500 focus-within:ring-offset-1
+                                 ${uebernachtungAnzeige === wert
+                                   ? 'border-credo-600 bg-credo-50 shadow-sm'
+                                   : errors.uebernachtung && uebernachtung === null
+                                   ? 'border-red-400 bg-white'
+                                   : 'border-credo-200 bg-white hover:border-credo-300'}`}
+                    >
+                      <input
+                        type="radio"
+                        name="uebernachtung"
+                        className="sr-only"
+                        checked={uebernachtungAnzeige === wert}
+                        onChange={() => setUebernachtung(wert)}
+                      />
+                      <span className="text-sm font-semibold text-credo-900">{wert ? 'Ja' : 'Nein'}</span>
+                      <span className="text-xs text-credo-500">
+                        {wert
+                          ? 'Ich habe auswärts übernachtet (An- und Abreisetag).'
+                          : frageUebernachtung === 'pflicht'
+                          ? 'Ohne Übernachtung: ein Reisetag, Pauschale nur bei mehr als 8 Stunden.'
+                          : 'Ohne Übernachtung: ein Reisetag mit der Pauschale für 24 Stunden.'}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {errors.uebernachtung && uebernachtung === null && (
+                  <p className="text-xs text-red-500 mt-1">{errors.uebernachtung}</p>
+                )}
+              </fieldset>
+            )}
+            {tage.length > 0 && (
               <div className="bg-credo-50 rounded-lg p-3 text-sm text-credo-600">
-                Reisedauer: <strong>{reisetage.length} {reisetage.length === 1 ? 'Tag' : 'Tage'}</strong>
-                {reisetage.length === 1 && reisetage[0].typ === 'EINTAEGIG' && !reisetage[0].eintaegigUeber8h && ' (nicht mehr als 8 Stunden — kein VMA)'}
+                Reisedauer: <strong>{tage.length} {tage.length === 1 ? 'Tag' : 'Tage'}</strong>
+                {tage.length === 1 && tage[0].typ === 'EINTAEGIG' && !tage[0].eintaegigUeber8h && ' (nicht mehr als 8 Stunden — kein VMA)'}
               </div>
             )}
             <div>
@@ -330,10 +420,8 @@ export function ReisekostenFormular() {
               <select
                 className="input-field"
                 value={inlandAusland}
-                onChange={e => {
-                  setInlandAusland(e.target.value as 'inland' | 'ausland');
-                  if (e.target.value === 'inland') setAuslandsLand('');
-                }}
+                // Hauptland und Landangaben je Tag bleiben beim Wechsel erhalten (Inland: nur ausgeblendet).
+                onChange={e => setInlandAusland(e.target.value as 'inland' | 'ausland')}
               >
                 <option value="inland">Inland (Deutschland)</option>
                 <option value="ausland">Ausland</option>
@@ -341,38 +429,24 @@ export function ReisekostenFormular() {
             </div>
             {inlandAusland === 'ausland' && (
               <div>
-                <label className="label">Land *</label>
-                <select
-                  className={`input-field ${errors.auslandsLand ? 'border-red-400' : ''}`}
+                <LandAuswahl
+                  id="reiseland"
+                  label="Reiseland *"
                   value={auslandsLand}
-                  onChange={e => setAuslandsLand(e.target.value)}
-                >
-                  <option value="">{laenderLaden ? 'Länder werden geladen...' : 'Bitte Land wählen...'}</option>
-                  {haeufigeZiele.length > 0 && (
-                    <optgroup label="Häufige Ziele">
-                      {haeufigeZiele.map(p => (
-                        <option key={p.landKey} value={p.landKey}>{p.landKey}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {alleLaenderAZ.length > 0 && (
-                    <optgroup label="Alle Länder A–Z">
-                      {alleLaenderAZ.map(p => (
-                        <option key={p.landKey} value={p.landKey}>{p.landKey}</option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-                {laenderFehler ? (
-                  <p className="text-xs text-red-500 mt-1">
-                    Die Länderliste konnte nicht geladen werden. Bitte laden Sie die Seite neu.
-                  </p>
-                ) : (
-                  errors.auslandsLand && <p className="text-xs text-red-500 mt-1">{errors.auslandsLand}</p>
-                )}
+                  onChange={setAuslandsLand}
+                  laender={auslandsPauschalen}
+                  platzhalter={laenderLaden ? 'Länder werden geladen...' : 'Bitte Land wählen...'}
+                  fehler={laenderFehler
+                    ? 'Die Länderliste konnte nicht geladen werden. Bitte laden Sie die Seite neu.'
+                    : errors.auslandsLand}
+                />
                 <p className="text-xs text-credo-500 mt-1">
-                  Staat nicht in der Liste? Dann „Luxemburg“ wählen (gesetzlicher Ersatzsatz). Übersee- und
-                  Außengebiete zählen zum Mutterland (z. B. Grönland → Dänemark, Madeira → Portugal).
+                  Mehrere Länder? Wählen Sie das Hauptreiseland — das Land je Reisetag legen Sie im Schritt
+                  „Verpflegung“ fest. Staat nicht in der Liste? Dann „Luxemburg“ wählen (gesetzlicher Ersatzsatz)
+                  und im Schritt „Verpflegung“ am ersten Tag „Staat nicht in der Liste“ mit dem Namen des Staats
+                  angeben — die folgenden Tage übernehmen das. Nicht eigens aufgeführte Übersee- und Außengebiete
+                  zählen zum Mutterland (z. B. Grönland → Dänemark, Madeira → Portugal); die Kanarischen Inseln
+                  haben einen eigenen Eintrag.
                 </p>
                 {aktivesAuslandsLand && (
                   <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
@@ -440,7 +514,15 @@ export function ReisekostenFormular() {
 
         {/* Step 4: Verpflegung */}
         {currentStep === 3 && (
-          <VerpflegungStep reisetage={reisetage} onChange={setReisetage} auslandsSatz={aktivesAuslandsLand ?? undefined} />
+          <VerpflegungStep
+            reisetage={tage}
+            onChange={aendereReisetage}
+            vorschau={vorschau}
+            hauptland={hauptland}
+            laender={auslandsPauschalen}
+            abfahrtZeit={abfahrtZeit}
+            fehler={errors.verpflegung}
+          />
         )}
 
         {/* Step 5: Weitere Kosten & Belege */}
@@ -534,6 +616,9 @@ export function ReisekostenFormular() {
               <p><span className="text-credo-500">Personalnr.:</span> <span className="font-medium">{persoenlich.personalNr}</span></p>
               <p><span className="text-credo-500">Anlass:</span> <span className="font-medium">{reiseanlass}</span></p>
               <p><span className="text-credo-500">Ziel:</span> <span className="font-medium">{reiseziel}</span></p>
+              {hauptland && vorschau.tage.length > 0 && (
+                <p><span className="text-credo-500">Reiseland:</span> <span className="font-medium">{laenderfolge(vorschau.tage.map(t => t.land))}</span></p>
+              )}
             </div>
 
             {/* Beträge */}
@@ -546,7 +631,7 @@ export function ReisekostenFormular() {
               )}
               {vmaGesamt > 0 && (
                 <div className="flex justify-between py-2 border-b border-credo-100">
-                  <span className="text-credo-500">Verpflegungsmehraufwand ({reisetage.length} {reisetage.length === 1 ? 'Tag' : 'Tage'})</span>
+                  <span className="text-credo-500">Verpflegungsmehraufwand ({vorschau.tage.length} {vorschau.tage.length === 1 ? 'Tag' : 'Tage'})</span>
                   <span className="font-medium">{formatCurrency(vmaGesamt)}</span>
                 </div>
               )}
