@@ -43,6 +43,10 @@ export function LandAuswahl({
 }: Props) {
   const haeufigeZiele = laender.filter(p => p.reihenfolge < 1000);
   const alleLaenderAZ = [...laender].sort((a, b) => a.landKey.localeCompare(b.landKey, 'de'));
+  // Staaten mit eigenen Stadtsätzen (z. B. „Spanien — Palma de Mallorca“) als „übrige Orte“ kennzeichnen,
+  // damit niemand für eine Stadt mit eigenem Satz versehentlich den allgemeinen Staatssatz wählt.
+  const staatenMitStaedten = new Set(laender.filter(p => p.landKey.includes(' — ')).map(p => p.landKey.split(' — ')[0]));
+  const anzeige = (landKey: string) => (staatenMitStaedten.has(landKey) ? `${landKey} (übrige Orte)` : landKey);
   const zeigeFreitext = mitAnderes && value === LAND_ANDERES;
   // Eingetippter Staat steht doch in der Liste (z. B. „Südkorea“ → „Korea, Republik“)?
   const listenLand = zeigeFreitext && freitext ? landKeyZuFreitext(freitext, laender.map(p => p.landKey)) : null;
@@ -71,14 +75,14 @@ export function LandAuswahl({
         {haeufigeZiele.length > 0 && (
           <optgroup label="Häufige Ziele">
             {haeufigeZiele.map(p => (
-              <option key={p.landKey} value={p.landKey}>{p.landKey}</option>
+              <option key={p.landKey} value={p.landKey}>{anzeige(p.landKey)}</option>
             ))}
           </optgroup>
         )}
         {alleLaenderAZ.length > 0 && (
           <optgroup label="Alle Länder A–Z">
             {alleLaenderAZ.map(p => (
-              <option key={p.landKey} value={p.landKey}>{p.landKey}</option>
+              <option key={p.landKey} value={p.landKey}>{anzeige(p.landKey)}</option>
             ))}
           </optgroup>
         )}

@@ -336,6 +336,7 @@ Auslöser: Kritische Bewertung 10/2026 — die Auslands-VMA rechnete die BMF-End
 | 17.15 | PDF: Reiseland-Zeile, VMA-Tabelle aller Tage (Datum/Art/Land/Pauschale/Kürzung/Betrag), Fußnoten Seetag/„Staat nicht in der Liste“/Überschneidung, lange Wörter gekürzt; Mail: Reiseland, Land je Mahlzeitenzeile, FAQ-Zeile „Frühstück 19 %“ entfernt | ✅ | 2026-10-10 |
 | 17.16 | Wizard: Länderauswahl je Tag (Hilfetexte Flug inkl. Zwischenlandung/„Österreich“, Schiff, Übersee), Übernachtungsfrage (ab 24 h mit „Ja“ vorbelegt), Eingaben bleiben bei Änderung des Zeitraums und beim Wechsel Inland/Ausland erhalten, „Staat nicht in der Liste“ gilt für die Folgetage, Freitext-Abgleich mit der Liste („Südkorea“ → „Korea, Republik“), Barrierefreiheit (fieldset/legend je Tag, aria-describedby/-invalid) | ✅ | 2026-10-10 |
 | 17.17 | `vma-nachkorrektur-2026.sql` schließt Belege ab 1b (mit `land_key`) aus; Paritätstest um Tagesbildung, Landbestimmung, Satzauswahl, Gesamtkette und Anzeige (Landname, Länderfolge) erweitert | ✅ | 2026-10-10 |
+| 17.18 | Migration `0016_haeufige_ziele_staedte.sql`: Städte mit eigenem BMF-Satz der „Häufigen Ziele“ (Mailand, Breslau, Warschau, Bern, Kanaren, Palma de Mallorca, 9 US-Städte) direkt unter ihren Staat sortiert (nur wenn noch Sortierung ≥ 1000); Länderauswahl zeigt Staaten mit Stadtsätzen als „… (übrige Orte)“ | ✅ | 2026-10-10 |
 
 **Bewusste Vereinfachung:** Dauer = Differenz der Wanduhrzeiten (zeitzonenunabhängig); in den beiden Nächten der Zeitumstellung weicht sie um eine Stunde von der tatsächlichen Abwesenheit ab.
 
