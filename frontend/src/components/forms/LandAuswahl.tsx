@@ -124,7 +124,11 @@ export function LandAuswahl({
                   <button
                     type="button"
                     className="font-medium underline hover:text-amber-900"
-                    onClick={() => onChange(k)}
+                    onClick={() => {
+                      onChange(k);
+                      // Der Button verschwindet mit dem Freitext — Fokus auf die Auswahl statt auf <body>.
+                      requestAnimationFrame(() => document.getElementById(id)?.focus());
+                    }}
                   >
                     „{k}“ übernehmen
                   </button>

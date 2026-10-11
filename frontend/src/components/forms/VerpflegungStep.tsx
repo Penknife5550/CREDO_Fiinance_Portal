@@ -3,10 +3,12 @@ import type { ReisetagEingabe } from '@/lib/types';
 import type { AuslandsPauschale } from '@/lib/hooks';
 import { formatReisetagTyp, formatDatumKurz } from '@/lib/vma';
 import {
-  fragtOrt24Uhr, laenderZumDatum, landBezeichnung, satzLandKey, setzeOrt24MitFolgetagen, LAND_ANDERES, LAND_INLAND, LAND_SEETAG,
+  fragtOrt24Uhr, laenderZumDatum, setzeOrt24MitFolgetagen, LAND_ANDERES, LAND_INLAND,
   type VmaVorschau, type VmaVorschauTag,
 } from '@/lib/reisetage';
+import { landfelderVorgabe, landOffenNachAenderung, nachSeetag } from '@/lib/landfelder';
 import { formatCurrency } from '@/lib/utils';
+import { AuslandsTageskopf } from './AuslandsTageskopf';
 import { LandAuswahl } from './LandAuswahl';
 
 type Mahlzeit = 'fruehstueckGestellt' | 'mittagGestellt' | 'abendGestellt';
@@ -37,6 +39,8 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
     t => t.fruehstueckGestellt || t.mittagGestellt || t.abendGestellt,
   );
   const [verpflegungGestellt, setVerpflegungGestellt] = useState<boolean>(initialGestellt);
+  // Landfelder je Tag (nur Ausland) von Hand auf- oder zugeklappt — Schlüssel: Datum des Tags.
+  const [landOffenManuell, setLandOffenManuell] = useState<Record<string, boolean>>({});
 
   // Wechsel auf "Nein": alle Mahlzeiten-Flags zuruecksetzen (Beträge rechnet die Vorschau neu).
   const setzeVerpflegungGestellt = (gestellt: boolean) => {
@@ -85,7 +89,7 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
   };
   const kuerzung = (index: number) => {
     const k = vorschauTag(index)?.vmaKuerzung ?? 0;
-    return k > 0 ? <div className="text-xs text-red-500">- {formatCurrency(k)}</div> : null;
+    return k > 0 ? <div className="text-xs text-red-600">- {formatCurrency(k)}</div> : null;
   };
 
   const aendereTag = (index: number, aenderung: (tag: ReisetagEingabe) => ReisetagEingabe) => {
@@ -105,6 +109,8 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
   // Landangabe eines Tags ändern. Die 24-Uhr-Angabe gibt „Staat nicht in der Liste“ samt Staat an
   // die folgenden Zwischentage weiter (setzeOrt24MitFolgetagen) — sonst je Tag neu wählen und tippen.
   const aendereLand = (index: number, feld: 'land24uhr' | 'letzterTaetigkeitsort', neu: ReisetagEingabe) => {
+    // Geänderter Tag bleibt offen, Zuklappen der Folgetage verfällt (landOffenNachAenderung).
+    setLandOffenManuell(m => landOffenNachAenderung(m, reisetage, index));
     onChange(feld === 'land24uhr'
       ? setzeOrt24MitFolgetagen(reisetage, index, neu)
       : reisetage.map((tag, i) => (i === index ? neu : tag)));
@@ -122,6 +128,9 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
   const setzeFreitext = (index: number, feld: 'land24uhr' | 'letzterTaetigkeitsort', text: string) => {
     aendereLand(index, feld, { ...reisetage[index], [feld]: LAND_ANDERES, landFreitext: text });
   };
+
+  // Hinweis am Anreisetag: Abfahrt ab 18 Uhr (um 24 Uhr evtl. noch Inland).
+  const abendsAbfahrt = (tag: ReisetagEingabe) => tag.typ === 'ANREISE' && Number(abfahrtZeit.slice(11, 13)) >= 18;
 
   // Landfelder je Tag. Ohne Angabe gilt, was auch der Server annimmt (Hauptland, am Abreisetag
   // das Land des Vortags) — genau damit ist die Auswahl vorbelegt.
@@ -141,9 +150,8 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
 
     if (fragtOrt24Uhr(tag.typ)) {
       const ort24 = tag.land24uhr || hauptland || LAND_INLAND;
-      const abendsAbfahrt = tag.typ === 'ANREISE' && Number(abfahrtZeit.slice(11, 13)) >= 18;
       return (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <LandAuswahl
             id={`land24-${tag.datum}`}
             label="Wo waren Sie um 24 Uhr?"
@@ -153,7 +161,7 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
             mitInland
             mitSeetag={tag.typ === 'GANZTAG'}
             {...freitextProps('land24uhr')}
-            hinweis={abendsAbfahrt && (
+            hinweis={abendsAbfahrt(tag) && (
               <p className="text-xs text-amber-700 mt-1">Um 24 Uhr noch in Deutschland? Dann „Inland“ wählen.</p>
             )}
           />
@@ -184,42 +192,45 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
     // Abreisetag: Hinweise nur bei Bedarf — „bitte prüfen“, wenn die Vorbelegung (Land des Vortags)
     // vom Reiseland abweicht; der Hafen-Hinweis nach einem Seetag (vorbelegt ist dann das Reiseland).
     const vorbelegtAbweichend = istAbreise && !tag.letzterTaetigkeitsort && !!v && v.land.landKey !== hauptland;
-    const nachSeetag = istAbreise && reisetage[index - 1]?.land24uhr === LAND_SEETAG;
     const hinweisText = istAbreise
       ? [
           vorbelegtAbweichend && 'Vorbelegt mit dem Land vom Vortag – bitte prüfen.',
-          nachSeetag && 'Am Ausschiffungstag: Land des Hafens.',
+          nachSeetag(tag, reisetage[index - 1]) && 'Am Ausschiffungstag: Land des Hafens.',
         ].filter(Boolean).join(' ')
       : 'Zählt auch, wenn danach noch ein Termin in Deutschland folgte.';
     return (
-      <div className="mb-3">
-        <LandAuswahl
-          id={`taetigkeit-${tag.datum}`}
-          label={istAbreise
-            ? 'Letzter Tätigkeitsort im Ausland (auch wenn das am Vortag war)'
-            : 'Letzter Tätigkeitsort im Ausland'}
-          value={tag.letzterTaetigkeitsort || v?.land.landKey || hauptland || LAND_INLAND}
-          onChange={wert => setzeLand(index, 'letzterTaetigkeitsort', wert)}
-          laender={laender}
-          mitInland
-          inlandText="Keine Tätigkeit im Ausland"
-          {...freitextProps('letzterTaetigkeitsort')}
-          hinweis={hinweisText ? <p className="text-xs text-credo-500 mt-1">{hinweisText}</p> : undefined}
-        />
-      </div>
+      <LandAuswahl
+        id={`taetigkeit-${tag.datum}`}
+        label={istAbreise
+          ? 'Letzter Tätigkeitsort im Ausland (auch wenn das am Vortag war)'
+          : 'Letzter Tätigkeitsort im Ausland'}
+        value={tag.letzterTaetigkeitsort || v?.land.landKey || hauptland || LAND_INLAND}
+        onChange={wert => setzeLand(index, 'letzterTaetigkeitsort', wert)}
+        laender={laender}
+        mitInland
+        inlandText="Keine Tätigkeit im Ausland"
+        {...freitextProps('letzterTaetigkeitsort')}
+        hinweis={hinweisText ? <p className="text-xs text-credo-500 mt-1">{hinweisText}</p> : undefined}
+      />
     );
   };
 
-  // Maßgebendes Land je Tag (Kopfzeile der Tageskarte), z. B. „Belgien“ oder „Nauru · Satz Luxemburg“.
-  const landZeile = (index: number) => {
-    const v = vorschauTag(index);
-    if (!v) return null;
-    const satzVon = satzLandKey(v.land.landKey);
+  // Auslands-Tageskarte: Kopfzeile mit Land und Betrag, Landfelder auf- und zuklappbar. Vorgabe
+  // offen/zu siehe landfelderVorgabe; hat der Nutzer auf- oder zugeklappt bzw. eine Angabe
+  // geändert, gilt seine Wahl (außer bei „erzwungen“).
+  const auslandsKopf = (tag: ReisetagEingabe, index: number) => {
+    const vorgabe = landfelderVorgabe(tag, reisetage[index - 1], vorschauTag(index), hauptland);
+    const offen = vorgabe === 'erzwungen' || (landOffenManuell[tag.datum] ?? vorgabe === 'offen');
     return (
-      <>
-        {' · '}{landBezeichnung(v.land)}
-        {satzVon && satzVon !== v.land.landKey && ` · Satz ${satzVon}`}
-      </>
+      <AuslandsTageskopf
+        tag={tag}
+        vorschauTag={vorschauTag(index)}
+        offen={offen}
+        mitUmschalter={vorgabe !== 'erzwungen'}
+        onUmschalten={() => setLandOffenManuell(m => ({ ...m, [tag.datum]: !offen }))}
+      >
+        {landFelder(tag, index)}
+      </AuslandsTageskopf>
     );
   };
 
@@ -348,9 +359,10 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
 
       {/* Ausland: wie das Land je Tag bestimmt wird — zugeklappt, die Vorbelegung passt im Normalfall */}
       {istAusland && (
-        <details className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-          <summary className="font-medium cursor-pointer">Wie wird das Land je Tag bestimmt?</summary>
-          <ul className="list-disc pl-5 space-y-0.5 text-xs mt-2">
+        <details className="bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700">
+          {/* Padding am summary: die ganze Leiste ist tippbar (≥ 44 px) */}
+          <summary className="font-medium cursor-pointer p-3">Wie wird das Land je Tag bestimmt?</summary>
+          <ul className="list-disc pl-8 pr-3 pb-3 space-y-0.5 text-xs">
             <li>
               An- und Zwischentage: das Land, in dem Sie sich um 24 Uhr (Ortszeit) befinden. Sind Sie um 24 Uhr
               in Deutschland, zählt Ihr letzter Tätigkeitsort im Ausland an diesem Tag.
@@ -376,22 +388,20 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
             <fieldset key={tag.datum} className="min-w-0 border border-credo-200 rounded-xl p-4 bg-white">
               {/* Gruppenname für Screenreader: sonst tragen alle Tage dieselben Feldbeschriftungen */}
               <legend className="sr-only">{formatDatumKurz(tag.datum)} – {formatReisetagTyp(tag.typ)}</legend>
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <div className="font-semibold text-credo-900">{formatDatumKurz(tag.datum)}</div>
-                  <div className="text-xs text-credo-500">
-                    {formatReisetagTyp(tag.typ)}
-                    {istAusland && landZeile(index)}
+              {istAusland ? auslandsKopf(tag, index) : (
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-credo-900">{formatDatumKurz(tag.datum)}</div>
+                    <div className="text-xs text-credo-500">{formatReisetagTyp(tag.typ)}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-bold text-credo-900">{betrag(index)}</div>
+                    {kuerzung(index)}
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="font-bold text-credo-900">{betrag(index)}</div>
-                  {kuerzung(index)}
-                </div>
-              </div>
-              {istAusland && landFelder(tag, index)}
+              )}
               {verpflegungGestellt && (
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2 mt-3">
                   {(['fruehstueckGestellt', 'mittagGestellt', 'abendGestellt'] as const).map(field => {
                     const labels = { fruehstueckGestellt: 'Frühstück', mittagGestellt: 'Mittag', abendGestellt: 'Abend' };
                     const checked = tag[field];
@@ -400,7 +410,7 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
                         key={field}
                         type="button"
                         onClick={() => handleMahlzeitToggle(index, field)}
-                        className={`px-3 py-2.5 rounded-lg text-xs font-medium transition-all
+                        className={`min-h-[44px] px-3 py-2.5 rounded-lg text-xs font-medium transition-all
                                    focus:outline-none focus-visible:ring-2 focus-visible:ring-credo-500
                                    ${checked
                                      ? 'bg-credo-600 text-white shadow-sm'
