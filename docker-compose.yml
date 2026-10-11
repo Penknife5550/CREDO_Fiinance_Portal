@@ -38,6 +38,8 @@ services:
       WEBHOOK_URL_REISEKOSTEN: ${WEBHOOK_URL_REISEKOSTEN:-}
       WEBHOOK_URL_ERSTATTUNG: ${WEBHOOK_URL_ERSTATTUNG:-}
       NODE_ENV: production
+      # Löschjob: bis zur Archivquittung aus DokuBit nichts löschen (DEPLOYMENT.md §13)
+      RETENTION_FRIST_TAGE: ${RETENTION_FRIST_TAGE:-3650}
     volumes:
       - uploads_data:/app/uploads
     depends_on:

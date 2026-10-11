@@ -274,7 +274,12 @@ einzeln auf `main` uebernommen, gibt es das Skript dort erst nach dem Merge.
 >   unten in DokuBit pruefen (jede muss dort archiviert sein; fehlende neu senden, bevor sie faellig werden),
 >   danach monatlich wiederholen. Die Liste enthaelt alles, was in den naechsten 30 Tagen faellig wird.
 >
-> **Entscheidung:** (eintragen: Datum, Variante, wer)
+> **Entscheidung:** 11.10.2026, **Variante (a)**, Dimitri Riesen. Umgesetzt als Compose-Default
+> `RETENTION_FRIST_TAGE: ${RETENTION_FRIST_TAGE:-3650}` (`docker-compose.prod.yml`, `docker-compose.yml`) — auf dem
+> Server ist kein Eintrag noetig. Folge: Bis zur Archivquittung wird nichts geloescht und auch der
+> Reisekosten-Altbestand nicht minimiert (IBAN/PDF bleiben). Mit dem Datenschutzbeauftragten dokumentieren
+> (Aufbewahrung, bis die Archivierung im DMS nachgewiesen ist). Aufheben: Archivquittung (P03) umsetzen, dann
+> den Default wieder entfernen bzw. `RETENTION_FRIST_TAGE=90` setzen.
 
 ```bash
 docker exec credo-finanz-db psql -U credo -d finanzportal -c "SELECT beleg_nr, typ, created_at::date FROM einreichungen WHERE status = 'GESENDET' AND created_at < now() - interval '60 days' ORDER BY created_at;"
@@ -300,10 +305,10 @@ Aktivieren bzw. aendern (NICHT `./deploy.sh restart` — das uebernimmt geaender
 
 ```bash
 git pull
-grep RETENTION .env.production       # nur RETENTION_FRIST_TAGE / RETENTION_MORATORIUM_BIS wirken (siehe Entscheidung oben)
+grep RETENTION .env.production       # leer lassen = Variante (a); nur RETENTION_FRIST_TAGE / RETENTION_MORATORIUM_BIS wirken
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build app
 docker logs credo-finanz-app 2>&1 | grep Retention
-# erwartet (ohne eigene Eintraege): "Scheduler aktiv (90-Tage-Frist, täglich, nur GESENDET). Moratorium REISEKOSTEN aktiv, endet am 2027-03-31: ..."
+# erwartet (Variante a, ohne eigene Eintraege): "Scheduler aktiv (3650-Tage-Frist, täglich, nur GESENDET). Moratorium REISEKOSTEN aktiv, endet am 2027-03-31: ..."
 ```
 
 Kontrolle am Folgetag (Variante b: aelter als 90 Tage nur noch Reisekosten-Altbestand, ohne IBAN und PDF):
