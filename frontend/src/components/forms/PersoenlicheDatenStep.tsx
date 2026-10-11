@@ -57,6 +57,7 @@ export function PersoenlicheDatenStep({ data, onChange, errors, vorgangstyp }: P
             placeholder="Max"
             value={data.vorname}
             onChange={e => update('vorname', e.target.value)}
+            aria-invalid={!!errors.vorname || undefined}
           />
           {errors.vorname && <p className="text-xs text-red-500 mt-1">{errors.vorname}</p>}
         </div>
@@ -68,6 +69,7 @@ export function PersoenlicheDatenStep({ data, onChange, errors, vorgangstyp }: P
             placeholder="Mustermann"
             value={data.nachname}
             onChange={e => update('nachname', e.target.value)}
+            aria-invalid={!!errors.nachname || undefined}
           />
           {errors.nachname && <p className="text-xs text-red-500 mt-1">{errors.nachname}</p>}
         </div>
@@ -101,6 +103,7 @@ export function PersoenlicheDatenStep({ data, onChange, errors, vorgangstyp }: P
             placeholder="DE89 3704 0044 0532 0130 00"
             value={formatIBAN(data.iban)}
             onChange={e => handleIbanInput(e.target.value)}
+            aria-invalid={!!errors.iban || (data.iban.length === 22 && !validateIBAN(data.iban)) || undefined}
           />
           {errors.iban && <p className="text-xs text-red-500 mt-1">{errors.iban}</p>}
           {!errors.iban && data.iban.length === 22 && !validateIBAN(data.iban) && (
@@ -121,6 +124,7 @@ export function PersoenlicheDatenStep({ data, onChange, errors, vorgangstyp }: P
             placeholder="Max Mustermann"
             value={data.kontoinhaber}
             onChange={e => update('kontoinhaber', e.target.value)}
+            aria-invalid={!!errors.kontoinhaber || undefined}
           />
           {errors.kontoinhaber && <p className="text-xs text-red-500 mt-1">{errors.kontoinhaber}</p>}
         </div>
@@ -134,6 +138,7 @@ export function PersoenlicheDatenStep({ data, onChange, errors, vorgangstyp }: P
             className={`input-field ${errors.mandantId ? 'border-red-400 focus:ring-red-400' : ''}`}
             value={data.mandantId}
             onChange={e => update('mandantId', e.target.value)}
+            aria-invalid={!!errors.mandantId || undefined}
           >
             <option value="">Bitte wählen...</option>
             {Object.entries(gruppiert).map(([kategorie, mandantenInGruppe]) => (

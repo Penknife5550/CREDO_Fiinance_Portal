@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { AuslandsPauschale } from '@/lib/hooks';
-import { LAND_ANDERES, LAND_INLAND, LAND_SEETAG, RESERVIERTE_LAND_KEYS, landKeyZuFreitext } from '@/lib/reisetage';
+import { LAND_ANDERES, LAND_INLAND, LAND_SEETAG, RESERVIERTE_LAND_KEYS, listenEintraegeZuFreitext } from '@/lib/reisetage';
 
 interface Props {
   id: string;
@@ -53,8 +53,9 @@ export function LandAuswahl({
     ? value
     : null;
   const zeigeFreitext = mitAnderes && value === LAND_ANDERES;
-  // Eingetippter Staat steht doch in der Liste (z. B. „Südkorea“ → „Korea, Republik“)?
-  const listenLand = zeigeFreitext && freitext ? landKeyZuFreitext(freitext, laender.map(p => p.landKey)) : null;
+  // Eingetippter Staat steht doch in der Liste (z. B. „Südkorea“ → „Korea, Republik“; „Mallorca“ →
+  // „Spanien“ oder die Stadt „Spanien — Palma de Mallorca“)?
+  const listenLaender = zeigeFreitext && freitext ? listenEintraegeZuFreitext(freitext, laender.map(p => p.landKey)) : [];
 
   const hinweisId = `${id}-hinweis`;
   const fehlerId = `${id}-fehler`;
@@ -112,18 +113,23 @@ export function LandAuswahl({
             value={freitext ?? ''}
             onChange={e => onFreitextChange?.(e.target.value)}
             aria-invalid={freitextFehler}
-            aria-describedby={[listenLand ? `${id}-listenland` : null, freitextFehler ? freitextFehlerId : null].filter(Boolean).join(' ') || undefined}
+            aria-describedby={[listenLaender.length > 0 ? `${id}-listenland` : null, freitextFehler ? freitextFehlerId : null].filter(Boolean).join(' ') || undefined}
           />
-          {listenLand && (
+          {listenLaender.length > 0 && (
             <p id={`${id}-listenland`} className="text-xs text-amber-700 mt-1">
-              Steht in der Liste als „{listenLand}“ – bitte dort auswählen.{' '}
-              <button
-                type="button"
-                className="font-medium underline hover:text-amber-900"
-                onClick={() => onChange(listenLand)}
-              >
-                „{listenLand}“ übernehmen
-              </button>
+              Steht in der Liste als {listenLaender.map(k => `„${k}“`).join(' oder ')} – bitte dort auswählen.
+              {listenLaender.map(k => (
+                <span key={k}>
+                  {' '}
+                  <button
+                    type="button"
+                    className="font-medium underline hover:text-amber-900"
+                    onClick={() => onChange(k)}
+                  >
+                    „{k}“ übernehmen
+                  </button>
+                </span>
+              ))}
             </p>
           )}
         </div>

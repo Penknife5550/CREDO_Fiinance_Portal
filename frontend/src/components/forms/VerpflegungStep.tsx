@@ -3,7 +3,7 @@ import type { ReisetagEingabe } from '@/lib/types';
 import type { AuslandsPauschale } from '@/lib/hooks';
 import { formatReisetagTyp, formatDatumKurz } from '@/lib/vma';
 import {
-  fragtOrt24Uhr, laenderZumDatum, landBezeichnung, satzLandKey, setzeOrt24MitFolgetagen, LAND_ANDERES, LAND_INLAND,
+  fragtOrt24Uhr, laenderZumDatum, landBezeichnung, satzLandKey, setzeOrt24MitFolgetagen, LAND_ANDERES, LAND_INLAND, LAND_SEETAG,
   type VmaVorschau, type VmaVorschauTag,
 } from '@/lib/reisetage';
 import { formatCurrency } from '@/lib/utils';
@@ -59,12 +59,19 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
   const hatEintaegigOhneVma = reisetage.length === 1 && reisetage[0].typ === 'EINTAEGIG' && !reisetage[0].eintaegigUeber8h;
   if (hatEintaegigOhneVma) {
     return (
-      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
-        <p className="text-amber-900 font-medium mb-1">Kein Verpflegungsmehraufwand</p>
-        <p className="text-sm text-amber-800">
-          Bei einer Abwesenheit von nicht mehr als 8 Stunden besteht kein Anspruch auf
-          Verpflegungspauschale (§ 9 Abs. 4a EStG).
-        </p>
+      <div className="space-y-6">
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center">
+          <p className="text-amber-900 font-medium mb-1">Kein Verpflegungsmehraufwand</p>
+          <p className="text-sm text-amber-800">
+            Bei einer Abwesenheit von nicht mehr als 8 Stunden besteht kein Anspruch auf
+            Verpflegungspauschale (§ 9 Abs. 4a EStG).
+          </p>
+        </div>
+        {/* Landangaben sendet das Formular für diesen Tag nicht (ReisekostenFormular, tageFuerRechnung);
+            lehnt die Vorschau trotzdem ab, blockiert „Weiter“ — den Grund dann hier nennen. */}
+        {vorschau.fehler && (
+          <div id={MELDUNG_ID} role="alert" className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{vorschau.fehler}</div>
+        )}
       </div>
     );
   }
@@ -174,6 +181,16 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
 
     // Abreisetag und eintägige Reise: letzter Tätigkeitsort im Ausland (§ 9 Abs. 4a S. 5 EStG).
     const istAbreise = tag.typ === 'ABREISE';
+    // Abreisetag: Hinweise nur bei Bedarf — „bitte prüfen“, wenn die Vorbelegung (Land des Vortags)
+    // vom Reiseland abweicht; der Hafen-Hinweis nach einem Seetag (vorbelegt ist dann das Reiseland).
+    const vorbelegtAbweichend = istAbreise && !tag.letzterTaetigkeitsort && !!v && v.land.landKey !== hauptland;
+    const nachSeetag = istAbreise && reisetage[index - 1]?.land24uhr === LAND_SEETAG;
+    const hinweisText = istAbreise
+      ? [
+          vorbelegtAbweichend && 'Vorbelegt mit dem Land vom Vortag – bitte prüfen.',
+          nachSeetag && 'Am Ausschiffungstag: Land des Hafens.',
+        ].filter(Boolean).join(' ')
+      : 'Zählt auch, wenn danach noch ein Termin in Deutschland folgte.';
     return (
       <div className="mb-3">
         <LandAuswahl
@@ -187,16 +204,7 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
           mitInland
           inlandText="Keine Tätigkeit im Ausland"
           {...freitextProps('letzterTaetigkeitsort')}
-          hinweis={
-            <p className="text-xs text-credo-500 mt-1">
-              {istAbreise
-                ? <>
-                    {!tag.letzterTaetigkeitsort && 'Vorbelegt mit dem Land vom Vortag bzw. dem Reiseland – bitte prüfen. '}
-                    Am Ausschiffungstag: Land des Hafens.
-                  </>
-                : 'Zählt auch, wenn danach noch ein Termin in Deutschland folgte.'}
-            </p>
-          }
+          hinweis={hinweisText ? <p className="text-xs text-credo-500 mt-1">{hinweisText}</p> : undefined}
         />
       </div>
     );
@@ -338,11 +346,11 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
         </div>
       )}
 
-      {/* Ausland: wie das Land je Tag bestimmt wird */}
+      {/* Ausland: wie das Land je Tag bestimmt wird — zugeklappt, die Vorbelegung passt im Normalfall */}
       {istAusland && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-          <p className="font-medium mb-1">Land je Reisetag</p>
-          <ul className="list-disc pl-5 space-y-0.5 text-xs">
+        <details className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+          <summary className="font-medium cursor-pointer">Wie wird das Land je Tag bestimmt?</summary>
+          <ul className="list-disc pl-5 space-y-0.5 text-xs mt-2">
             <li>
               An- und Zwischentage: das Land, in dem Sie sich um 24 Uhr (Ortszeit) befinden. Sind Sie um 24 Uhr
               in Deutschland, zählt Ihr letzter Tätigkeitsort im Ausland an diesem Tag.
@@ -358,7 +366,7 @@ export function VerpflegungStep({ reisetage, onChange, vorschau, hauptland, stae
               Madeira → Portugal); die Kanarischen Inseln haben einen eigenen Eintrag.
             </li>
           </ul>
-        </div>
+        </details>
       )}
 
       {/* Tageskarten: bei Ausland immer (Land je Tag), im Inland nur mit Mahlzeiten und nur mobil */}

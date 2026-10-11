@@ -7,7 +7,9 @@
  * 1. bildeReisetage: Tagesbildung aus Abfahrt/Rückkehr (Mitternachtsregel).
  * 2. bestimmeTageslaender: maßgebendes Land je Tag aus den Landangaben.
  * 3. waehleTagesSatz: Pauschalen-Paar + Quelle zum maßgebenden Land und Datum des Tags
- *    (Satzstand nach Reisedatum, waehleSatzstand).
+ *    (Satzstand nach Reisedatum, waehleSatzstand); brauchtSatz: Tage ohne Anspruch brauchen keinen.
+ * 4. pruefeLandFreitext: Freitext bei „Staat nicht in der Liste“ gegen die Länderliste
+ *    (landKeyZuFreitext) — steht unten bei den Formular-Helfern.
  * Darunter (nur Frontend): Formular-Helfer und die Vorschau aus den Rohdaten.
  *
  * Rechtsgrundlage: § 9 Abs. 4a EStG, BMF-Schreiben vom 05.12.2025, R 9.6 Abs. 3 LStR.
@@ -39,7 +41,8 @@ export type ReisetageFehlerCode =
   | 'UNGUELTIGE_LANDANGABE'
   | 'UNBEKANNTES_LAND'
   | 'SATZSTAND_FEHLT'
-  | 'LAND_OHNE_SATZSTAND';
+  | 'LAND_OHNE_SATZSTAND'
+  | 'FREITEXT_IN_LISTE';
 
 /** Fachlicher Fehler der Tagesbildung/Landbestimmung mit deutscher Meldung (wie die 400 des Servers). */
 export class ReisetageFehler extends Error {
@@ -285,6 +288,15 @@ export function satzLandKey(landKey: string): string | null {
 }
 
 /**
+ * Braucht der Tag einen Satz? Nein bei eintägiger Abwesenheit bis einschließlich 8 h — dafür besteht
+ * kein Anspruch (§ 9 Abs. 4a S. 3 Nr. 3 EStG), also wird kein Satz nachgeschlagen (auch kein fehlender
+ * Satzstand gemeldet).
+ */
+export function brauchtSatz(tag: { typ: ReisetagTyp; eintaegigUeber8h?: boolean }): boolean {
+  return tag.typ !== 'EINTAEGIG' || tag.eintaegigUeber8h === true;
+}
+
+/**
  * Am Tag `datum` ('YYYY-MM-DD') gültiger Satzstand: der mit dem größten `gueltigVon` ≤ datum
  * IM SELBEN KALENDERJAHR wie `datum` — ein Stand des Vorjahres gilt nie weiter. Ein Stand
  * mitten im Jahr (Korrektur) gilt ab seinem Datum. null = kein Stand.
@@ -440,7 +452,9 @@ export function setzeOrt24MitFolgetagen(tage: readonly ReisetagEingabe[], index:
 
 // Übliche Namen von Staaten und Gebieten, die in der BMF-Übersicht anders heißen bzw. zum
 // Mutterland zählen (Schlüssel normalisiert wie normalisiereName). Ziel = Land-Key.
-const LAND_ALIASE: Record<string, string> = {
+// Zwilling: backend/src/lib/reisetage.ts (Server prüft den Freitext, pruefeLandFreitext);
+// exportiert nur für den Paritätstest.
+export const LAND_ALIASE: Record<string, string> = {
   'sudkorea': 'Korea, Republik', 'sud korea': 'Korea, Republik', 'republik korea': 'Korea, Republik',
   'belarus': 'Weißrussland', 'weissrussland': 'Weißrussland',
   'elfenbeinkuste': 'Côte d’Ivoire', 'ivory coast': 'Côte d’Ivoire',
@@ -469,6 +483,11 @@ const LAND_ALIASE: Record<string, string> = {
   'sizilien': 'Italien', 'sardinien': 'Italien',
   'kreta': 'Griechenland',
   'hawaii': 'USA', 'alaska': 'USA', 'puerto rico': 'USA',
+  // Städte mit eigenem Satz unter üblichem Namen. „New York“ und „Washington“ sind auch US-Bundesstaaten →
+  // Staat; die Stadt nennt listenEintraegeZuFreitext mit (ebenso Palma bei „Mallorca“).
+  'palma': 'Spanien — Palma de Mallorca', 'hong kong': 'China — Hongkong',
+  'sankt petersburg': 'Russische Föderation — St. Petersburg',
+  'nyc': 'USA — New York City', 'new york': 'USA', 'washington dc': 'USA — Washington, D. C.', 'washington': 'USA',
 };
 
 /** Vergleichsform eines Namens: klein, ohne Akzente/Apostrophe, ß → ss, nur Buchstaben/Ziffern. */
@@ -495,6 +514,38 @@ export function landKeyZuFreitext(freitext: string, landKeys: readonly string[])
   if (direkt) return direkt;
   const alias = LAND_ALIASE[gesucht];
   return alias && landKeys.includes(alias) ? alias : null;
+}
+
+/**
+ * Alle Listeneinträge zum Freitext: der Treffer von landKeyZuFreitext und — ist er ein Staat — dessen
+ * Städte mit eigenem Satz, deren Name den Freitext enthält („Mallorca“ → „Spanien“ und „Spanien —
+ * Palma de Mallorca“, „New York“ → „USA“ und „USA — New York City“). Leer = nicht in der Liste.
+ */
+export function listenEintraegeZuFreitext(freitext: string, landKeys: readonly string[]): string[] {
+  const treffer = landKeyZuFreitext(freitext, landKeys);
+  if (!treffer) return [];
+  if (treffer.includes(' — ')) return [treffer];
+  const gesucht = ` ${normalisiereName(freitext)} `;
+  const staedte = landKeys
+    .filter(k => k.startsWith(`${treffer} — `) && ` ${normalisiereName(k.split(' — ')[1])} `.includes(gesucht))
+    .sort();
+  return [treffer, ...staedte];
+}
+
+/**
+ * Zwilling (Server lehnt genauso ab): „Staat nicht in der Liste“ (Satz Luxemburg) nur für Staaten,
+ * die am Tag `datum` wirklich keinen Satzstand haben. Ergibt der Freitext ein Land mit gültigem Stand
+ * an diesem Tag, gilt dessen Satz — also Fehler mit Hinweis auf die Auswahl. `staende` = alle Satzstände.
+ * Wirft ReisetageFehler FREITEXT_IN_LISTE.
+ */
+export function pruefeLandFreitext(land: TagesLand, datum: string, staende: readonly Satzstand[]): void {
+  if (land.landKey !== LAND_ANDERES || !land.landFreitext) return;
+  const gueltigeKeys = [...new Set(staende.filter(s => waehleSatzstand([s], datum) !== null).map(s => s.landKey))];
+  const eintraege = listenEintraegeZuFreitext(land.landFreitext, gueltigeKeys);
+  if (eintraege.length > 0) {
+    const namen = eintraege.map(k => `„${k}“`).join(' oder ');
+    throw new ReisetageFehler('FREITEXT_IN_LISTE', `${namen} ${eintraege.length > 1 ? 'stehen' : 'steht'} in der Liste – bitte dort auswählen.`);
+  }
 }
 
 /**
@@ -528,7 +579,8 @@ export function laenderZumDatum<T extends { landKey: string; gueltigVon: string;
 /** Reisetag der Vorschau: Eingaben + maßgebendes Land + angewandter Satz + Beträge. */
 export interface VmaVorschauTag extends Reisetag {
   land: TagesLand;
-  satz: AngewandterSatz;
+  /** null = Tag ohne Anspruch (eintägig bis 8 h, brauchtSatz) — kein Satz, 0,00. */
+  satz: AngewandterSatz | null;
 }
 
 export interface VmaVorschau {
@@ -542,11 +594,12 @@ export interface VmaVorschau {
 const OHNE_FREITEXT = '\u0000';
 
 /**
- * Vorschau = Serverrechnung aus den Rohdaten: Land je Tag (bestimmeTageslaender) → Satz des
- * Satzstands zum Datum des Tags (waehleTagesSatz) → VMA (berechneVmaTagMitSatz). Fehlt nur der
- * Freitext zu „Staat nicht in der Liste“, bleiben Länder und Beträge sichtbar (sie hängen nicht
- * vom Freitext ab); die Meldung steht trotzdem in `fehler`. Fehlt der Satzstand für ein
- * Reisejahr, gibt es keine Beträge, nur die Meldung des Servers.
+ * Vorschau = Serverrechnung aus den Rohdaten: Land je Tag (bestimmeTageslaender) → je Tag mit
+ * Anspruch (brauchtSatz) Freitextprüfung (pruefeLandFreitext) und Satz des Satzstands zum Datum
+ * des Tags (waehleTagesSatz) → VMA (berechneVmaTagMitSatz); Tage ohne Anspruch 0,00 ohne Satz.
+ * Fehlt nur der Freitext zu „Staat nicht in der Liste“, bleiben Länder und Beträge sichtbar (sie
+ * hängen nicht vom Freitext ab); die Meldung steht trotzdem in `fehler`. Fehlt der Satzstand für
+ * ein Reisejahr, gibt es keine Beträge, nur die Meldung des Servers.
  */
 export function berechneVmaVorschau(
   tage: readonly ReisetagEingabe[],
@@ -574,9 +627,11 @@ export function berechneVmaVorschau(
   try {
     return {
       tage: tage.map((t, i) => {
+        const ohneBetrag = { ...t, vmaBrutto: 0, vmaKuerzung: 0, vmaNetto: 0 };
+        if (!brauchtSatz(t)) return { ...ohneBetrag, land: laender[i], satz: null };
+        pruefeLandFreitext(laender[i], t.datum, staende);
         const satz = waehleTagesSatz(laender[i].landKey, t.datum, staende);
-        const tag = berechneVmaTagMitSatz({ ...t, vmaBrutto: 0, vmaKuerzung: 0, vmaNetto: 0 }, satz);
-        return { ...tag, land: laender[i], satz };
+        return { ...berechneVmaTagMitSatz(ohneBetrag, satz), land: laender[i], satz };
       }),
       fehler,
     };

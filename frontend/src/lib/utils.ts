@@ -24,6 +24,11 @@ export function formatCurrency(amount: number): string {
 }
 
 export function formatDate(date: string | Date): string {
+  // Reines Datum string-basiert: new Date('JJJJ-MM-TT') ist UTC-Mitternacht und zeigte in
+  // einem Browser westlich von UTC den Vortag.
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return `${date.slice(8, 10)}.${date.slice(5, 7)}.${date.slice(0, 4)}`;
+  }
   return new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(date));
 }
 

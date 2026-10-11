@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { erstelleReisekostenEmailText } from '../emailTexte.js';
+import { erstelleReisekostenEmailText, erstelleKlassenfahrtEmailText } from '../emailTexte.js';
 
 const basis = {
   vorname: 'Anna',
@@ -61,5 +61,28 @@ describe('erstelleReisekostenEmailText', () => {
     const vermerk = 'Überschneidung mit RK-2026-00007 am 16.03.2026: für diesen Tag ist nur die höhere Pauschale zulässig (BMF 05.12.2025). Bitte prüfen.';
     const text = erstelleReisekostenEmailText({ ...basis, land: null, reiseland: ['Inland'], reisetage: [], pruefvermerke: [vermerk] });
     expect(text).toContain(`Prüfvermerk:\n  ${vermerk}`);
+  });
+});
+
+describe('Datumsanzeige unabhängig von der Zeitzone', () => {
+  // CI setzt TZ je Matrix-Eintrag; ohne Wirkung liefe die Matrix still mehrfach in derselben Zone.
+  it.runIf(process.env.TZ)('die gesetzte Zeitzone (TZ) wirkt im Test-Worker', () => {
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(process.env.TZ);
+  });
+
+  it('Klassenfahrt-Zeitraum über den Jahreswechsel ohne Vortag (westlich von UTC)', () => {
+    const text = erstelleKlassenfahrtEmailText({
+      einreicherName: 'Anna Muster',
+      personalNr: '4711',
+      mandantName: 'Testschule',
+      mandantNr: '40',
+      anlass: 'Skifahrt',
+      ziel: '',
+      zeitraumVon: '2026-12-31',
+      zeitraumBis: '2027-01-01',
+      gesamtZuschuss: 0,
+      klassen: [],
+    });
+    expect(text).toContain('Zeitraum: 31.12.2026 – 01.01.2027');
   });
 });

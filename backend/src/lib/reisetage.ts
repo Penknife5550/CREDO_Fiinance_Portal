@@ -4,7 +4,8 @@
  * 1. bildeReisetage: Tagesbildung aus Abfahrt/Rückkehr (Mitternachtsregel).
  * 2. bestimmeTageslaender: maßgebendes Land je Tag aus den Landangaben.
  * 3. waehleTagesSatz: Pauschalen-Paar + Quelle zum maßgebenden Land und Datum des Tags
- *    (Satzstand nach Reisedatum, waehleSatzstand).
+ *    (Satzstand nach Reisedatum, waehleSatzstand); brauchtSatz: Tage ohne Anspruch brauchen keinen.
+ * 4. pruefeLandFreitext: Freitext bei „Staat nicht in der Liste“ gegen die Länderliste (landKeyZuFreitext).
  *
  * Der Frontend-Zwilling (Vorschau) MUSS identisch rechnen; die Parität prüft
  * tests/vma-paritaet.test.ts (unter TZ=UTC und TZ=Europe/Berlin).
@@ -26,7 +27,10 @@ export type ReisetageFehlerCode =
   | 'UNGUELTIGE_LANDANGABE'
   | 'UNBEKANNTES_LAND'
   | 'SATZSTAND_FEHLT'
-  | 'LAND_OHNE_SATZSTAND';
+  | 'LAND_OHNE_SATZSTAND'
+  | 'FREITEXT_IN_LISTE'
+  // Nur Server (reiseangaben.ts, bereiteReisekostenVor): Client-Tage passen nicht zum Zeitraum.
+  | 'TAGE_PASSEN_NICHT';
 
 /** Fachlicher Fehler der Tagesbildung/Landbestimmung mit deutscher Meldung (Route: 400). */
 export class ReisetageFehler extends Error {
@@ -281,6 +285,15 @@ export function satzLandKey(landKey: string): string | null {
 }
 
 /**
+ * Braucht der Tag einen Satz? Nein bei eintägiger Abwesenheit bis einschließlich 8 h — dafür besteht
+ * kein Anspruch (§ 9 Abs. 4a S. 3 Nr. 3 EStG), also wird kein Satz nachgeschlagen (auch kein fehlender
+ * Satzstand gemeldet) und keiner gespeichert.
+ */
+export function brauchtSatz(tag: { typ: ReisetagTyp; eintaegigUeber8h?: boolean }): boolean {
+  return tag.typ !== 'EINTAEGIG' || tag.eintaegigUeber8h === true;
+}
+
+/**
  * Am Tag `datum` ('YYYY-MM-DD') gültiger Satzstand: der mit dem größten `gueltigVon` ≤ datum
  * IM SELBEN KALENDERJAHR wie `datum` — die BMF-Sätze gelten je Kalenderjahr; ein Stand des
  * Vorjahres gilt nie weiter (fehlt der neue Jahresstand, wird nicht still mit dem alten
@@ -360,4 +373,104 @@ export function waehleTagesSatz(landKey: string, datum: string, staende: readonl
   const stand = waehleSatzstand(staendeLand, datum);
   if (!stand) throw fehlerOhneSatzstand(key, datum, staende);
   return { satz24h: stand.satz24h, satz8h: stand.satz8h, quelle: stand.quelle };
+}
+
+// ── 4. Freitext bei „Staat nicht in der Liste“ ────────────────────────────────
+
+// Übliche Namen von Staaten und Gebieten, die in der BMF-Übersicht anders heißen bzw. zum
+// Mutterland zählen (Schlüssel normalisiert wie normalisiereName). Ziel = Land-Key.
+// Exportiert nur für den Paritätstest (Tabelle identisch mit dem Frontend-Zwilling).
+export const LAND_ALIASE: Record<string, string> = {
+  'sudkorea': 'Korea, Republik', 'sud korea': 'Korea, Republik', 'republik korea': 'Korea, Republik',
+  'belarus': 'Weißrussland', 'weissrussland': 'Weißrussland',
+  'elfenbeinkuste': 'Côte d’Ivoire', 'ivory coast': 'Côte d’Ivoire',
+  'moldawien': 'Moldau, Republik', 'moldau': 'Moldau, Republik', 'moldova': 'Moldau, Republik', 'republik moldau': 'Moldau, Republik',
+  'england': 'Großbritannien', 'schottland': 'Großbritannien', 'wales': 'Großbritannien', 'nordirland': 'Großbritannien',
+  'vereinigtes konigreich': 'Großbritannien', 'united kingdom': 'Großbritannien', 'uk': 'Großbritannien', 'gibraltar': 'Großbritannien',
+  'holland': 'Niederlande',
+  'tschechische republik': 'Tschechien',
+  'slowakei': 'Slowakische Republik',
+  'russland': 'Russische Föderation',
+  'mazedonien': 'Nordmazedonien',
+  'turkiye': 'Türkei',
+  'vereinigte staaten': 'USA', 'vereinigte staaten von amerika': 'USA', 'amerika': 'USA', 'us': 'USA',
+  'vae': 'Vereinigte Arabische Emirate', 'uae': 'Vereinigte Arabische Emirate', 'emirate': 'Vereinigte Arabische Emirate',
+  'burma': 'Myanmar', 'birma': 'Myanmar',
+  'vatikan': 'Vatikanstaat',
+  'kapverden': 'Kap Verde',
+  'bosnien': 'Bosnien und Herzegowina',
+  'marshallinseln': 'Marshall Inseln',
+  'kanaren': 'Spanien — Kanarische Inseln', 'teneriffa': 'Spanien — Kanarische Inseln', 'gran canaria': 'Spanien — Kanarische Inseln',
+  'lanzarote': 'Spanien — Kanarische Inseln', 'fuerteventura': 'Spanien — Kanarische Inseln',
+  'mallorca': 'Spanien', 'balearen': 'Spanien', 'ibiza': 'Spanien',
+  'madeira': 'Portugal', 'azoren': 'Portugal',
+  'gronland': 'Dänemark', 'faroer': 'Dänemark', 'faroer inseln': 'Dänemark',
+  'korsika': 'Frankreich', 'guadeloupe': 'Frankreich', 'martinique': 'Frankreich', 'reunion': 'Frankreich',
+  'sizilien': 'Italien', 'sardinien': 'Italien',
+  'kreta': 'Griechenland',
+  'hawaii': 'USA', 'alaska': 'USA', 'puerto rico': 'USA',
+  // Städte mit eigenem Satz unter üblichem Namen. „New York“ und „Washington“ sind auch US-Bundesstaaten →
+  // Staat; die Stadt nennt listenEintraegeZuFreitext mit (ebenso Palma bei „Mallorca“).
+  'palma': 'Spanien — Palma de Mallorca', 'hong kong': 'China — Hongkong',
+  'sankt petersburg': 'Russische Föderation — St. Petersburg',
+  'nyc': 'USA — New York City', 'new york': 'USA', 'washington dc': 'USA — Washington, D. C.', 'washington': 'USA',
+};
+
+/** Vergleichsform eines Namens: klein, ohne Akzente/Apostrophe, ß → ss, nur Buchstaben/Ziffern. */
+function normalisiereName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/ß/g, 'ss')
+    .replace(/[’'`´]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Steht der bei „Staat nicht in der Liste“ eingetippte Staat doch in der Liste (ohne Groß-/
+ * Kleinschreibung, unter anderem Namen oder als Gebiet des Mutterlands)? Liefert den Land-Key
+ * (z. B. „Südkorea“ → „Korea, Republik“, „Teneriffa“ → „Spanien — Kanarische Inseln“), sonst null.
+ */
+export function landKeyZuFreitext(freitext: string, landKeys: readonly string[]): string | null {
+  const gesucht = normalisiereName(freitext);
+  if (!gesucht) return null;
+  const direkt = landKeys.find(k => normalisiereName(k) === gesucht || normalisiereName(k.split(' — ')[1] ?? '') === gesucht);
+  if (direkt) return direkt;
+  const alias = LAND_ALIASE[gesucht];
+  return alias && landKeys.includes(alias) ? alias : null;
+}
+
+/**
+ * Alle Listeneinträge zum Freitext: der Treffer von landKeyZuFreitext und — ist er ein Staat — dessen
+ * Städte mit eigenem Satz, deren Name den Freitext enthält („Mallorca“ → „Spanien“ und „Spanien —
+ * Palma de Mallorca“, „New York“ → „USA“ und „USA — New York City“). Leer = nicht in der Liste.
+ */
+export function listenEintraegeZuFreitext(freitext: string, landKeys: readonly string[]): string[] {
+  const treffer = landKeyZuFreitext(freitext, landKeys);
+  if (!treffer) return [];
+  if (treffer.includes(' — ')) return [treffer];
+  const gesucht = ` ${normalisiereName(freitext)} `;
+  const staedte = landKeys
+    .filter(k => k.startsWith(`${treffer} — `) && ` ${normalisiereName(k.split(' — ')[1])} `.includes(gesucht))
+    .sort();
+  return [treffer, ...staedte];
+}
+
+/**
+ * „Staat nicht in der Liste“ (Satz Luxemburg) nur für Staaten, die am Tag `datum` wirklich keinen
+ * Satzstand haben: Ergibt der Freitext ein Land mit gültigem Stand an diesem Tag, gilt dessen Satz —
+ * also ablehnen mit Hinweis auf die Auswahl (sonst z. B. „Polen“ zum Satz Luxemburg). `staende` =
+ * Satzstände ALLER Länder (der Server lädt sie dafür vollständig, bereiteReisekostenVor).
+ * Wirft ReisetageFehler FREITEXT_IN_LISTE.
+ */
+export function pruefeLandFreitext(land: TagesLand, datum: string, staende: readonly Satzstand[]): void {
+  if (land.landKey !== LAND_ANDERES || !land.landFreitext) return;
+  const gueltigeKeys = [...new Set(staende.filter(s => waehleSatzstand([s], datum) !== null).map(s => s.landKey))];
+  const eintraege = listenEintraegeZuFreitext(land.landFreitext, gueltigeKeys);
+  if (eintraege.length > 0) {
+    const namen = eintraege.map(k => `„${k}“`).join(' oder ');
+    throw new ReisetageFehler('FREITEXT_IN_LISTE', `${namen} ${eintraege.length > 1 ? 'stehen' : 'steht'} in der Liste – bitte dort auswählen.`);
+  }
 }

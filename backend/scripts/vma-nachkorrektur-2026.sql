@@ -65,6 +65,11 @@
 --   docker exec -i -e PGOPTIONS='-c default_transaction_read_only=on' credo-finanz-db \
 --     psql -U credo -d finanzportal -v ON_ERROR_STOP=1 --csv \
 --     < backend/scripts/vma-nachkorrektur-2026.sql > "$ZIEL" && echo "$ZIEL"
+--   In Excel nicht per Doppelklick öffnen, sondern über „Daten → Aus Text/CSV“ importieren und
+--   die Textspalten (mandant, personal_nr, nachname, vorname, land) als Typ „Text“ festlegen.
+--   Schutz gegen Formel-Injection: Diese Spalten stammen aus Formular- bzw. Admin-Eingaben;
+--   beginnt ein Wert mit = + - @ Tabulator oder Wagenrücklauf, steht ein ' davor (dann zeigt
+--   Excel den Text statt eine Formel auszuführen; beim Abgleich in der Lohnbuchhaltung das ' ignorieren).
 --
 -- DATENSCHUTZ
 --   Die Ausgabe ist personenbezogen (Name, Personalnummer, Beträge). Nur an den
@@ -444,8 +449,15 @@ beleg_hinweise AS (
   FROM beleg b
 )
 SELECT
-  zeile, beleg_nr, mandant_nr, mandant, personal_nr, nachname, vorname,
-  abfahrt, rueckkehr, dauer_min, land, datum, typ_ist, typ_soll, mahlzeiten,
+  zeile, beleg_nr, mandant_nr,
+  -- CSV-Formel-Injection: Text aus Eingaben, der mit = + - @ TAB oder CR beginnt, mit ' entschärfen
+  CASE WHEN mandant     ~ '^[-=+@\t\r]' THEN '''' || mandant     ELSE mandant     END AS mandant,
+  CASE WHEN personal_nr ~ '^[-=+@\t\r]' THEN '''' || personal_nr ELSE personal_nr END AS personal_nr,
+  CASE WHEN nachname    ~ '^[-=+@\t\r]' THEN '''' || nachname    ELSE nachname    END AS nachname,
+  CASE WHEN vorname     ~ '^[-=+@\t\r]' THEN '''' || vorname     ELSE vorname     END AS vorname,
+  abfahrt, rueckkehr, dauer_min,
+  CASE WHEN land        ~ '^[-=+@\t\r]' THEN '''' || land        ELSE land        END AS land,
+  datum, typ_ist, typ_soll, mahlzeiten,
   satz_24h, satz_8h, ist, ungekuerzt, soll, differenz,
   ueberzahlung, pauschalierbar_betrag, individuell_betrag, pruefhinweise
 FROM (

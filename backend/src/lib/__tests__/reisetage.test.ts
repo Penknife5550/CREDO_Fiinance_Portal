@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   bildeReisetage,
   bestimmeTageslaender,
+  brauchtSatz,
+  landKeyZuFreitext,
+  listenEintraegeZuFreitext,
+  pruefeLandFreitext,
   waehleTagesSatz,
   waehleSatzstand,
   satzLandKey,
@@ -10,7 +14,8 @@ import {
   type Satzstand,
   type TagesLandAngabe,
 } from '../reisetage.js';
-import { vmaTag, INLAND_SATZ } from '../vma.js';
+import { bereiteReisekostenVor, berechneReisekostenVma } from '../reiseangaben.js';
+import { INLAND_SATZ } from '../vma.js';
 
 const BMF_2026 = 'BMF-Schreiben vom 05.12.2025';
 const stand = (landKey: string, gueltigVon: string, satz24h: number, satz8h: number, quelle = BMF_2026): Satzstand =>
@@ -37,7 +42,11 @@ type TagesEingabe = Partial<Pick<TagesLandAngabe, 'land24uhr' | 'letzterTaetigke
   abend?: boolean;
 };
 
-/** Komplette Kette wie in der Route: Tage bilden → Angaben per Datum zuordnen → Land → Satz → VMA. */
+/**
+ * Komplette Kette der Route (lib/reiseangaben.ts): bereiteReisekostenVor → Satzstände wie die Route
+ * laden (Satz-Keys bzw. alle Länder) → berechneReisekostenVma. Die Client-Tage baut der Test wie das
+ * Formular (ein Tag je Datum mit Mahlzeiten und Landangaben).
+ */
 function rechne(
   abfahrt: string,
   rueckkehr: string,
@@ -48,24 +57,29 @@ function rechne(
     staende?: readonly Satzstand[];
   } = {},
 ) {
-  const tage = bildeReisetage(abfahrt, rueckkehr, opts.uebernachtung ?? null);
-  const angaben = tage.map(t => ({ ...t, ...opts.tage?.[t.datum] }));
-  const laender = bestimmeTageslaender(angaben, opts.hauptland ?? null);
-  const betraege = angaben.map(
-    (t, i) =>
-      vmaTag(
-        {
-          typ: t.typ,
-          eintaegigUeber8h: t.eintaegigUeber8h,
-          fruehstueckGestellt: !!t.fruehstueck,
-          mittagGestellt: !!t.mittag,
-          abendGestellt: !!t.abend,
-        },
-        waehleTagesSatz(laender[i].landKey, t.datum, opts.staende ?? STAENDE),
-      ).vmaNetto,
-  );
-  const summe = Math.round(betraege.reduce((a, b) => a + b, 0) * 100) / 100;
-  return { tage, laender: laender.map(l => l.landKey), betraege, summe };
+  const uebernachtung = opts.uebernachtung ?? null;
+  let daten: string[] = [];
+  try {
+    daten = bildeReisetage(abfahrt, rueckkehr, uebernachtung).map(t => t.datum);
+  } catch {
+    // Formular hätte keine Tage — der Server lehnt mit derselben Meldung ab.
+  }
+  const reisetage = daten.map(datum => {
+    const e = opts.tage?.[datum] ?? {};
+    return {
+      datum,
+      fruehstueckGestellt: !!e.fruehstueck,
+      mittagGestellt: !!e.mittag,
+      abendGestellt: !!e.abend,
+      land24uhr: e.land24uhr,
+      letzterTaetigkeitsort: e.letzterTaetigkeitsort,
+      landFreitext: e.landFreitext,
+    };
+  });
+  const v = bereiteReisekostenVor({ abfahrtZeit: abfahrt, rueckkehrZeit: rueckkehr, uebernachtung, land: opts.hauptland ?? null, reisetage });
+  const alle = opts.staende ?? STAENDE;
+  const r = berechneReisekostenVma(v, v.satzKeys.length === 0 ? [] : v.alleLaender ? alle : alle.filter(s => v.satzKeys.includes(s.landKey)));
+  return { tage: r.tage, laender: r.tage.map(t => t.landKey), betraege: r.tage.map(t => t.vmaNetto), summe: r.vmaNetto };
 }
 
 /** Erwartet einen ReisetageFehler mit Code (und optional Meldungsteil). */
@@ -551,6 +565,104 @@ describe('waehleTagesSatz / satzLandKey', () => {
     expect(waehleTagesSatz('ANDERES', '2026-12-31', STAENDE_2027)).toEqual({ satz24h: 63, satz8h: 42, quelle: BMF_2026 });
     expect(waehleTagesSatz('SEETAG', '2027-01-01', STAENDE_2027)).toEqual({ satz24h: 65, satz8h: 44, quelle: TEST_2027 });
     expect(waehleTagesSatz('ANDERES', '2027-03-01', STAENDE_2027)).toEqual({ satz24h: 65, satz8h: 44, quelle: TEST_2027 });
+  });
+});
+
+describe('brauchtSatz (Tage ohne Anspruch brauchen keinen Satz)', () => {
+  it('nur eintägig bis einschließlich 8 h braucht keinen Satz', () => {
+    expect(brauchtSatz({ typ: 'EINTAEGIG', eintaegigUeber8h: false })).toBe(false);
+    expect(brauchtSatz({ typ: 'EINTAEGIG' })).toBe(false);
+    expect(brauchtSatz({ typ: 'EINTAEGIG', eintaegigUeber8h: true })).toBe(true);
+    for (const typ of ['ANREISE', 'GANZTAG', 'ABREISE'] as const) expect(brauchtSatz({ typ, eintaegigUeber8h: false })).toBe(true);
+  });
+
+  it('Tagesreise 6 h in die Niederlande im Januar 2027 ohne Stand 2027 → 0,00 statt Fehler', () => {
+    const r = rechne('2027-01-14T08:00', '2027-01-14T14:00', { hauptland: 'Niederlande' });
+    expect(r.tage.map(t => [t.landKey, t.satz, t.vmaNetto])).toEqual([['Niederlande', null, 0]]);
+    erwarteFehler(() => rechne('2027-01-14T08:00', '2027-01-14T16:01', { hauptland: 'Niederlande' }), 'SATZSTAND_FEHLT', MELDUNG_2027);
+  });
+});
+
+describe('landKeyZuFreitext / pruefeLandFreitext („Staat nicht in der Liste“, Server)', () => {
+  const STAENDE_POLEN = [...STAENDE, stand('Polen', '2026-01-01', 34, 23), stand('Spanien — Kanarische Inseln', '2026-01-01', 40, 27)];
+  const anderes = (landFreitext: string | null) => ({ landKey: 'ANDERES', landFreitext });
+
+  it('landKeyZuFreitext: Listenname ohne Groß-/Kleinschreibung, Stadtname, übliche andere Namen; sonst null', () => {
+    const keys = ['Polen', 'Niederlande', 'Spanien — Kanarische Inseln', 'Korea, Republik'];
+    expect(landKeyZuFreitext(' POLEN ', keys)).toBe('Polen');
+    expect(landKeyZuFreitext('Holland', keys)).toBe('Niederlande');
+    expect(landKeyZuFreitext('Teneriffa', keys)).toBe('Spanien — Kanarische Inseln');
+    expect(landKeyZuFreitext('kanarische inseln', keys)).toBe('Spanien — Kanarische Inseln');
+    expect(landKeyZuFreitext('Süd-Korea', keys)).toBe('Korea, Republik');
+    expect(landKeyZuFreitext('Nauru', keys)).toBeNull();
+    expect(landKeyZuFreitext('Russland', keys)).toBeNull(); // Ziel nicht in der Liste
+    expect(landKeyZuFreitext('  ', keys)).toBeNull();
+  });
+
+  it('Freitext ergibt ein Land mit Stand am Tag → FREITEXT_IN_LISTE', () => {
+    erwarteFehler(() => pruefeLandFreitext(anderes('Polen'), '2026-05-04', STAENDE_POLEN), 'FREITEXT_IN_LISTE',
+      /^„Polen“ steht in der Liste – bitte dort auswählen\.$/);
+    erwarteFehler(() => pruefeLandFreitext(anderes('Gran Canaria'), '2026-05-04', STAENDE_POLEN), 'FREITEXT_IN_LISTE',
+      /^„Spanien — Kanarische Inseln“ steht in der Liste/);
+  });
+
+  it('kein Fehler: nicht aufgeführter Staat, Land ohne Stand am Tag, anderes Land als ANDERES, ohne Freitext', () => {
+    expect(() => pruefeLandFreitext(anderes('Nauru'), '2026-05-04', STAENDE_POLEN)).not.toThrow();
+    expect(() => pruefeLandFreitext(anderes('Polen'), '2027-01-04', STAENDE_POLEN)).not.toThrow(); // kein Stand 2027
+    expect(() => pruefeLandFreitext(anderes('Polen'), '2026-05-04', [stand('Polen', '2026-07-01', 34, 23)])).not.toThrow();
+    expect(() => pruefeLandFreitext({ landKey: 'Belgien', landFreitext: 'Polen' }, '2026-05-04', STAENDE_POLEN)).not.toThrow();
+    expect(() => pruefeLandFreitext(anderes(null), '2026-05-04', STAENDE_POLEN)).not.toThrow();
+  });
+
+  // Städte mit eigenem BMF-Satz (CSV 2026) unter üblichen Namen — sonst liefen sie zum Satz Luxemburg (63/42).
+  const STADT_KEYS = ['Spanien', 'Spanien — Palma de Mallorca', 'Spanien — Barcelona', 'USA', 'USA — New York City',
+    'USA — Washington, D. C.', 'USA — Miami', 'China', 'China — Hongkong', 'Russische Föderation',
+    'Russische Föderation — St. Petersburg', 'Russische Föderation — Moskau'];
+
+  it('Städte mit eigenem Satz: übliche Namen und Schreibweisen', () => {
+    expect(landKeyZuFreitext('Palma', STADT_KEYS)).toBe('Spanien — Palma de Mallorca');
+    expect(landKeyZuFreitext('Palma de Mallorca', STADT_KEYS)).toBe('Spanien — Palma de Mallorca');
+    expect(landKeyZuFreitext('Hong Kong', STADT_KEYS)).toBe('China — Hongkong');
+    expect(landKeyZuFreitext('Sankt Petersburg', STADT_KEYS)).toBe('Russische Föderation — St. Petersburg');
+    expect(landKeyZuFreitext('St. Petersburg', STADT_KEYS)).toBe('Russische Föderation — St. Petersburg');
+    expect(landKeyZuFreitext('NYC', STADT_KEYS)).toBe('USA — New York City');
+    expect(landKeyZuFreitext('Washington DC', STADT_KEYS)).toBe('USA — Washington, D. C.');
+    expect(landKeyZuFreitext('Washington, D.C.', STADT_KEYS)).toBe('USA — Washington, D. C.');
+    // Auch US-Bundesstaaten: Staat (die Stadt nennt listenEintraegeZuFreitext mit)
+    expect(landKeyZuFreitext('New York', STADT_KEYS)).toBe('USA');
+    expect(landKeyZuFreitext('Washington', STADT_KEYS)).toBe('USA');
+  });
+
+  it('listenEintraegeZuFreitext: Staat und passende Stadt mit eigenem Satz, sonst nur der Treffer', () => {
+    expect(listenEintraegeZuFreitext('Mallorca', STADT_KEYS)).toEqual(['Spanien', 'Spanien — Palma de Mallorca']);
+    expect(listenEintraegeZuFreitext('New York', STADT_KEYS)).toEqual(['USA', 'USA — New York City']);
+    expect(listenEintraegeZuFreitext('washington', STADT_KEYS)).toEqual(['USA', 'USA — Washington, D. C.']);
+    expect(listenEintraegeZuFreitext('Palma', STADT_KEYS)).toEqual(['Spanien — Palma de Mallorca']);
+    expect(listenEintraegeZuFreitext('Spanien', STADT_KEYS)).toEqual(['Spanien']);
+    expect(listenEintraegeZuFreitext('Ibiza', STADT_KEYS)).toEqual(['Spanien']);
+    expect(listenEintraegeZuFreitext('Nauru', STADT_KEYS)).toEqual([]);
+    // Stadt ohne Stand am Tag: nur der Staat
+    expect(listenEintraegeZuFreitext('Mallorca', ['Spanien', 'Spanien — Barcelona'])).toEqual(['Spanien']);
+  });
+
+  it('Meldung nennt Staat und Stadt („Mallorca“, „New York“)', () => {
+    const staende = [...STAENDE, ...STADT_KEYS.map(k => stand(k, '2026-01-01', 40, 27))];
+    erwarteFehler(() => pruefeLandFreitext(anderes('Mallorca'), '2026-05-04', staende), 'FREITEXT_IN_LISTE',
+      /^„Spanien“ oder „Spanien — Palma de Mallorca“ stehen in der Liste – bitte dort auswählen\.$/);
+    erwarteFehler(() => pruefeLandFreitext(anderes('New York'), '2026-05-04', staende), 'FREITEXT_IN_LISTE',
+      /^„USA“ oder „USA — New York City“ stehen in der Liste – bitte dort auswählen\.$/);
+    erwarteFehler(() => pruefeLandFreitext(anderes('Hong Kong'), '2026-05-04', staende), 'FREITEXT_IN_LISTE',
+      /^„China — Hongkong“ steht in der Liste – bitte dort auswählen\.$/);
+  });
+
+  it('komplette Kette: „Staat nicht in der Liste“ + „Polen“ → Fehler statt Satz Luxemburg', () => {
+    erwarteFehler(
+      () => rechne('2026-03-16T08:00', '2026-03-18T18:00', {
+        hauptland: 'Belgien', staende: STAENDE_POLEN, tage: { '2026-03-17': { land24uhr: 'ANDERES', landFreitext: 'Polen' } },
+      }),
+      'FREITEXT_IN_LISTE',
+      /„Polen“/,
+    );
   });
 });
 

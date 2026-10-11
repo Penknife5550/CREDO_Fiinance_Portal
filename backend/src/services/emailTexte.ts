@@ -1,3 +1,5 @@
+import { datumDe } from '../lib/reiseangaben.js';
+
 interface Reisetag {
   datum: string;
   /** Maßgebendes Land des Tags (Anzeigename, z. B. 'Belgien', 'Inland'). */
@@ -42,6 +44,9 @@ interface ErstattungEmailDaten {
 }
 
 function formatiereDatum(isoString: string): string {
+  // Reines Datum (Reisetag, Klassenfahrt-Zeitraum) string-basiert: new Date('JJJJ-MM-TT') ist
+  // UTC-Mitternacht, lokale Getter ergäben westlich von UTC den Vortag.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoString)) return datumDe(isoString);
   const d = new Date(isoString);
   const tag = String(d.getDate()).padStart(2, '0');
   const monat = String(d.getMonth() + 1).padStart(2, '0');

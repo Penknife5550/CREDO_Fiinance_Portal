@@ -1,12 +1,19 @@
 /**
  * Reisekosten (Release 1b/1c): Zuordnung der Client-Tagesangaben, Anzeige des Reiselands,
  * Quellen der angewandten Pauschalen und Prüfvermerke bei Überschneidungen — reine, testbare
- * Funktionen für Route, PDF und Mailtext.
+ * Funktionen für Route, PDF und Mailtext. Dazu die VMA-Rechenkette der Route
+ * (bereiteReisekostenVor → Satzstände laden → berechneReisekostenVma), damit Tests und
+ * Paritätstest genau den Serverpfad prüfen.
  * Die steuerliche Logik (Tagesbildung, maßgebendes Land, Satz) liegt in reisetage.ts.
  */
 
-import { LAND_ANDERES, LAND_INLAND, LAND_SEETAG } from './constants.js';
-import type { ReisetagSoll, TagesLand } from './reisetage.js';
+import { FALLBACK_LAND_KEY, LAND_ANDERES, LAND_INLAND, LAND_SEETAG, RESERVIERTE_LAND_KEYS } from './constants.js';
+import { rundeAufCent } from './kmSaetze.js';
+import {
+  bestimmeTageslaender, bildeReisetage, brauchtSatz, pruefeLandFreitext, ReisetageFehler, satzLandKey, waehleTagesSatz,
+  type AngewandterSatz, type ReisetagSoll, type Satzstand, type TagesLand,
+} from './reisetage.js';
+import { vmaTag, type VmaTagErgebnis } from './vma.js';
 
 /** 'YYYY-MM-DD' → 'TT.MM.JJJJ'. */
 export function datumDe(datum: string): string {
@@ -123,4 +130,192 @@ export function ueberschneidungsVermerke(treffer: readonly Ueberschneidung[]): s
       : 'für diese Tage ist jeweils nur die höhere Pauschale zulässig';
     return `Überschneidung mit ${belegNr} am ${liste}: ${regel}; gestellte Mahlzeiten beider Abrechnungen sind vom 24-h-Satz des Landes mit der höheren Pauschale zu kürzen (BMF 05.12.2025). Bitte prüfen.`;
   });
+}
+
+/**
+ * Steuer-, Format- und Trennzeichen → Leerzeichen: \p{Cc} (CR, LF, TAB …), \p{Cf} (u. a. Bidi-Overrides
+ * wie U+202E, Null-Breiten-Zeichen), \p{Zl}/\p{Zp} (U+2028/U+2029, in manchen Mail-Clients ein
+ * Zeilenumbruch). Für Freitexte aus dem öffentlichen Formular, die in den Mailtext an das DMS gelangen —
+ * sonst ließen sich dort eigene Zeilen einschleusen (z. B. eine gefälschte Zeile „Prüfvermerk:“) oder
+ * Text umdrehen. Zod-Transform der Reisekosten-Route; dieselbe Zeichenklasse prüft satzstaende.ts.
+ */
+export function ohneSteuerzeichen(text: string): string {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ');
+}
+
+// ── VMA-Rechenkette der Reisekosten-Route ─────────────────────────────────────
+
+/** Reisetag, wie ihn der Client sendet: vom Client zählen nur Datum, Mahlzeiten und Landangaben. */
+export interface ClientReisetag {
+  datum: string;
+  fruehstueckGestellt: boolean;
+  mittagGestellt: boolean;
+  abendGestellt: boolean;
+  land24uhr?: string | null;
+  letzterTaetigkeitsort?: string | null;
+  landFreitext?: string | null;
+}
+
+/** VMA-relevante Angaben der Einreichung (Zod-geprüfter Body); Client-Beträge werden nicht gelesen. */
+export interface ReisekostenAngaben {
+  abfahrtZeit: string;
+  rueckkehrZeit: string;
+  /** Fehlt das Feld (undefined), ist es ein altes, noch geöffnetes Formular ohne Übernachtungsfrage. */
+  uebernachtung?: boolean | null;
+  /** Hauptland; leer/null = Inlandsreise. */
+  land?: string | null;
+  reisetage: readonly ClientReisetag[];
+}
+
+/** Server-Reisetag (Datum/Typ vom Server) mit Mahlzeiten und Roh-Landangaben des Clients. */
+export interface ReisetagMitAngaben extends ReisetagSoll {
+  fruehstueckGestellt: boolean;
+  mittagGestellt: boolean;
+  abendGestellt: boolean;
+  land24uhr: string | null;
+  letzterTaetigkeitsort: string | null;
+  landFreitext: string | null;
+}
+
+export interface ReisekostenVorbereitung {
+  /** Hauptland; null = Inlandsreise. */
+  hauptland: string | null;
+  tage: ReisetagMitAngaben[];
+  /** Maßgebendes Land je Tag (Reihenfolge wie `tage`). */
+  laender: TagesLand[];
+  /** Land-Keys, deren Satzstände die Route laden muss — immer samt Luxemburg; leer = reine Inlandsreise. */
+  satzKeys: string[];
+  /** Satzstände ALLER Länder laden: ein Freitext („Staat nicht in der Liste“) wird gegen die ganze Liste geprüft. */
+  alleLaender: boolean;
+}
+
+/** Gespeicherter Reisetag: Angaben + maßgebendes Land + angewandter Satz (null = kein Anspruch) + Beträge. */
+export interface ServerReisetag extends ReisetagMitAngaben, VmaTagErgebnis {
+  landKey: string;
+  /** Freitext des maßgebenden Landes (nur bei ANDERES, am Abreisetag ggf. vom Vortag), sonst null. */
+  landFreitext: string | null;
+  satz: AngewandterSatz | null;
+}
+
+export interface ReisekostenVma {
+  tage: ServerReisetag[];
+  vmaBrutto: number;
+  vmaKuerzung: number;
+  vmaNetto: number;
+  /** Fußnote „Pauschalen: …“ für PDF und Mail (quellenVermerk). */
+  pauschalenQuellen: string;
+}
+
+/** Quellenvermerk eines Tags ohne Anspruch (es gibt keinen Satz und keine Quelle; gespeichert wird NULL). */
+export const QUELLE_KEIN_ANSPRUCH = 'kein Anspruch (bis 8 h)';
+
+/** Angegebene Länder (Roh-Angaben, ohne reservierte Werte) — auch nicht maßgebende werden gespeichert. */
+function angegebeneLaender(tage: readonly ReisetagMitAngaben[]): string[] {
+  return tage
+    .flatMap(t => [t.land24uhr, t.letzterTaetigkeitsort])
+    .filter((k): k is string => !!k && !RESERVIERTE_LAND_KEYS.includes(k));
+}
+
+/**
+ * Teil 1 der Rechenkette (vor dem Laden der Satzstände): Reisetage serverseitig aus Abfahrt/Rückkehr
+ * (+ Übernachtung) bilden, die Client-Tage per Datum zuordnen (Mahlzeiten + Landangaben; Anzahl,
+ * Datum und Typ bestimmt der Server), maßgebendes Land je Tag (§ 9 Abs. 4a S. 5 EStG) und die
+ * benötigten Satz-Keys — Hauptland, alle Angaben und die Satz-Keys der Tage, IMMER samt Luxemburg
+ * (sein Stand zeigt, ob das Reisejahr hinterlegt ist; passende Meldung).
+ * Wirft ReisetageFehler (Route: 400), u. a. bei einem alten Formular ohne Übernachtungsangabe
+ * und wenn die Client-Tage nicht zum Zeitraum passen.
+ */
+export function bereiteReisekostenVor(angaben: ReisekostenAngaben): ReisekostenVorbereitung {
+  const hauptland = angaben.land || null;
+
+  let sollTage: ReisetagSoll[];
+  try {
+    sollTage = bildeReisetage(angaben.abfahrtZeit, angaben.rueckkehrZeit, angaben.uebernachtung ?? null);
+  } catch (err) {
+    // Ein noch geöffnetes altes Formular kennt die Übernachtungsfrage nicht (sendet das Feld
+    // gar nicht, das neue sendet immer null oder true/false) → Hinweis auf Neuladen.
+    if (err instanceof ReisetageFehler && err.code === 'UEBERNACHTUNG_FEHLT' && angaben.uebernachtung === undefined) {
+      throw new ReisetageFehler(
+        'UEBERNACHTUNG_FEHLT',
+        'Das Formular wurde aktualisiert. Bitte laden Sie die Seite neu und geben Sie an, ob Sie auswärts übernachtet haben.',
+      );
+    }
+    throw err;
+  }
+  const paare = ordneTageZu(sollTage, angaben.reisetage);
+  if (!paare) {
+    throw new ReisetageFehler(
+      'TAGE_PASSEN_NICHT',
+      'Die Reisetage passen nicht zum Reisezeitraum. Bitte laden Sie die Seite neu und prüfen Sie Ihre Angaben.',
+    );
+  }
+  const tage = paare.map(({ soll, client }): ReisetagMitAngaben => ({
+    ...soll,
+    fruehstueckGestellt: client.fruehstueckGestellt,
+    mittagGestellt: client.mittagGestellt,
+    abendGestellt: client.abendGestellt,
+    land24uhr: client.land24uhr || null,
+    letzterTaetigkeitsort: client.letzterTaetigkeitsort || null,
+    landFreitext: client.landFreitext ?? null,
+  }));
+
+  // Alter Client ohne Tagesfelder → Hauptland bzw. Inland.
+  const laender = bestimmeTageslaender(tage, hauptland);
+
+  const auslandsKeys = [hauptland, ...angegebeneLaender(tage), ...laender.map(l => satzLandKey(l.landKey))]
+    .filter((k): k is string => k !== null);
+  return {
+    hauptland,
+    tage,
+    laender,
+    satzKeys: auslandsKeys.length > 0 ? [...new Set([...auslandsKeys, FALLBACK_LAND_KEY])] : [],
+    alleLaender: laender.some((l, i) => l.landKey === LAND_ANDERES && !!l.landFreitext && brauchtSatz(tage[i])),
+  };
+}
+
+/**
+ * Teil 2 der Rechenkette (nach dem Laden der Satzstände zu `satzKeys` bzw. aller bei `alleLaender`):
+ * jede Landangabe muss ein bekannter Land-Key sein (auch nicht maßgebende — sie werden gespeichert);
+ * je Tag mit Anspruch (brauchtSatz) Freitextprüfung (pruefeLandFreitext) und Satz des Satzstands zum
+ * Datum des Tags (waehleTagesSatz), VMA aus Typ + Mahlzeiten + Satz (vmaTag) — die Client-Beträge
+ * zählen nie (Audit #2). Tage ohne Anspruch: kein Satz, 0,00. Dazu Summen und Quellenvermerk.
+ * Wirft ReisetageFehler (Route: 400).
+ */
+export function berechneReisekostenVma(vorbereitung: ReisekostenVorbereitung, staende: readonly Satzstand[]): ReisekostenVma {
+  const { hauptland, tage, laender } = vorbereitung;
+  const bekannteLaender = new Set(staende.map(s => s.landKey));
+  const unbekanntesLand = [hauptland, ...angegebeneLaender(tage)].find(k => k && !bekannteLaender.has(k));
+  if (unbekanntesLand) throw new ReisetageFehler('UNBEKANNTES_LAND', `Unbekanntes Reiseland: ${unbekanntesLand}`);
+
+  const serverTage = tage.map((t, i): ServerReisetag => {
+    const land = { landKey: laender[i].landKey, landFreitext: laender[i].landFreitext };
+    if (!brauchtSatz(t)) return { ...t, ...land, satz: null, vmaBrutto: 0, vmaKuerzung: 0, vmaNetto: 0 };
+    pruefeLandFreitext(laender[i], t.datum, staende);
+    const satz = waehleTagesSatz(laender[i].landKey, t.datum, staende);
+    return {
+      ...t,
+      ...land,
+      satz,
+      ...vmaTag(
+        {
+          typ: t.typ,
+          fruehstueckGestellt: t.fruehstueckGestellt,
+          mittagGestellt: t.mittagGestellt,
+          abendGestellt: t.abendGestellt,
+          eintaegigUeber8h: t.eintaegigUeber8h,
+        },
+        satz,
+      ),
+    };
+  });
+
+  return {
+    tage: serverTage,
+    vmaBrutto: rundeAufCent(serverTage.reduce((s, t) => s + t.vmaBrutto, 0)),
+    vmaKuerzung: rundeAufCent(serverTage.reduce((s, t) => s + t.vmaKuerzung, 0)),
+    vmaNetto: rundeAufCent(serverTage.reduce((s, t) => s + t.vmaNetto, 0)),
+    pauschalenQuellen: quellenVermerk(
+      serverTage.map(t => ({ datum: t.datum, landKey: t.landKey, satzQuelle: t.satz?.quelle ?? QUELLE_KEIN_ANSPRUCH })),
+    ),
+  };
 }

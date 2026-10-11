@@ -1000,6 +1000,45 @@ const SPALTEN_LABEL = 'lg:hidden text-xs text-credo-400 font-sans';
 const LUXEMBURG_SPERRE =
   'Gesetzlicher Ersatzsatz für nicht aufgeführte Staaten und Seetage: Der erste Luxemburg-Stand eines Jahres kann nicht gelöscht werden, solange andere Länder Sätze für dieses Jahr haben.';
 
+// Plausibilität wie der Server (backend/src/lib/satzstaende.ts) — Grenzen und Meldungen gleich halten.
+// MAX_TAGESSATZ ist zugleich der Deckel der Tagesbeträge in der Einreichung: ein höherer Satz ließe jede Einreichung scheitern.
+const MAX_TAGESSATZ = 200;
+const MAX_UEBERNACHTUNG = 9999;
+// Keine Steuer-, Format- oder Zeilentrennzeichen (CR/LF, TAB, Bidi-Overrides, U+2028/U+2029 …).
+const OHNE_STEUERZEICHEN = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]*$/u;
+const LAND_ZEICHEN = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}%]*$/u;
+const MELDUNG_8H_UEBER_24H = 'Der 8-h-Satz darf nicht größer als der 24-h-Satz sein.';
+const meldungOhneJahresstand = (jahr: string) =>
+  `Für ${jahr} ist noch kein Jahresstand eingespielt. Neue Jahresstände werden zentral per BMF-Import eingespielt; hier nur Korrekturen in bereits eingespielten Jahren.`;
+
+/** Feldbezeichnungen (wie im Editor) für Validierungsfehler der Admin-API. */
+const PAUSCHALEN_FELDER: Record<string, string> = {
+  landKey: 'Land / Stadt',
+  gueltigVon: 'Gültig ab',
+  quelle: 'Quelle',
+  tagessatz24h: '24h (€)',
+  tagessatz8h: '8h (€)',
+  uebernachtung: 'Übernachtung (€)',
+  reihenfolge: 'Sortierung',
+};
+
+/**
+ * Fehlertext einer Admin-Antwort: Zod-Details ({ path, code, message }) als deutsche Feldhinweise
+ * („Bitte prüfen – 24h (€): Höchstens 200 €“) statt nur „Validierungsfehler“, sonst `error`.
+ */
+function pauschalenFehlertext(
+  body: { error?: string; details?: Array<{ path?: unknown[]; code?: string; message?: string }> },
+  status: number,
+): string {
+  if (!Array.isArray(body.details) || body.details.length === 0) return body.error || 'HTTP ' + status;
+  const hinweise = body.details.map(d => {
+    const feld = PAUSCHALEN_FELDER[String(d.path?.[0] ?? '')] ?? 'Eingabe';
+    // Typfehler kommen ohne eigene deutsche Meldung vom Server (Zod-Standardtext).
+    return `${feld}: ${d.code === 'invalid_type' ? 'fehlt oder ist ungültig' : d.message ?? 'ungültig'}`;
+  });
+  return `Bitte prüfen – ${[...new Set(hinweise)].join('; ')}`;
+}
+
 function PauschalenTab() {
   const { showToast } = useToast();
   const [auslandsListe, setAuslandsListe] = useState<AuslandsPauschaleAdmin[]>([]);
@@ -1033,6 +1072,8 @@ function PauschalenTab() {
   const jahr = standFilter === 'alle' || jahre.includes(standFilter) ? standFilter : vorgabeJahr;
   const sichtbar = jahr === 'alle' ? auslandsListe : auslandsListe.filter(e => e.gueltigVon.startsWith(`${jahr}-`));
   const laenderKeys = [...new Set(auslandsListe.map(e => e.landKey))].sort((a, b) => a.localeCompare(b, 'de'));
+  // Jahre mit eingespieltem Jahresstand (= Luxemburg-Stand): nur dort lassen sich Stände anlegen (wie der Server).
+  const jahresstandJahre = new Set(auslandsListe.filter(e => e.landKey === FALLBACK_LAND_KEY).map(e => e.gueltigVon.slice(0, 4)));
 
   // Luxemburg = gesetzlicher Ersatzsatz für nicht aufgeführte Staaten und Seetage. Wie der Server
   // (admin.ts luxemburgLoeschbar): löschbar, wenn im selben Jahr ein früherer Luxemburg-Stand bleibt
@@ -1054,7 +1095,7 @@ function PauschalenTab() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Speichern fehlgeschlagen' }));
-        throw new Error(err.error || 'HTTP ' + res.status);
+        throw new Error(pauschalenFehlertext(err, res.status));
       }
       showToast(isNew ? 'Satzstand angelegt' : 'Satzstand aktualisiert', 'success');
       setEditingKey(null);
@@ -1119,7 +1160,8 @@ function PauschalenTab() {
               Je Land ein Satzstand pro BMF-Schreiben. Für einen Reisetag gilt der jüngste Stand bis zu diesem Tag
               aus demselben Kalenderjahr — fehlt er, lehnt das Portal die Abrechnung mit einem Hinweis ab.
               Neues BMF-Schreiben (meist Anfang Dezember): bitte an die IT geben — die vollständige Jahrestabelle
-              wird bis zum 31.12. zentral eingespielt. Hier nur einzelne Stände anlegen, korrigieren oder löschen.
+              wird bis zum 31.12. zentral eingespielt. Hier nur Korrekturen in bereits eingespielten Jahren:
+              einzelne Stände anlegen, ändern oder löschen.
               „Gültig ab“ ist der erste Tag, ab dem ein Satz gilt (Jahresstand: 01.01.), nicht das Datum des
               Schreibens. Sortierung unter 1000 erscheint im Reisekosten-Formular unter „Häufige Ziele“.
             </p>
@@ -1143,7 +1185,9 @@ function PauschalenTab() {
                 setNeuerStand({ landKey: '', gueltigVon: '', quelle: '', tagessatz24h: 0, tagessatz8h: 0, uebernachtung: 0 });
                 setEditingKey(null);
               }}
-              disabled={neuerStand !== null}
+              // Ohne eingespielten Jahresstand gibt es nichts zu korrigieren (neue Jahre nur per BMF-Import).
+              disabled={neuerStand !== null || jahresstandJahre.size === 0}
+              title={!loading && jahresstandJahre.size === 0 ? 'Noch kein Jahresstand eingespielt – neue Jahresstände kommen zentral per BMF-Import.' : undefined}
               className="inline-flex items-center px-3 py-1.5 rounded-lg bg-credo-600 text-white text-sm font-medium hover:bg-credo-700 disabled:opacity-50 whitespace-nowrap"
             >
               <Plus className="w-4 h-4 mr-1.5" />
@@ -1183,6 +1227,7 @@ function PauschalenTab() {
               <PauschaleZeile
                 eintrag={neuerStand}
                 isNew
+                jahresstandJahre={jahresstandJahre}
                 onSave={p => handleSave(p, true)}
                 onCancel={() => setNeuerStand(null)}
               />
@@ -1279,11 +1324,14 @@ function EditorFeld({ label, className = '', children }: { label: string; classN
 function PauschaleZeile({
   eintrag,
   isNew = false,
+  jahresstandJahre = new Set<string>(),
   onSave,
   onCancel,
 }: {
   eintrag: AuslandsPauschaleAdmin;
   isNew?: boolean;
+  /** Nur beim Anlegen: Jahre mit eingespieltem Jahresstand (Luxemburg-Stand). */
+  jahresstandJahre?: ReadonlySet<string>;
   onSave: (e: AuslandsPauschaleAdmin) => void;
   onCancel: () => void;
 }) {
@@ -1309,30 +1357,38 @@ function PauschaleZeile({
     uebernachtung: Number(uebern.replace(',', '.')),
     reihenfolge: reihenfolge.trim() === '' ? undefined : Number(reihenfolge),
   };
-  // Wie der Server (admin.ts auslandspauschaleSchema): Tagessätze > 0 (das BMF kennt keine 0-€-Sätze),
-  // Übernachtung ≥ 0, Sortierung ganze Zahl ≥ 0, Datum 20JJ-MM-TT; leeres Feld = ungültig.
+  // Wie der Server (backend/src/lib/satzstaende.ts): Tagessätze > 0 (das BMF kennt keine 0-€-Sätze)
+  // und höchstens MAX_TAGESSATZ, 8h ≤ 24h, Übernachtung 0 bis 9.999, Sortierung ganze Zahl ≥ 0,
+  // Datum 20JJ-MM-TT, Land ohne Steuerzeichen und „%“, Quelle ohne Steuerzeichen; leeres Feld = ungültig.
   const betragUngueltig = (text: string, wert: number, max: number, nullErlaubt: boolean) =>
     text.trim() === '' || !Number.isFinite(wert) || wert > max || (nullErlaubt ? wert < 0 : wert <= 0);
+  const achtUeber24 = parsed.tagessatz8h > parsed.tagessatz24h; // NaN (leer/ungültig) ergibt false
   const ungueltig = {
-    landKey: !parsed.landKey,
+    landKey: !parsed.landKey || !LAND_ZEICHEN.test(parsed.landKey),
     gueltigVon: !/^20\d{2}-\d{2}-\d{2}$/.test(parsed.gueltigVon),
-    quelle: !parsed.quelle,
-    t24: betragUngueltig(t24, parsed.tagessatz24h, 999, false),
-    t8: betragUngueltig(t8, parsed.tagessatz8h, 999, false),
-    uebern: betragUngueltig(uebern, parsed.uebernachtung, 9999, true),
+    quelle: !parsed.quelle || !OHNE_STEUERZEICHEN.test(parsed.quelle),
+    t24: betragUngueltig(t24, parsed.tagessatz24h, MAX_TAGESSATZ, false),
+    t8: betragUngueltig(t8, parsed.tagessatz8h, MAX_TAGESSATZ, false) || achtUeber24,
+    uebern: betragUngueltig(uebern, parsed.uebernachtung, MAX_UEBERNACHTUNG, true),
     reihenfolge: parsed.reihenfolge !== undefined && !(Number.isInteger(parsed.reihenfolge) && parsed.reihenfolge >= 0),
   };
+  // Wie der Server: neue Stände nur in Jahren mit eingespieltem Jahresstand — sofort anzeigen, nicht erst beim Speichern.
+  const standJahr = gueltigVon.slice(0, 4);
+  const ohneJahresstand = isNew && !ungueltig.gueltigVon && !jahresstandJahre.has(standJahr);
   // Pflichtfelder erst nach dem ersten Speicherversuch rot markieren.
-  const rahmen = (feld: keyof typeof ungueltig) => (versucht && ungueltig[feld] ? 'border-red-400' : '');
+  const rahmen = (feld: keyof typeof ungueltig) =>
+    ((versucht && ungueltig[feld]) || (feld === 'gueltigVon' && ohneJahresstand) ? 'border-red-400' : '');
+  // Datumsauswahl beim Anlegen auf die eingespielten Jahre begrenzen.
+  const jahresstandSortiert = [...jahresstandJahre].sort();
 
   const submit = () => {
     setVersucht(true);
-    if (Object.values(ungueltig).some(Boolean)) return;
+    if (Object.values(ungueltig).some(Boolean) || ohneJahresstand) return;
     onSave(parsed);
   };
 
   // Neuer Stand mit „gültig ab“ nicht am 01.01.: Korrektur im laufenden Jahr, kein Jahresstand.
-  const istKorrektur = isNew && !ungueltig.gueltigVon && !gueltigVon.endsWith('-01-01');
+  const istKorrektur = isNew && !ungueltig.gueltigVon && !ohneJahresstand && !gueltigVon.endsWith('-01-01');
 
   return (
     <div className={`grid grid-cols-2 ${PAUSCHALEN_SPALTEN} gap-3 px-3 py-3 border-2 border-credo-400 bg-credo-50/30 rounded-lg items-center`}>
@@ -1357,6 +1413,8 @@ function PauschaleZeile({
           className={`input-field !px-2 !py-1.5 ${rahmen('gueltigVon')}`}
           aria-label="Gültig ab"
           autoFocus={isNew && !!eintrag.landKey}
+          min={isNew && jahresstandSortiert.length > 0 ? `${jahresstandSortiert[0]}-01-01` : undefined}
+          max={isNew && jahresstandSortiert.length > 0 ? `${jahresstandSortiert[jahresstandSortiert.length - 1]}-12-31` : undefined}
           value={gueltigVon}
           onChange={e => setGueltigVon(e.target.value)}
           disabled={!isNew}
@@ -1442,10 +1500,17 @@ function PauschaleZeile({
           Ein Jahresstand beginnt am 01.01.
         </p>
       )}
+      {ohneJahresstand && (
+        <p role="alert" className="col-span-2 lg:col-span-8 text-xs text-red-600">
+          {meldungOhneJahresstand(standJahr)}
+        </p>
+      )}
       {versucht && Object.values(ungueltig).some(Boolean) && (
         <p role="alert" className="col-span-2 lg:col-span-8 text-xs text-red-600">
-          Bitte die rot markierten Felder prüfen: Land, „gültig ab“ und Quelle sind Pflicht; 24h und 8h größer
-          als 0 € (höchstens 999 €), Übernachtung 0 bis 9.999 €, Sortierung leer oder ganze Zahl ab 0.
+          {achtUeber24 && `${MELDUNG_8H_UEBER_24H} `}
+          Bitte die rot markierten Felder prüfen: Land, „gültig ab“ und Quelle sind Pflicht (ohne Zeilenumbrüche
+          oder Steuerzeichen, im Land kein %); 24h und 8h größer als 0 € und höchstens {MAX_TAGESSATZ} €, 8h nicht
+          größer als 24h; Übernachtung 0 bis 9.999 €, Sortierung leer oder ganze Zahl ab 0.
         </p>
       )}
     </div>

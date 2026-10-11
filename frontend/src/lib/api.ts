@@ -32,6 +32,15 @@ export async function uploadBelege(dateien: File[]): Promise<string[]> {
 
 // ── Reisekosten einreichen ─────────────────────────────
 
+/** Ablehnung der Einreichung; bei Zod-Fehlern („Validierungsfehler“) mit den Pfaden der beanstandeten Felder. */
+export class EinreichungsFehler extends Error {
+  readonly felder: ReadonlyArray<ReadonlyArray<string | number>>;
+  constructor(message: string, felder: ReadonlyArray<ReadonlyArray<string | number>>) {
+    super(message);
+    this.felder = felder;
+  }
+}
+
 interface ReisekostenPayload {
   persoenlich: PersoenlicheDaten;
   reiseanlass: string;
@@ -111,7 +120,11 @@ export async function einreichenReisekosten(payload: ReisekostenPayload): Promis
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unbekannter Fehler' }));
     const msg = err.detail ? `${err.error}: ${err.detail}` : (err.error || `Fehler ${res.status}`);
-    throw new Error(msg);
+    // Zod-Fehler: Feldpfade mitgeben — das Formular nennt Feld und Schritt statt nur „Validierungsfehler“.
+    const felder = Array.isArray(err.details)
+      ? err.details.map((d: { path?: unknown }) => d?.path).filter(Array.isArray)
+      : [];
+    throw new EinreichungsFehler(msg, felder);
   }
 
   const data = await res.json();

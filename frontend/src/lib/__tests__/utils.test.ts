@@ -73,4 +73,9 @@ describe('formatDate', () => {
     const result = formatDate(new Date(2026, 0, 5));
     expect(result).toBe('05.01.2026');
   });
+
+  it('reines Datum ohne Verschiebung in jeder Zeitzone (CI: auch America/New_York)', () => {
+    expect(formatDate('2026-01-01')).toBe('01.01.2026');
+    expect(formatDate('2026-12-31')).toBe('31.12.2026');
+  });
 });

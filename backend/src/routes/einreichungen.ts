@@ -2,7 +2,7 @@ import { Router, type Response } from 'express';
 import { db, schema } from '../db/index.js';
 import { eq, and, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { ERSTATTUNG_KATEGORIE_DEFAULT_KEYS, FALLBACK_LAND_KEY, RESERVIERTE_LAND_KEYS } from '../lib/constants.js';
+import { ERSTATTUNG_KATEGORIE_DEFAULT_KEYS } from '../lib/constants.js';
 import { upload, berechneHash, validateMimeType } from '../services/upload.js';
 import { generateBelegNr } from '../services/belegNummer.js';
 import { erstelleGesamtPdf, erstelleKlassenfahrtPdf } from '../services/pdf.js';
@@ -12,9 +12,12 @@ import { versendeEinreichung } from '../services/versand.js';
 import { pruefeAnhangGroesse } from '../services/email-utils.js';
 import { kmSatzAlsDecimal, berechneKmBetrag, rundeAufCent } from '../lib/kmSaetze.js';
 import { berechneKlassenfahrt, KlassenfahrtBerechnungsfehler, rundeAufCent as rundeAufCentKf } from '../lib/klassenfahrt.js';
-import { vmaTag } from '../lib/vma.js';
-import { bildeReisetage, bestimmeTageslaender, satzLandKey, waehleTagesSatz, ReisetageFehler, type ReisetagSoll, type Satzstand } from '../lib/reisetage.js';
-import { ordneTageZu, landBezeichnung, reiselandFolge, quellenVermerk, ueberschneidungsVermerke, type Ueberschneidung } from '../lib/reiseangaben.js';
+import { ReisetageFehler, type Satzstand } from '../lib/reisetage.js';
+import {
+  bereiteReisekostenVor, berechneReisekostenVma, landBezeichnung, ohneSteuerzeichen, reiselandFolge, ueberschneidungsVermerke,
+  type Ueberschneidung,
+} from '../lib/reiseangaben.js';
+import { MAX_TAGESSATZ } from '../lib/satzstaende.js';
 import path from 'path';
 import fs from 'fs';
 
@@ -64,13 +67,16 @@ function pdfPasstInMailOderAntworte(res: Response, pdfPfad: string): boolean {
 }
 
 /**
- * Frühere Reisekostenabrechnungen derselben Person mit gemeinsamem Reisetag.
- * Person = Personalnr. + Nachname, wenn eine Personalnr. angegeben ist (Personalnummern werden je
- * Mandant vergeben und frei eingetippt — die Nummer allein träfe fremde Personen), sonst
- * Nachname + Vorname + IBAN; jeweils ohne Groß-/Kleinschreibung.
+ * Frühere Reisekostenabrechnungen derselben Person mit gemeinsamem Reisetag — nur beim SELBEN
+ * Mandanten: Personalnummern werden je Mandant vergeben, ein mandantenübergreifender Treffer wäre
+ * meist eine fremde Person, und Belegnummer + Reisedaten des anderen Mandanten landeten im DMS des
+ * einreichenden (SEC-m2).
+ * Person = Personalnr. + Nachname, wenn eine Personalnr. angegeben ist (frei eingetippt — die
+ * Nummer allein träfe fremde Personen), sonst Nachname + Vorname + IBAN; jeweils ohne
+ * Groß-/Kleinschreibung.
  */
 async function findeUeberschneidungen(
-  person: { vorname: string; nachname: string; personalNr: string; iban: string },
+  person: { mandantId: string; vorname: string; nachname: string; personalNr: string; iban: string },
   tage: ReadonlyArray<{ datum: string; typ: string }>,
 ): Promise<Ueberschneidung[]> {
   const e = schema.einreichungen;
@@ -91,7 +97,12 @@ async function findeUeberschneidungen(
     })
     .from(schema.reisetage)
     .innerJoin(e, eq(schema.reisetage.einreichungId, e.id))
-    .where(and(eq(e.typ, 'REISEKOSTEN'), gleichePerson, inArray(sql`${schema.reisetage.datum}::date`, tage.map(t => t.datum))));
+    .where(and(
+      eq(e.typ, 'REISEKOSTEN'),
+      eq(e.mandantId, person.mandantId),
+      gleichePerson,
+      inArray(sql`${schema.reisetage.datum}::date`, tage.map(t => t.datum)),
+    ));
   const typJeDatum = new Map(tage.map(t => [t.datum, t.typ]));
   return treffer.map(t => ({
     belegNr: t.belegNr,
@@ -139,9 +150,6 @@ const isoDatum = z.string().refine(s => !Number.isNaN(Date.parse(s)), 'Ungültig
 // Obergrenzen passend zur DB-Spaltenpräzision (Audit #13) → sauberes 400 statt numeric-overflow-500.
 const MAX_BETRAG = 99999999.99; // decimal(10,2)
 const MAX_KM = 999999.99;       // decimal(8,2)
-// Verpflegungspauschale je Tag: großzügiger Deckel (realer Höchstsatz 24h-Ausland ~75 €).
-// Interim-Schutz gegen client-manipulierte VMA (Audit #2), bis der Server sie selbst neu rechnet.
-const MAX_VMA_TAG = 200;
 
 const persoenlichSchema = z.object({
   vorname: z.string().min(1).max(100),
@@ -158,7 +166,8 @@ const persoenlichSchema = z.object({
 // Unmögliche Kalenderzeitpunkte (30.02., 24:00) weist bildeReisetage mit 400 ab.
 const wanduhrZeit = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:[0-5]\d)?$/, 'Ungültiger Zeitpunkt');
 // Landangabe je Reisetag: Land-Key, 'INLAND', 'ANDERES' oder 'SEETAG'; leer/null = keine Angabe.
-const tagesLandAngabe = z.string().max(100).nullable().optional();
+// Steuerzeichen → Leerzeichen: der Freitext steht ungefiltert im Mailtext an das DMS (SEC-m3).
+const tagesLandAngabe = z.string().max(100).transform(ohneSteuerzeichen).nullable().optional();
 
 const reisekostenBody = z.object({
   typ: z.literal('REISEKOSTEN'),
@@ -182,9 +191,12 @@ const reisekostenBody = z.object({
     fruehstueckGestellt: z.boolean(),
     mittagGestellt: z.boolean(),
     abendGestellt: z.boolean(),
-    vmaBrutto: z.number().min(0).max(MAX_VMA_TAG),
-    vmaKuerzung: z.number().min(0).max(MAX_VMA_TAG),
-    vmaNetto: z.number().min(0).max(MAX_VMA_TAG),
+    // Verpflegungspauschale je Tag: nur Plausibilitätsdeckel für die mitgesendeten Client-Beträge —
+    // gerechnet und gespeichert werden die des Servers. Dieselbe Grenze wie für die Tagessätze im
+    // AdminCenter (MAX_TAGESSATZ): Ein höherer Satz ließe sonst jede Einreichung für das Land scheitern.
+    vmaBrutto: z.number().min(0).max(MAX_TAGESSATZ),
+    vmaKuerzung: z.number().min(0).max(MAX_TAGESSATZ),
+    vmaNetto: z.number().min(0).max(MAX_TAGESSATZ),
     land24uhr: tagesLandAngabe,
     letzterTaetigkeitsort: tagesLandAngabe,
     landFreitext: tagesLandAngabe,
@@ -302,65 +314,22 @@ einreichungenRouter.post('/', async (req, res) => {
       // vom Client gelieferten VMA-Beträge werden ignoriert, sonst wäre der Auszahlungsbetrag
       // client-manipulierbar (Audit #2). Fachliche Fehler (ReisetageFehler) → 400 im catch unten.
       const serverKmBetrag = berechneKmBetrag(parsed.kmGefahren, parsed.verkehrsmittel);
-      const hauptland = parsed.land || null;
 
-      // Reisetage serverseitig aus Abfahrt/Rückkehr (+ Übernachtung) bilden, zeitzonenunabhängig.
-      // Die Client-Tage werden nur per Datum zugeordnet (Mahlzeiten + Landangaben); Anzahl,
-      // Datum und Typ bestimmt der Server.
-      let sollTage: ReisetagSoll[];
-      try {
-        sollTage = bildeReisetage(parsed.abfahrtZeit, parsed.rueckkehrZeit, parsed.uebernachtung ?? null);
-      } catch (err) {
-        // Ein noch geöffnetes altes Formular kennt die Übernachtungsfrage nicht (sendet das Feld
-        // gar nicht, das neue sendet immer null oder true/false) → Hinweis auf Neuladen.
-        if (err instanceof ReisetageFehler && err.code === 'UEBERNACHTUNG_FEHLT' && parsed.uebernachtung === undefined) {
-          res.status(400).json({
-            error: 'Das Formular wurde aktualisiert. Bitte laden Sie die Seite neu und geben Sie an, ob Sie auswärts übernachtet haben.',
-          });
-          return;
-        }
-        throw err;
-      }
-      const paare = ordneTageZu(sollTage, parsed.reisetage);
-      if (!paare) {
-        res.status(400).json({ error: 'Die Reisetage passen nicht zum Reisezeitraum. Bitte laden Sie die Seite neu und prüfen Sie Ihre Angaben.' });
-        return;
-      }
-      const tage = paare.map(({ soll, client }) => ({
-        ...soll,
-        fruehstueckGestellt: client.fruehstueckGestellt,
-        mittagGestellt: client.mittagGestellt,
-        abendGestellt: client.abendGestellt,
-        land24uhr: client.land24uhr || null,
-        letzterTaetigkeitsort: client.letzterTaetigkeitsort || null,
-        landFreitext: client.landFreitext ?? null,
-      }));
-
-      // Maßgebendes Land je Tag (§ 9 Abs. 4a S. 5 EStG); alter Client ohne Tagesfelder → Hauptland bzw. Inland.
-      const laender = bestimmeTageslaender(tage, hauptland);
-      const landNamen = laender.map(landBezeichnung);
-
-      // Gespeichert werden auch nicht maßgebende Angaben (z. B. Ort um 24 Uhr neben der Tätigkeit) —
-      // daher jede Landangabe auf einen bekannten Land-Key prüfen, nicht nur das maßgebende Land.
-      const angegebeneLaender = tage
-        .flatMap(t => [t.land24uhr, t.letzterTaetigkeitsort])
-        .filter((k): k is string => !!k && !RESERVIERTE_LAND_KEYS.includes(k));
-
-      // Satzstände aller benötigten Länder (inkl. Hauptland) in EINER Abfrage — 24 h = Ganztag,
-      // 8 h = An-/Abreise bzw. eintägig > 8 h (BMF-Endbeträge); ANDERES/SEETAG → Luxemburg,
-      // Inland 28/14. Je Tag gilt der Stand seines Kalenderjahres (waehleTagesSatz). Luxemburg
-      // immer mitladen: sein Stand zeigt, ob das Reisejahr überhaupt hinterlegt ist (passende Meldung).
-      const auslandsKeys = [hauptland, ...angegebeneLaender, ...laender.map(l => satzLandKey(l.landKey))]
-        .filter((k): k is string => k !== null);
-      const satzKeys = auslandsKeys.length > 0 ? [...new Set([...auslandsKeys, FALLBACK_LAND_KEY])] : [];
-      const satzZeilen = satzKeys.length > 0
+      // Rechenkette als reine Funktionen (lib/reiseangaben.ts, getestet samt Paritätstest): Tage
+      // bilden und Client-Angaben per Datum zuordnen, Land je Tag → Satzstände der benötigten Länder
+      // in EINER Abfrage laden (bei Freitext „Staat nicht in der Liste“ alle Länder) → Satz je Tag
+      // nach Reisedatum, VMA, Summen, Quellenvermerk.
+      const vorbereitung = bereiteReisekostenVor(parsed);
+      const { hauptland, laender } = vorbereitung;
+      const satzZeilen = vorbereitung.satzKeys.length > 0
         ? await db.select({
             landKey: schema.pauschalenAusland.landKey,
             gueltigVon: schema.pauschalenAusland.gueltigVon,
             quelle: schema.pauschalenAusland.quelle,
             tagessatz24h: schema.pauschalenAusland.tagessatz24h,
             tagessatz8h: schema.pauschalenAusland.tagessatz8h,
-          }).from(schema.pauschalenAusland).where(inArray(schema.pauschalenAusland.landKey, satzKeys))
+          }).from(schema.pauschalenAusland)
+            .where(vorbereitung.alleLaender ? undefined : inArray(schema.pauschalenAusland.landKey, vorbereitung.satzKeys))
         : [];
       const staende: Satzstand[] = satzZeilen.map(z => ({
         landKey: z.landKey,
@@ -369,45 +338,21 @@ einreichungenRouter.post('/', async (req, res) => {
         satz24h: Number(z.tagessatz24h),
         satz8h: Number(z.tagessatz8h),
       }));
-      const bekannteLaender = new Set(staende.map(s => s.landKey));
-      const unbekanntesLand = [hauptland, ...angegebeneLaender].find(k => k && !bekannteLaender.has(k));
-      if (unbekanntesLand) {
-        res.status(400).json({ error: `Unbekanntes Reiseland: ${unbekanntesLand}` });
-        return;
-      }
-
-      const serverReisetage = tage.map((t, i) => {
-        const satz = waehleTagesSatz(laender[i].landKey, t.datum, staende);
-        return {
-          ...t,
-          landKey: laender[i].landKey,
-          landFreitext: laender[i].landFreitext,
-          satz,
-          // Eintägig: Anspruch nur bei strikt MEHR als 8 h — aus Abfahrt/Rückkehr (bildeReisetage).
-          ...vmaTag(
-            {
-              typ: t.typ,
-              fruehstueckGestellt: t.fruehstueckGestellt,
-              mittagGestellt: t.mittagGestellt,
-              abendGestellt: t.abendGestellt,
-              eintaegigUeber8h: t.eintaegigUeber8h,
-            },
-            satz,
-          ),
-        };
-      });
-      const pauschalenQuellen = quellenVermerk(serverReisetage.map(t => ({ datum: t.datum, landKey: t.landKey, satzQuelle: t.satz.quelle })));
+      const vma = berechneReisekostenVma(vorbereitung, staende);
+      const serverReisetage = vma.tage;
+      const landNamen = laender.map(landBezeichnung);
+      const pauschalenQuellen = vma.pauschalenQuellen;
 
       // Überschneidung mit früheren Reisekosten derselben Person (nur die höhere Pauschale bzw.
       // bei zwei eintägigen Reisen Zeiten zusammenrechnen) → Prüfvermerk in PDF und Mail, keine
       // Blockade/Verrechnung.
-      const ueberschneidungen = await findeUeberschneidungen(parsed.persoenlich, tage);
+      const ueberschneidungen = await findeUeberschneidungen(parsed.persoenlich, serverReisetage);
       const pruefvermerke = ueberschneidungsVermerke(ueberschneidungen);
       const ueberschneidungsTage = new Set(ueberschneidungen.map(u => u.datum));
 
-      const serverVmaBrutto = rundeAufCent(serverReisetage.reduce((s, t) => s + t.vmaBrutto, 0));
-      const serverVmaKuerzung = rundeAufCent(serverReisetage.reduce((s, t) => s + t.vmaKuerzung, 0));
-      const serverVmaNetto = rundeAufCent(serverReisetage.reduce((s, t) => s + t.vmaNetto, 0));
+      const serverVmaBrutto = vma.vmaBrutto;
+      const serverVmaKuerzung = vma.vmaKuerzung;
+      const serverVmaNetto = vma.vmaNetto;
       const serverWeitereKostenSumme = rundeAufCent(parsed.weitereKosten.reduce((s, k) => s + k.betrag, 0));
       const serverGesamtbetrag = rundeAufCent(serverKmBetrag + serverVmaNetto + serverWeitereKostenSumme);
 
@@ -516,9 +461,10 @@ einreichungenRouter.post('/', async (req, res) => {
               letzterTaetigkeitsort: tag.letzterTaetigkeitsort,
               landKey: tag.landKey,
               landFreitext: tag.landFreitext,
-              satz24h: String(tag.satz.satz24h),
-              satz8h: String(tag.satz.satz8h),
-              satzQuelle: tag.satz.quelle,
+              // Tag ohne Anspruch (eintägig bis 8 h): kein Satz → NULL.
+              satz24h: tag.satz ? String(tag.satz.satz24h) : null,
+              satz8h: tag.satz ? String(tag.satz.satz8h) : null,
+              satzQuelle: tag.satz?.quelle ?? null,
             })),
           );
         }

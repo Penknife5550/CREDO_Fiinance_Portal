@@ -322,8 +322,11 @@ export async function erstelleGesamtPdf(
       ctx.y -= 18;
 
       // Fußnoten nur für vorkommende Fälle, fortlaufend nummeriert (¹ ² ³ sind WinAnsi).
+      // „Satz Luxemburg“ nur für Tage, die einen Satz haben: Ein Tag ohne Anspruch (eintägig bis 8 h)
+      // hat keinen (Pauschale 0,00) — sonst widerspräche die Fußnote „kein Anspruch“ unter „Pauschalen“.
+      const luxemburgErsatz = (t: { landKey: string; vmaBrutto: number }) => t.landKey === LAND_ANDERES && t.vmaBrutto > 0;
       const fussnoten: Array<{ art: 'ANDERES' | 'SEETAG' | 'UEBERSCHNEIDUNG'; texte: string[] }> = [];
-      if (data.reisetage.some(t => t.landKey === LAND_ANDERES)) {
+      if (data.reisetage.some(luxemburgErsatz)) {
         fussnoten.push({ art: 'ANDERES', texte: ['Staat nicht in der BMF-Übersicht: Satz Luxemburg (Quelle siehe „Pauschalen“). Bitte prüfen.'] });
       }
       if (data.reisetage.some(t => t.landKey === LAND_SEETAG)) {
@@ -355,7 +358,7 @@ export async function erstelleGesamtPdf(
 
       for (const tag of data.reisetage) {
         checkPageBreak(ctx);
-        const landMarke = tag.landKey === LAND_ANDERES ? marke('ANDERES') : tag.landKey === LAND_SEETAG ? marke('SEETAG') : '';
+        const landMarke = luxemburgErsatz(tag) ? marke('ANDERES') : tag.landKey === LAND_SEETAG ? marke('SEETAG') : '';
         drawText(`${formatTagDatum(tag.datum)}${tag.ueberschneidung ? marke('UEBERSCHNEIDUNG') : ''}`, 50, 9);
         drawTextAt(REISETAG_ART[tag.typ] ?? tag.typ, X_ART, ctx.y, 9);
         drawTextAt(passtInSpalte(tag.land, R_PAUSCHALE - 65 - X_LAND, font, 9) + landMarke, X_LAND, ctx.y, 9);

@@ -1,4 +1,4 @@
-# CI für das CREDO Finanzportal: Tests (unter zwei Zeitzonen), Typprüfung,
+# CI für das CREDO Finanzportal: Tests (unter drei Zeitzonen), Typprüfung,
 # Frontend-Build, ESLint und Docker-Build. Es wird nichts veröffentlicht.
 name: CI
 
@@ -20,8 +20,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Reisetage/VMA dürfen nicht von der Zeitzone des Rechners abhängen.
-        tz: [UTC, Europe/Berlin]
+        # Reisetage/VMA dürfen nicht von der Zeitzone des Rechners abhängen; America/New_York
+        # (negativer Offset) deckt den Vortag-Fehler bei 'JJJJ-MM-TT' + lokalen Gettern auf.
+        tz: [UTC, Europe/Berlin, America/New_York]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

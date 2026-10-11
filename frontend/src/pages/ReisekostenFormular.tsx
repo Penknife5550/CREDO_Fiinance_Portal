@@ -9,13 +9,13 @@ import { BelegUpload } from '@/components/forms/BelegUpload';
 import { SignaturPad } from '@/components/forms/SignaturPad';
 import { DezimalInput } from '@/components/forms/DezimalInput';
 import { LandAuswahl } from '@/components/forms/LandAuswahl';
-import { berechneKmBetrag, berechneVmaGesamt } from '@/lib/vma';
+import { berechneKmBetrag, berechneVmaGesamt, formatDatumKurz } from '@/lib/vma';
 import {
-  berechneVmaVorschau, bildeReisetage, fehlerOhneSatzstand, laenderfolge, laenderZumDatum, ReisetageFehler,
+  berechneVmaVorschau, bildeReisetage, brauchtSatz, fehlerOhneSatzstand, laenderfolge, laenderZumDatum, ReisetageFehler,
   uebernachtungsfrage, uebernehmeTagesangaben, waehleSatzstand, type ReisetagSoll,
 } from '@/lib/reisetage';
 import { formatCurrency, formatIBAN, validateIBAN } from '@/lib/utils';
-import { einreichenReisekosten } from '@/lib/api';
+import { einreichenReisekosten, EinreichungsFehler } from '@/lib/api';
 import { pruefeDreiMonatsFrist, speichereReiseziel } from '@/lib/dreiMonatsFrist';
 import type { PersoenlicheDaten, ReisetagEingabe, WeitereKostenPosition, ReisekostenFormData } from '@/lib/types';
 import { VERKEHRSMITTEL, WEITERE_KOSTEN_TYPEN } from '@/lib/types';
@@ -28,6 +28,19 @@ const STEPS = [
   'Weitere Kosten & Belege',
   'Zusammenfassung',
 ];
+
+/** Feld der Einreichungs-API → Bezeichnung im Formular und Schritt (Index in STEPS). */
+const API_FELDER: Record<string, [string, number]> = {
+  vorname: ['Vorname', 0], nachname: ['Nachname', 0], personalNr: ['Personalnummer', 0], iban: ['IBAN', 0],
+  kontoinhaber: ['Kontoinhaber', 0], mandantId: ['Mandant', 0], kostenstelleId: ['Kostenstelle', 0],
+  reiseanlass: ['Dienstreiseanlass', 1], reiseziel: ['Reiseziel', 1], abfahrtOrt: ['Abfahrtsort', 1],
+  abfahrtZeit: ['Abfahrt', 1], rueckkehrZeit: ['Rückkehr', 1], land: ['Reiseland', 1],
+  uebernachtung: ['Auswärtige Übernachtung', 1],
+  verkehrsmittel: ['Verkehrsmittel', 2], kmGefahren: ['Gefahrene Kilometer', 2], kmBetrag: ['Gefahrene Kilometer', 2],
+  reisetage: ['Verpflegung', 3], vmaNetto: ['Verpflegung', 3],
+  weitereKosten: ['Weitere Kosten', 4], weitereKostenSumme: ['Weitere Kosten', 4],
+  gesamtbetrag: ['Gesamtbetrag – muss größer als 0,00 € sein', 4],
+};
 
 const INITIAL_PERSOENLICH: PersoenlicheDaten = {
   vorname: '', nachname: '', personalNr: '',
@@ -61,6 +74,8 @@ export function ReisekostenFormular() {
   const [currentStep, setCurrentStep] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  // Ablehnung der Einreichung wegen ungültiger Felder (bleibt stehen, anders als ein Toast).
+  const [einreichFehler, setEinreichFehler] = useState<{ text: string; schritt: number | null } | null>(null);
 
   // ── State ──────────────────────────────────────────
   const [persoenlich, setPersoenlich] = useState<PersoenlicheDaten>(INITIAL_PERSOENLICH);
@@ -99,10 +114,14 @@ export function ReisekostenFormular() {
   // Übernachtungsfrage: 'pflicht' unter 24 h über zwei Kalendertage, 'vorbelegt' (Ja) ab 24 h.
   const frageUebernachtung = abfahrtZeit && rueckkehrZeit ? uebernachtungsfrage(abfahrtZeit, rueckkehrZeit) : null;
   const uebernachtungAnzeige = frageUebernachtung === 'vorbelegt' ? uebernachtung ?? true : uebernachtung;
+  // Fehlermarkierung der Übernachtungsfrage nur, solange keine Antwort gewählt ist.
+  const uebernachtungFehler = !!errors.uebernachtung && uebernachtung === null;
   const zeitraum = abfahrtZeit && rueckkehrZeit
     ? bildeTageSicher(abfahrtZeit, rueckkehrZeit, uebernachtung)
     : { soll: null, fehler: null };
   const tage = zeitraum.soll ? uebernehmeTagesangaben(zeitraum.soll, reisetage) : [];
+  // Eintägig bis 8 h: kein Anspruch, kein Satz — der Schritt „Verpflegung“ zeigt dann keine Landfelder.
+  const ohneAnspruch = tage.length > 0 && !tage.some(t => brauchtSatz(t));
 
   // Stichtag = erster Reisetag (ohne Reisedaten: heute) für die Auswahl des Hauptlands (jedes Land
   // einmal, Stand des Reisejahres) und dessen Satz im Schritt „Reisedaten“. Die Auswahl je Reisetag
@@ -124,12 +143,23 @@ export function ReisekostenFormular() {
   const aendereReisetage = (neu: ReisetagEingabe[]) => {
     const daten = new Set(neu.map(t => t.datum));
     setReisetage(alt => [...alt.filter(t => !daten.has(t.datum)), ...neu]);
+    // Schrittmeldung samt roter Markierung erst beim nächsten „Weiter“ wieder zeigen — sonst wäre
+    // z. B. ein gerade erst geöffnetes Freitextfeld sofort rot.
+    setErrors(e => {
+      if (!e.verpflegung) return e;
+      const rest = { ...e };
+      delete rest.verpflegung;
+      return rest;
+    });
   };
 
   // ── Berechnete Werte (Vorschau = Serverrechnung aus den Rohdaten) ──
   // Inlandsreise: Landangaben je Tag zählen nicht (alle Tage Inland), bleiben aber im State —
-  // ein versehentlicher Wechsel auf „Inland“ und zurück verliert nichts.
-  const tageFuerRechnung = hauptland
+  // ein versehentlicher Wechsel auf „Inland“ und zurück verliert nichts. Ebenso ohne Anspruch
+  // (eintägig bis 8 h): Die Landfelder sind dann ausgeblendet, also auch keine verborgene Angabe
+  // senden — sie könnte sonst (z. B. „Staat nicht in der Liste“ ohne Staat, vor dem Kürzen auf
+  // höchstens 8 h gewählt) die Abrechnung ohne sichtbares Eingabefeld blockieren.
+  const tageFuerRechnung = hauptland && !ohneAnspruch
     ? tage
     : tage.map(t => ({ ...t, land24uhr: null, letzterTaetigkeitsort: null, landFreitext: null }));
   const vorschau = berechneVmaVorschau(tageFuerRechnung, hauptland, auslandsStaende);
@@ -191,14 +221,54 @@ export function ReisekostenFormular() {
     return true;
   };
 
+  // Nach einer fehlgeschlagenen Prüfung zum ersten markierten Feld (Fokus scrollt es ins Bild),
+  // ohne markiertes Feld zur Meldung — beides kann bei langen Schritten außer Sicht liegen.
+  const zeigeErstenFehler = () => requestAnimationFrame(() => {
+    const feld = document.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (feld) feld.focus();
+    else document.querySelector('[role="alert"]')?.scrollIntoView({ block: 'center' });
+  });
+
   const handleWeiter = () => {
     if (validateBisAktuell()) {
       setCurrentStep(currentStep + 1);
+    } else {
+      zeigeErstenFehler();
     }
   };
 
+  // Zod-Fehler der API („Validierungsfehler“): beanstandete Felder mit Bezeichnung und Schritt nennen.
+  const beschreibeApiFehler = (felder: EinreichungsFehler['felder']): { text: string; schritt: number | null } => {
+    const treffer = felder.map(pfad => {
+      const eintrag = API_FELDER[String(pfad[0] === 'persoenlich' ? pfad[1] : pfad[0])];
+      if (!eintrag) return null;
+      const tag = pfad[0] === 'reisetage' && typeof pfad[1] === 'number' ? vorschau.tage[pfad[1]] : undefined;
+      const [label, schritt] = eintrag;
+      return {
+        text: `${tag ? `${label} am ${formatDatumKurz(tag.datum)}` : label} (Schritt ${schritt + 1} „${STEPS[schritt]}“)`,
+        schritt,
+      };
+    });
+    // Nach Schritt sortiert: „Zu …“ führt wie die Schrittprüfung zum frühesten betroffenen Schritt.
+    const bekannt = treffer.filter((t): t is NonNullable<typeof t> => t !== null).sort((a, b) => a.schritt - b.schritt);
+    if (bekannt.length === 0 || bekannt.length < treffer.length) {
+      return {
+        text: 'Die Abrechnung wurde wegen ungültiger Angaben nicht angenommen. Bitte laden Sie die Seite neu und prüfen Sie Ihre Angaben.',
+        schritt: null,
+      };
+    }
+    return {
+      text: `Die Abrechnung wurde nicht angenommen. Bitte prüfen und korrigieren Sie: ${[...new Set(bekannt.map(t => t.text))].join('; ')}. Danach erneut einreichen.`,
+      schritt: bekannt[0].schritt,
+    };
+  };
+
   const handleEinreichen = async () => {
-    if (!validateBisAktuell()) return;
+    setEinreichFehler(null);
+    if (!validateBisAktuell()) {
+      zeigeErstenFehler();
+      return;
+    }
     setSubmitting(true);
     try {
       // Reiseziel für 3-Monats-Frist speichern
@@ -226,7 +296,8 @@ export function ReisekostenFormular() {
       });
       navigate(`/erfolg/${result.belegNr}`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Ein unbekannter Fehler ist aufgetreten', 'error');
+      if (err instanceof EinreichungsFehler && err.felder.length > 0) setEinreichFehler(beschreibeApiFehler(err.felder));
+      else showToast(err instanceof Error ? err.message : 'Ein unbekannter Fehler ist aufgetreten', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -312,6 +383,7 @@ export function ReisekostenFormular() {
                 placeholder="z.B. Fortbildung Medienkompetenz in Köln"
                 value={reiseanlass}
                 onChange={e => setReiseanlass(e.target.value)}
+                aria-invalid={!!errors.reiseanlass || undefined}
               />
               {errors.reiseanlass && <p className="text-xs text-red-500 mt-1">{errors.reiseanlass}</p>}
             </div>
@@ -323,6 +395,7 @@ export function ReisekostenFormular() {
                 placeholder="z.B. Köln, Messehalle 5"
                 value={reiseziel}
                 onChange={e => setReiseziel(e.target.value)}
+                aria-invalid={!!errors.reiseziel || undefined}
               />
               {errors.reiseziel && <p className="text-xs text-red-500 mt-1">{errors.reiseziel}</p>}
               {dreiMonatsFrist.warnung && reiseziel.trim().length > 0 && (
@@ -358,6 +431,7 @@ export function ReisekostenFormular() {
                   className={`input-field ${errors.abfahrtZeit ? 'border-red-400' : ''}`}
                   value={abfahrtZeit}
                   onChange={e => aendereZeitraum(e.target.value, rueckkehrZeit)}
+                  aria-invalid={!!errors.abfahrtZeit || undefined}
                 />
                 {errors.abfahrtZeit && <p className="text-xs text-red-500 mt-1">{errors.abfahrtZeit}</p>}
               </div>
@@ -368,13 +442,18 @@ export function ReisekostenFormular() {
                   className={`input-field ${errors.rueckkehrZeit ? 'border-red-400' : ''}`}
                   value={rueckkehrZeit}
                   onChange={e => aendereZeitraum(abfahrtZeit, e.target.value)}
+                  aria-invalid={!!errors.rueckkehrZeit || undefined}
                 />
                 {errors.rueckkehrZeit && <p className="text-xs text-red-500 mt-1">{errors.rueckkehrZeit}</p>}
               </div>
             </div>
             {frageUebernachtung && (
-              <fieldset>
-                <legend className="label">Auswärtige Übernachtung?{frageUebernachtung === 'pflicht' && ' *'}</legend>
+              <fieldset
+                role="radiogroup"
+                aria-labelledby="uebernachtung-frage"
+                aria-required={frageUebernachtung === 'pflicht' || undefined}
+              >
+                <legend id="uebernachtung-frage" className="label">Auswärtige Übernachtung?{frageUebernachtung === 'pflicht' && ' *'}</legend>
                 <p className="text-xs text-credo-500 mb-3">
                   {frageUebernachtung === 'pflicht'
                     ? 'Ihre Reise dauert weniger als 24 Stunden und geht über Mitternacht.'
@@ -389,7 +468,7 @@ export function ReisekostenFormular() {
                                  focus-within:ring-2 focus-within:ring-credo-500 focus-within:ring-offset-1
                                  ${uebernachtungAnzeige === wert
                                    ? 'border-credo-600 bg-credo-50 shadow-sm'
-                                   : errors.uebernachtung && uebernachtung === null
+                                   : uebernachtungFehler
                                    ? 'border-red-400 bg-white'
                                    : 'border-credo-200 bg-white hover:border-credo-300'}`}
                     >
@@ -399,6 +478,9 @@ export function ReisekostenFormular() {
                         className="sr-only"
                         checked={uebernachtungAnzeige === wert}
                         onChange={() => setUebernachtung(wert)}
+                        required={frageUebernachtung === 'pflicht'}
+                        aria-invalid={uebernachtungFehler || undefined}
+                        aria-describedby={uebernachtungFehler ? 'uebernachtung-fehler' : undefined}
                       />
                       <span className="text-sm font-semibold text-credo-900">{wert ? 'Ja' : 'Nein'}</span>
                       <span className="text-xs text-credo-500">
@@ -411,8 +493,8 @@ export function ReisekostenFormular() {
                     </label>
                   ))}
                 </div>
-                {errors.uebernachtung && uebernachtung === null && (
-                  <p className="text-xs text-red-500 mt-1">{errors.uebernachtung}</p>
+                {uebernachtungFehler && (
+                  <p id="uebernachtung-fehler" className="text-xs text-red-500 mt-1">{errors.uebernachtung}</p>
                 )}
               </fieldset>
             )}
@@ -448,21 +530,29 @@ export function ReisekostenFormular() {
                     : errors.auslandsLand}
                 />
                 <p className="text-xs text-credo-500 mt-1">
-                  Mehrere Länder? Wählen Sie das Hauptreiseland — das Land je Reisetag legen Sie im Schritt
-                  „Verpflegung“ fest. Staat nicht in der Liste? Dann „Luxemburg“ wählen (gesetzlicher Ersatzsatz)
-                  und im Schritt „Verpflegung“ am ersten Tag „Staat nicht in der Liste“ mit dem Namen des Staats
-                  angeben — die folgenden Tage übernehmen das. Nicht eigens aufgeführte Übersee- und Außengebiete
-                  zählen zum Mutterland (z. B. Grönland → Dänemark, Madeira → Portugal); die Kanarischen Inseln
-                  haben einen eigenen Eintrag.
+                  Mehrere Länder? Hauptreiseland wählen, die Tage legen Sie unter „Verpflegung“ fest.
                 </p>
+                <details className="text-xs text-credo-500 mt-1">
+                  <summary className="cursor-pointer py-1 font-medium text-credo-600">
+                    Staat nicht in der Liste oder Übersee-Gebiet?
+                  </summary>
+                  <p className="mt-1">
+                    Staat nicht in der Liste: „Luxemburg“ wählen (gesetzlicher Ersatzsatz) und im Schritt
+                    „Verpflegung“ am ersten Tag „Staat nicht in der Liste“ mit dem Namen des Staats angeben — die
+                    folgenden Tage übernehmen das. Nicht eigens aufgeführte Übersee- und Außengebiete zählen zum
+                    Mutterland (z. B. Grönland → Dänemark, Madeira → Portugal); die Kanarischen Inseln haben einen
+                    eigenen Eintrag.
+                  </p>
+                </details>
                 {hauptlandStand && (
                   <div className="mt-2 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
                     Tagessatz {auslandsLand}: {formatCurrency(hauptlandStand.tagessatz24h)} (24h) / {formatCurrency(hauptlandStand.tagessatz8h)} (8h) | Übernachtung: {formatCurrency(hauptlandStand.uebernachtung)}
                     <span className="block text-xs text-blue-600 mt-0.5">{hauptlandStand.quelle}</span>
                   </div>
                 )}
-                {/* Land bekannt, aber kein Satzstand für das Reisejahr: Hinweis wie der Server (400). */}
-                {hauptland && hauptlandStaende.length > 0 && !hauptlandStand && (
+                {/* Land bekannt, aber kein Satzstand für das Reisejahr: Hinweis wie der Server (400) —
+                    nicht bei einer Reise ohne Anspruch (eintägig bis 8 h), die braucht keinen Satz. */}
+                {hauptland && hauptlandStaende.length > 0 && !hauptlandStand && !ohneAnspruch && (
                   <div role="alert" className="mt-2 bg-amber-50 border border-amber-300 rounded-lg p-3 text-sm text-amber-800">
                     {fehlerOhneSatzstand(hauptland, stichtag, auslandsStaende).message}
                   </div>
@@ -481,6 +571,7 @@ export function ReisekostenFormular() {
                 className={`input-field ${errors.verkehrsmittel ? 'border-red-400' : ''}`}
                 value={verkehrsmittel}
                 onChange={e => setVerkehrsmittel(e.target.value)}
+                aria-invalid={!!errors.verkehrsmittel || undefined}
               >
                 <option value="">Bitte wählen...</option>
                 {VERKEHRSMITTEL.map(v => (
@@ -499,6 +590,7 @@ export function ReisekostenFormular() {
                     placeholder="86"
                     value={kmGefahren}
                     onChange={setKmGefahren}
+                    aria-invalid={!!errors.kmGefahren || undefined}
                   />
                   {errors.kmGefahren && <p className="text-xs text-red-500 mt-1">{errors.kmGefahren}</p>}
                 </div>
@@ -638,21 +730,21 @@ export function ReisekostenFormular() {
             {/* Beträge */}
             <div className="space-y-2">
               {kmBetrag > 0 && (
-                <div className="flex justify-between py-2 border-b border-credo-100">
+                <div className="flex justify-between gap-3 py-2 border-b border-credo-100">
                   <span className="text-credo-500">Fahrkosten ({kmGefahren} km × {verkehrsmittel === 'PKW' ? '0,30' : '0,20'} EUR)</span>
-                  <span className="font-medium">{formatCurrency(kmBetrag)}</span>
+                  <span className="font-medium whitespace-nowrap">{formatCurrency(kmBetrag)}</span>
                 </div>
               )}
               {vmaGesamt > 0 && (
-                <div className="flex justify-between py-2 border-b border-credo-100">
+                <div className="flex justify-between gap-3 py-2 border-b border-credo-100">
                   <span className="text-credo-500">Verpflegungsmehraufwand ({vorschau.tage.length} {vorschau.tage.length === 1 ? 'Tag' : 'Tage'})</span>
-                  <span className="font-medium">{formatCurrency(vmaGesamt)}</span>
+                  <span className="font-medium whitespace-nowrap">{formatCurrency(vmaGesamt)}</span>
                 </div>
               )}
               {weitereKostenSumme > 0 && (
-                <div className="flex justify-between py-2 border-b border-credo-100">
+                <div className="flex justify-between gap-3 py-2 border-b border-credo-100">
                   <span className="text-credo-500">Weitere Kosten</span>
-                  <span className="font-medium">{formatCurrency(weitereKostenSumme)}</span>
+                  <span className="font-medium whitespace-nowrap">{formatCurrency(weitereKostenSumme)}</span>
                 </div>
               )}
               <div className="flex justify-between py-3 border-t-2 border-credo-900">
@@ -676,6 +768,24 @@ export function ReisekostenFormular() {
 
             {/* Unterschrift */}
             <SignaturPad onSignature={setUnterschrift} value={unterschrift} />
+
+            {einreichFehler && (
+              <div role="alert" className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                {einreichFehler.text}
+                {einreichFehler.schritt !== null && (
+                  <button
+                    type="button"
+                    className="flex min-h-[44px] items-center font-medium underline hover:text-red-900"
+                    onClick={() => {
+                      setCurrentStep(einreichFehler.schritt ?? currentStep);
+                      setEinreichFehler(null);
+                    }}
+                  >
+                    Zu „{STEPS[einreichFehler.schritt]}“
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -9,6 +9,10 @@ import { testSmtpVerbindung } from '../services/email.js';
 import { ladeEmailConfigRow } from '../db/emailConfig.js';
 import { versendeErneut } from '../services/versand.js';
 import { TYP_FILTER_VALUES, RESERVIERTE_LAND_KEYS, FALLBACK_LAND_KEY } from '../lib/constants.js';
+import {
+  auslandspauschaleSchema, auslandspauschaleUpdateSchema, satzstandSchluessel, istUniqueViolation,
+  meldungOhneJahresstand, MELDUNG_8H_UEBER_24H,
+} from '../lib/satzstaende.js';
 
 class EncryptionConfigError extends Error {
   constructor(message: string) {
@@ -304,32 +308,7 @@ adminRouter.delete('/kategorien/:id', async (req, res) => {
 // Einzelstand anlegen/ändern/löschen. Ganze Jahresstände (BMF-Schreiben, jährlich im Dezember)
 // kommen als Migration aus backend/scripts/bmf-csv-zu-sql.ts (--jahr …).
 
-// Erster Gültigkeitstag 'JJJJ-MM-TT' — nur echte Kalenderdaten (kein 30.02.), sonst 500 statt 400.
-const satzstandDatum = z.string().regex(/^20\d{2}-\d{2}-\d{2}$/, 'Datum im Format JJJJ-MM-TT').refine(d => {
-  const ms = Date.parse(`${d}T00:00:00Z`);
-  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 10) === d;
-}, 'Ungültiges Datum');
-
-const auslandspauschaleSchema = z.object({
-  landKey: z.string().min(1).max(100),
-  gueltigVon: satzstandDatum,
-  quelle: z.string().trim().min(1).max(200),
-  // Tagessätze > 0: das BMF kennt keine 0-€-Sätze (vergessenes Feld würde 0,00 € VMA auszahlen).
-  tagessatz24h: z.number().positive().max(999),
-  tagessatz8h: z.number().positive().max(999),
-  uebernachtung: z.number().nonnegative().max(9999),
-  // Ohne Angabe: Sortierung des Vorgängerstands (bleibt unter „Häufige Ziele“), neues Land 9999.
-  reihenfolge: z.number().int().nonnegative().optional(),
-});
-const auslandspauschaleUpdateSchema = auslandspauschaleSchema.omit({ landKey: true, gueltigVon: true }).partial();
 const REIHENFOLGE_NEUES_LAND = 9999;
-
-/** Schlüssel eines Satzstands aus der URL (/:landKey/:gueltigVon); null = ungültiges Datum. */
-function satzstandSchluessel(params: { landKey: string; gueltigVon: string }) {
-  const gueltigVon = satzstandDatum.safeParse(params.gueltigVon);
-  if (!gueltigVon.success) return null;
-  return { landKey: decodeURIComponent(params.landKey), gueltigVon: gueltigVon.data };
-}
 
 const istSatzstand = (landKey: string, gueltigVon: string) =>
   and(eq(schema.pauschalenAusland.landKey, landKey), eq(schema.pauschalenAusland.gueltigVon, gueltigVon));
@@ -355,6 +334,20 @@ function luxemburgLoeschbar(gueltigVon: string) {
       between(andere.gueltigVon, `${jahr}-01-01`, `${jahr}-12-31`),
     ))),
   );
+}
+
+/**
+ * Bedingung: Für das Kalenderjahr `jahr` ist ein Jahresstand eingespielt (= es hat einen
+ * Luxemburg-Stand, wie jahresstandVorhanden in lib/reisetage.ts). Neue Stände nur dann — sonst
+ * schaltete ein einzelner Hand-Stand das Jahr frei, und alle übrigen Staaten fielen still auf den
+ * Luxemburg-Satz (Review A-M1). Neue Jahre kommen nur per Generator-Migration (DEPLOYMENT §14).
+ */
+function jahresstandVorhanden(jahr: string) {
+  const lux = alias(schema.pauschalenAusland, 'lux');
+  return exists(db.select({ eins: sql`1` }).from(lux).where(and(
+    eq(lux.landKey, FALLBACK_LAND_KEY),
+    between(lux.gueltigVon, `${jahr}-01-01`, `${jahr}-12-31`),
+  )));
 }
 
 // GET /api/admin/pauschalen-ausland — alle Satzstände fuer AdminCenter (mit allen Feldern)
@@ -400,22 +393,27 @@ adminRouter.post('/pauschalen-ausland', async (req, res) => {
         .limit(1);
       reihenfolge = vorgaenger?.reihenfolge ?? REIHENFOLGE_NEUES_LAND;
     }
-    const [row] = await db.insert(schema.pauschalenAusland).values({
-      landKey: parsed.landKey,
-      gueltigVon: parsed.gueltigVon,
-      quelle: parsed.quelle,
-      tagessatz24h: String(parsed.tagessatz24h),
-      tagessatz8h: String(parsed.tagessatz8h),
-      uebernachtung: String(parsed.uebernachtung),
-      reihenfolge,
-    }).returning();
+    // Jahresprüfung und Anlegen in EINEM Statement (INSERT … SELECT … WHERE EXISTS), wie beim
+    // Löschen — kein Zeitfenster für ein gleichzeitiges Löschen des Luxemburg-Stands.
+    // Spaltenfolge wie in schema.ts (Drizzle setzt die Spaltenliste aus der Tabellendefinition).
+    const jahr = parsed.gueltigVon.slice(0, 4);
+    const [row] = await db.insert(schema.pauschalenAusland).select(sql`
+      select ${parsed.landKey}, ${parsed.gueltigVon}::date, ${parsed.quelle},
+        ${String(parsed.tagessatz24h)}::numeric, ${String(parsed.tagessatz8h)}::numeric,
+        ${String(parsed.uebernachtung)}::numeric, ${reihenfolge}::integer, now()
+      where ${jahresstandVorhanden(jahr)}`)
+      .returning({ landKey: schema.pauschalenAusland.landKey, gueltigVon: schema.pauschalenAusland.gueltigVon });
+    if (!row) {
+      res.status(400).json({ error: meldungOhneJahresstand(jahr) });
+      return;
+    }
     res.status(201).json({ landKey: row.landKey, gueltigVon: row.gueltigVon });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: 'Validierungsfehler', details: error.errors });
       return;
     }
-    if (error instanceof Error && error.message.includes('duplicate')) {
+    if (istUniqueViolation(error)) {
       res.status(409).json({ error: 'Für dieses Land gibt es bereits einen Satzstand ab diesem Datum' });
       return;
     }
@@ -435,6 +433,13 @@ adminRouter.put('/pauschalen-ausland/:landKey/:gueltigVon', async (req, res) => 
     }
     const parsed = auslandspauschaleUpdateSchema.parse(req.body);
 
+    // 8 h ≤ 24 h nach dem Update — fehlt einer der Sätze im Body, gilt der gespeicherte (im selben Statement).
+    const neu24h = parsed.tagessatz24h !== undefined ? sql`${String(parsed.tagessatz24h)}::numeric` : schema.pauschalenAusland.tagessatz24h;
+    const neu8h = parsed.tagessatz8h !== undefined ? sql`${String(parsed.tagessatz8h)}::numeric` : schema.pauschalenAusland.tagessatz8h;
+    const saetzeStimmig = parsed.tagessatz24h === undefined && parsed.tagessatz8h === undefined
+      ? undefined
+      : sql`${neu8h} <= ${neu24h}`;
+
     const result = await db
       .update(schema.pauschalenAusland)
       .set({
@@ -445,10 +450,18 @@ adminRouter.put('/pauschalen-ausland/:landKey/:gueltigVon', async (req, res) => 
         reihenfolge: parsed.reihenfolge,
         updatedAt: new Date(),
       })
-      .where(istSatzstand(schluessel.landKey, schluessel.gueltigVon))
+      .where(and(istSatzstand(schluessel.landKey, schluessel.gueltigVon), saetzeStimmig))
       .returning();
 
     if (result.length === 0) {
+      const [vorhanden] = saetzeStimmig
+        ? await db.select({ landKey: schema.pauschalenAusland.landKey }).from(schema.pauschalenAusland)
+            .where(istSatzstand(schluessel.landKey, schluessel.gueltigVon)).limit(1)
+        : [];
+      if (vorhanden) {
+        res.status(400).json({ error: MELDUNG_8H_UEBER_24H });
+        return;
+      }
       res.status(404).json({ error: 'Auslandspauschale nicht gefunden' });
       return;
     }

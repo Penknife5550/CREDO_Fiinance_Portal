@@ -5,6 +5,7 @@ import {
   laenderfolge,
   landBezeichnung,
   landKeyZuFreitext,
+  listenEintraegeZuFreitext,
   ReisetageFehler,
   setzeOrt24MitFolgetagen,
   uebernachtungsfrage,
@@ -238,6 +239,16 @@ describe('landKeyZuFreitext', () => {
     expect(landKeyZuFreitext('   ', KEYS)).toBeNull();
     expect(landKeyZuFreitext('Russland', KEYS)).toBeNull(); // Russische Föderation fehlt in KEYS
   });
+
+  it('Städte mit eigenem Satz unter üblichen Namen; Staat und Stadt für die Übernahme', () => {
+    const keys = [...KEYS, 'Spanien — Palma de Mallorca', 'USA', 'USA — New York City', 'USA — Washington, D. C.'];
+    expect(landKeyZuFreitext('Palma', keys)).toBe('Spanien — Palma de Mallorca');
+    expect(landKeyZuFreitext('Hong Kong', keys)).toBe('China — Hongkong');
+    expect(listenEintraegeZuFreitext('Mallorca', keys)).toEqual(['Spanien', 'Spanien — Palma de Mallorca']);
+    expect(listenEintraegeZuFreitext('New York', keys)).toEqual(['USA', 'USA — New York City']);
+    expect(listenEintraegeZuFreitext('Washington DC', keys)).toEqual(['USA — Washington, D. C.']);
+    expect(listenEintraegeZuFreitext('Nauru', keys)).toEqual([]);
+  });
 });
 
 describe('berechneVmaVorschau (gleiche reine Funktionen wie der Server)', () => {
@@ -301,7 +312,7 @@ describe('berechneVmaVorschau (gleiche reine Funktionen wie der Server)', () => 
     expect(v.fehler).toBeNull();
     expect(v.tage.map(t => t.vmaNetto)).toEqual([40, 59, 61, 41]);
     expect(summe(v)).toBe(201);
-    expect(v.tage.map(t => t.satz.quelle)).toEqual([BMF_2026, BMF_2026, TEST_2027, TEST_2027]);
+    expect(v.tage.map(t => t.satz?.quelle)).toEqual([BMF_2026, BMF_2026, TEST_2027, TEST_2027]);
   });
 
   it('Jahreswechsel ohne Stand 2027: keine Beträge, Meldung wie der Server', () => {
@@ -313,7 +324,7 @@ describe('berechneVmaVorschau (gleiche reine Funktionen wie der Server)', () => 
     const inland = berechneVmaVorschau(eingaben('2026-12-30T08:00', '2027-01-02T18:00'), null, []);
     expect(inland.fehler).toBeNull();
     expect(summe(inland)).toBe(84);
-    expect(inland.tage.every(t => t.satz.quelle === '§ 9 Abs. 4a EStG')).toBe(true);
+    expect(inland.tage.every(t => t.satz?.quelle === '§ 9 Abs. 4a EStG')).toBe(true);
   });
 
   it('Jahreswechsel, Land im Stand 2027 nicht mehr aufgeführt: Hinweis auf „Staat nicht in der Liste“ statt „später einreichen“', () => {
@@ -335,6 +346,24 @@ describe('berechneVmaVorschau (gleiche reine Funktionen wie der Server)', () => 
     expect(berechneVmaVorschau(eingaben('2025-12-29T08:00', '2025-12-31T18:00'), 'Belgien', SAETZE).fehler).toBe(
       'Für Reisetage im Jahr 2025 sind keine Auslandspauschalen hinterlegt. Bitte wenden Sie sich an die Buchhaltung.',
     );
+  });
+
+  it('Tagesreise bis 8 h ohne Stand im Reisejahr (Niederlande, Januar 2027): kein Satz, 0,00, kein Fehler', () => {
+    const v = berechneVmaVorschau(eingaben('2027-01-14T08:00', '2027-01-14T15:00'), 'Niederlande', SAETZE);
+    expect(v.fehler).toBeNull();
+    expect(v.tage.map(t => [t.land.landKey, t.satz, t.vmaNetto])).toEqual([['Niederlande', null, 0]]);
+    // über 8 h: Satz nötig → Meldung wie der Server
+    expect(berechneVmaVorschau(eingaben('2027-01-14T08:00', '2027-01-14T16:01'), 'Niederlande', SAETZE).fehler)
+      .toBe('Die Auslandspauschalen für 2027 sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung.');
+  });
+
+  it('„Staat nicht in der Liste“ mit einem Staat aus der Liste: keine Beträge, Meldung wie der Server', () => {
+    const tage = eingaben('2026-10-12T08:00', '2026-10-14T18:00', { '2026-10-13': { land24uhr: 'ANDERES', landFreitext: 'Holland' } });
+    expect(berechneVmaVorschau(tage, 'Belgien', SAETZE))
+      .toEqual({ tage: [], fehler: '„Niederlande“ steht in der Liste – bitte dort auswählen.' });
+    // Tag ohne Anspruch (eintägig bis 8 h) braucht keinen Satz — keine Prüfung
+    const kurz = eingaben('2026-10-12T08:00', '2026-10-12T14:00', { '2026-10-12': { letzterTaetigkeitsort: 'ANDERES', landFreitext: 'Holland' } });
+    expect(berechneVmaVorschau(kurz, 'Belgien', SAETZE).fehler).toBeNull();
   });
 });
 

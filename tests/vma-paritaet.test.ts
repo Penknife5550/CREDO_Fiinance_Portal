@@ -11,6 +11,11 @@ import { vmaTag, type ReisetagTyp, type TagesSatz } from '../backend/src/lib/vma
 import {
   bildeReisetage as beBildeReisetage,
   bestimmeTageslaender as beBestimmeTageslaender,
+  brauchtSatz as beBrauchtSatz,
+  landKeyZuFreitext as beLandKeyZuFreitext,
+  listenEintraegeZuFreitext as beListenEintraegeZuFreitext,
+  LAND_ALIASE as BE_LAND_ALIASE,
+  pruefeLandFreitext as bePruefeLandFreitext,
   satzLandKey as beSatzLandKey,
   waehleSatzstand as beWaehleSatzstand,
   waehleTagesSatz as beWaehleTagesSatz,
@@ -18,11 +23,22 @@ import {
   type Satzstand as BeSatzstand,
   type TagesLandAngabe as BeTagesLandAngabe,
 } from '../backend/src/lib/reisetage';
-import { landBezeichnung as beLandBezeichnung, reiselandFolge as beReiselandFolge } from '../backend/src/lib/reiseangaben';
+import {
+  bereiteReisekostenVor as beBereiteReisekostenVor,
+  berechneReisekostenVma as beBerechneReisekostenVma,
+  landBezeichnung as beLandBezeichnung,
+  reiselandFolge as beReiselandFolge,
+  type ReisekostenVorbereitung as BeVorbereitung,
+} from '../backend/src/lib/reiseangaben';
 import { berechneVmaTagMitSatz, type VmaSatz } from '../frontend/src/lib/vma';
 import {
   bildeReisetage as feBildeReisetage,
   bestimmeTageslaender as feBestimmeTageslaender,
+  brauchtSatz as feBrauchtSatz,
+  landKeyZuFreitext as feLandKeyZuFreitext,
+  listenEintraegeZuFreitext as feListenEintraegeZuFreitext,
+  LAND_ALIASE as FE_LAND_ALIASE,
+  pruefeLandFreitext as fePruefeLandFreitext,
   satzLandKey as feSatzLandKey,
   waehleSatzstand as feWaehleSatzstand,
   waehleTagesSatz as feWaehleTagesSatz,
@@ -466,6 +482,95 @@ describe('Satzparität satzLandKey / waehleTagesSatz Backend ↔ Frontend', () =
   });
 });
 
+// ── 3b. Tage ohne Anspruch / Freitext bei „Staat nicht in der Liste“ ─────────────
+
+describe('Parität brauchtSatz / landKeyZuFreitext / pruefeLandFreitext Backend ↔ Frontend', () => {
+  it('brauchtSatz: alle Typen mit und ohne 8-h-Angabe', () => {
+    for (const typ of TYPEN) {
+      for (const eintaegigUeber8h of [true, false, undefined]) {
+        expect(feBrauchtSatz({ typ, eintaegigUeber8h }), `${typ} ${eintaegigUeber8h}`).toBe(beBrauchtSatz({ typ, eintaegigUeber8h }));
+      }
+    }
+  });
+
+  it('Alias-Tabelle identisch', () => {
+    expect(FE_LAND_ALIASE).toEqual(BE_LAND_ALIASE);
+  });
+
+  // Listen- und Stadtnamen, alle Alias-Namen (auch in anderer Schreibweise), nicht aufgeführte Staaten, Leereingaben
+  const KEYS = [...new Set([
+    ...Object.values(BE_LAND_ALIASE), 'Polen', 'Belgien', 'China — Hongkong', 'Frankreich — Paris', 'Côte d’Ivoire',
+    'Spanien — Barcelona', 'USA — Miami', 'Russische Föderation — Moskau',
+  ])];
+  const FREITEXTE = [
+    ...Object.keys(BE_LAND_ALIASE), ...Object.keys(BE_LAND_ALIASE).map(k => ` ${k.toUpperCase()} `),
+    ...KEYS, ...KEYS.map(k => k.toLowerCase()), 'Hongkong', 'paris', "cote d'ivoire", 'Süd-Korea', 'Grönland', 'Färöer',
+    'Palma', 'Mallorca', 'New York', 'New York City', 'Washington', 'Washington, D.C.', 'Hong Kong', 'Sankt-Petersburg',
+    'St. Petersburg', 'York', 'Nauru', 'Kiribati', 'Nordkorea', '', '   ', '—', 'constructor', '__proto__',
+  ];
+
+  it(`landKeyZuFreitext: ${FREITEXTE.length} Eingaben × volle, leere und Teilliste`, () => {
+    const LISTEN = [KEYS, [], KEYS.filter((_, i) => i % 2 === 0)];
+    let treffer = 0;
+    for (const liste of LISTEN) {
+      for (const freitext of FREITEXTE) {
+        const be = beLandKeyZuFreitext(freitext, liste);
+        expect(feLandKeyZuFreitext(freitext, liste), `${freitext} (${liste.length} Keys)`).toBe(be);
+        if (be) treffer++;
+      }
+    }
+    expect(treffer).toBeGreaterThan(100); // nicht nur null verglichen
+  });
+
+  it(`listenEintraegeZuFreitext (Staat + Stadt): ${FREITEXTE.length} Eingaben × volle, leere und Teilliste`, () => {
+    const LISTEN = [KEYS, [], KEYS.filter((_, i) => i % 2 === 0), [...KEYS].reverse()];
+    let mehrere = 0;
+    for (const liste of LISTEN) {
+      for (const freitext of FREITEXTE) {
+        const be = beListenEintraegeZuFreitext(freitext, liste);
+        expect(feListenEintraegeZuFreitext(freitext, liste), `${freitext} (${liste.length} Keys)`).toEqual(be);
+        expect(be[0] ?? null, freitext).toBe(beLandKeyZuFreitext(freitext, liste));
+        if (be.length > 1) mehrere++;
+      }
+    }
+    expect(mehrere).toBeGreaterThan(5); // auch Staat + Stadt verglichen (Mallorca, New York, Washington)
+  });
+
+  it('pruefeLandFreitext: Land × Freitext × Datum × Satzstände (Fehlercode und Meldung)', () => {
+    // Städte mit eigenem Satz: Palma nur 2026 (Meldung 2027 nur „Spanien“), New York City in beiden Jahren
+    const MIT_STAEDTEN: readonly StandZeile[] = [
+      ...MIT_LUECKEN,
+      ['Spanien — Palma de Mallorca', '2026-01-01', 44, 29, BMF_2026],
+      ['USA', '2026-01-01', 59, 40, BMF_2026],
+      ['USA — New York City', '2026-01-01', 66, 44, BMF_2026],
+      ['USA — New York City', '2027-01-01', 67, 45, TEST_2027],
+      ['USA', '2027-01-01', 60, 40, TEST_2027],
+    ];
+    const TABELLEN: Array<readonly StandZeile[]> = [
+      STAND_2026, MIT_2027, MIT_LUECKEN, [...STAND_2026, ['Polen', '2026-07-01', 34, 23, KORREKTUR]], MIT_STAEDTEN, [],
+    ];
+    const LAENDER = [
+      ...['Polen', 'holland', 'Niederlande', 'Belgien', 'Nauru', 'Barcelona', 'Frankreich', 'Spanien', 'Mallorca', 'Palma',
+        'New York', 'Washington', '', null]
+        .map(landFreitext => ({ landKey: 'ANDERES', landFreitext })),
+      { landKey: 'Belgien', landFreitext: 'Polen' }, { landKey: 'SEETAG', landFreitext: null },
+    ];
+    let fehler = 0;
+    for (const zeilen of TABELLEN) {
+      const be = beStaende(zeilen);
+      const fe = feStaende(zeilen);
+      for (const land of LAENDER) {
+        for (const datum of ['2025-12-31', '2026-01-01', '2026-06-30', '2026-07-01', '2026-12-31', '2027-01-01', '2027-06-30']) {
+          const b = ergebnis(() => bePruefeLandFreitext(land, datum, be));
+          expect(ergebnis(() => fePruefeLandFreitext(land, datum, fe)), `${JSON.stringify(land)} @ ${datum}`).toEqual(b);
+          if ('code' in b) fehler++;
+        }
+      }
+    }
+    expect(fehler).toBeGreaterThan(20); // auch Ablehnungen verglichen
+  });
+});
+
 // ── 4. Gesamtbeträge der Spezifikationsfälle (komplette Kette) ────────────────
 
 type TagAngabe = Partial<Pick<ReisetagEingabe,
@@ -483,34 +588,45 @@ interface Fall {
   /** Betrag je Tag (Reihenfolge der Tage) oder Fehlermeldung (Teilstring). */
   netto?: number[];
   summe?: number;
-  /** Quelle des angewandten Satzes je Tag (optional geprüft). */
-  quellen?: string[];
+  /** Quelle des angewandten Satzes je Tag (optional geprüft); null = Tag ohne Anspruch, kein Satz. */
+  quellen?: Array<string | null>;
   fehler?: string;
 }
 
-type Rechnung = { netto: number[]; summe: number; quellen: string[] } | { fehler: string };
+type Rechnung = { netto: number[]; summe: number; quellen: Array<string | null> } | { fehler: string };
 
 const runde = (n: number) => Math.round(n * 100) / 100;
 
-/** Backend-Kette wie die Route: Tage bilden → Angaben per Datum → Land → Satz zum Datum → vmaTag. */
+/** Eingaben je Tag wie das Formular (Tage bilden → Eingaben übernehmen → Angaben des Falls) = Client-Payload. */
+function formularTage(f: Fall): ReisetagEingabe[] {
+  const soll = feBildeReisetage(f.abfahrt, f.rueckkehr, f.uebernachtung ?? null);
+  return uebernehmeTagesangaben(soll, []).map(t => ({ ...t, ...f.tage?.[t.datum] }));
+}
+
+/** Satzstände, wie die Route sie lädt: WHERE land_key IN (Satz-Keys) bzw. alle Länder. */
+function geladeneStaende(v: BeVorbereitung, alle: BeSatzstand[]): BeSatzstand[] {
+  if (v.satzKeys.length === 0) return [];
+  return v.alleLaender ? alle : alle.filter(s => v.satzKeys.includes(s.landKey));
+}
+
+/**
+ * Echter Serverpfad (backend/src/lib/reiseangaben.ts, wie die Route): bereiteReisekostenVor →
+ * Satzstände laden → berechneReisekostenVma, mit den Tagen des Formulars als Client-Payload.
+ */
 function backendRechnung(f: Fall): Rechnung {
+  let reisetage: ReisetagEingabe[] = [];
   try {
-    const staende = beStaende(f.staende ?? STAND_2026);
-    const soll = beBildeReisetage(f.abfahrt, f.rueckkehr, f.uebernachtung ?? null);
-    const angaben = soll.map(t => ({ ...t, ...f.tage?.[t.datum] }));
-    const laender = beBestimmeTageslaender(angaben, f.hauptland ?? null);
-    const saetze = angaben.map((t, i) => beWaehleTagesSatz(laender[i].landKey, t.datum, staende));
-    const netto = angaben.map((t, i) => vmaTag(
-      {
-        typ: t.typ,
-        eintaegigUeber8h: t.eintaegigUeber8h,
-        fruehstueckGestellt: !!t.fruehstueckGestellt,
-        mittagGestellt: !!t.mittagGestellt,
-        abendGestellt: !!t.abendGestellt,
-      },
-      saetze[i],
-    ).vmaNetto);
-    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)), quellen: saetze.map(s => s.quelle) };
+    reisetage = formularTage(f);
+  } catch (err) {
+    // Das Formular schickt dann nicht ab — der Server lehnt (bildeReisetage) mit derselben Meldung ab.
+    if (!(err instanceof FeReisetageFehler)) throw err;
+  }
+  try {
+    const v = beBereiteReisekostenVor({
+      abfahrtZeit: f.abfahrt, rueckkehrZeit: f.rueckkehr, uebernachtung: f.uebernachtung ?? null, land: f.hauptland ?? null, reisetage,
+    });
+    const r = beBerechneReisekostenVma(v, geladeneStaende(v, beStaende(f.staende ?? STAND_2026)));
+    return { netto: r.tage.map(t => t.vmaNetto), summe: r.vmaNetto, quellen: r.tage.map(t => t.satz?.quelle ?? null) };
   } catch (err) {
     if (err instanceof BeReisetageFehler) return { fehler: err.message };
     throw err;
@@ -520,12 +636,10 @@ function backendRechnung(f: Fall): Rechnung {
 /** Frontend-Kette wie das Formular: Tage bilden → Eingaben übernehmen → Vorschau. */
 function frontendRechnung(f: Fall): Rechnung {
   try {
-    const soll = feBildeReisetage(f.abfahrt, f.rueckkehr, f.uebernachtung ?? null);
-    const tage = uebernehmeTagesangaben(soll, []).map(t => ({ ...t, ...f.tage?.[t.datum] }));
-    const vorschau = berechneVmaVorschau(tage, f.hauptland ?? null, feStaende(f.staende ?? STAND_2026));
+    const vorschau = berechneVmaVorschau(formularTage(f), f.hauptland ?? null, feStaende(f.staende ?? STAND_2026));
     if (vorschau.fehler) return { fehler: vorschau.fehler };
     const netto = vorschau.tage.map(t => t.vmaNetto);
-    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)), quellen: vorschau.tage.map(t => t.satz.quelle) };
+    return { netto, summe: runde(netto.reduce((a, b) => a + b, 0)), quellen: vorschau.tage.map(t => t.satz?.quelle ?? null) };
   } catch (err) {
     if (err instanceof FeReisetageFehler) return { fehler: err.message };
     throw err;
@@ -721,6 +835,41 @@ const FAELLE: Fall[] = [
     tage: { '2026-07-01': { fruehstueckGestellt: true } },
     // 01.07.: 60 − 20 % von 60 = 48,00; 02.07.: 41 (8-h-Satz der Korrektur)
     netto: [40, 59, 48, 41], summe: 188, quellen: [BMF_2026, BMF_2026, KORREKTUR, KORREKTUR],
+  },
+  // Tage ohne Anspruch brauchen keinen Satz (EH-M1)
+  {
+    name: 'Tagesreise bis 8 h, Niederlande am 14.01.2027 ohne Stand 2027 → 0,00 ohne Satz statt Fehler',
+    abfahrt: '2027-01-14T08:00', rueckkehr: '2027-01-14T15:00', hauptland: 'Niederlande',
+    netto: [0], summe: 0, quellen: [null],
+  },
+  {
+    name: 'Tagesreise über 8 h, Niederlande am 14.01.2027 ohne Stand 2027 → Fehler (Satz nötig)',
+    abfahrt: '2027-01-14T08:00', rueckkehr: '2027-01-14T16:01', hauptland: 'Niederlande',
+    fehler: 'Die Auslandspauschalen für 2027 sind noch nicht hinterlegt. Bitte reichen Sie die Abrechnung später ein oder wenden Sie sich an die Buchhaltung.',
+  },
+  {
+    name: 'Tagesreise bis 8 h im Inland ohne Satzstände → 0,00 ohne Satz',
+    abfahrt: '2026-10-12T08:00', rueckkehr: '2026-10-12T16:00', staende: [],
+    netto: [0], summe: 0, quellen: [null],
+  },
+  // „Staat nicht in der Liste“ mit einem Staat aus der Liste (SEC-m1)
+  {
+    name: '„Staat nicht in der Liste“ + „ Holland “ → Fehler (Niederlande steht in der Liste)',
+    abfahrt: '2026-10-12T08:00', rueckkehr: '2026-10-14T18:00', hauptland: 'Belgien',
+    tage: { '2026-10-13': { land24uhr: 'ANDERES', landFreitext: ' Holland ' } },
+    fehler: '„Niederlande“ steht in der Liste – bitte dort auswählen.',
+  },
+  {
+    name: 'Abreisetag erbt „Staat nicht in der Liste“ + „Luxemburg“ vom Vortag → Fehler',
+    abfahrt: '2026-10-12T08:00', rueckkehr: '2026-10-14T18:00', hauptland: 'Belgien',
+    tage: { '2026-10-13': { land24uhr: 'ANDERES', landFreitext: 'luxemburg' } },
+    fehler: '„Luxemburg“ steht in der Liste – bitte dort auswählen.',
+  },
+  {
+    name: 'Tagesreise bis 8 h mit „Staat nicht in der Liste“ + „Holland“: kein Satz, also keine Prüfung → 0,00',
+    abfahrt: '2026-10-12T08:00', rueckkehr: '2026-10-12T14:00', hauptland: 'Belgien',
+    tage: { '2026-10-12': { letzterTaetigkeitsort: 'ANDERES', landFreitext: 'Holland' } },
+    netto: [0], summe: 0, quellen: [null],
   },
 ];
 
