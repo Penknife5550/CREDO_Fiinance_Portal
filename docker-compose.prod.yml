@@ -46,8 +46,13 @@ services:
       WEBHOOK_URL_REISEKOSTEN: ${WEBHOOK_URL_REISEKOSTEN:-}
       WEBHOOK_URL_ERSTATTUNG: ${WEBHOOK_URL_ERSTATTUNG:-}
       NODE_ENV: production
-      # Lösch-Moratorium (VMA-Nachkorrektur 2026), Prüftermin 31.03.2027 — siehe DEPLOYMENT.md
-      RETENTION_TAGE: ${RETENTION_TAGE:-3650}
+      # Löschjob (DEPLOYMENT.md §13). Leer = Werte im Code: Frist 90 Tage, Moratorium für den
+      # Reisekosten-Altbestand (VMA-Nachkorrektur 2026) bis 2027-03-31, endet dann automatisch.
+      RETENTION_FRIST_TAGE: ${RETENTION_FRIST_TAGE:-}
+      RETENTION_MORATORIUM_BIS: ${RETENTION_MORATORIUM_BIS:-}
+      # Nur für ältere Images (Rückweg, Start ohne --build): Sie lesen RETENTION_TAGE und kennen kein
+      # Moratorium — 3650 hält dort alles zurück. Der aktuelle Code liest diesen Wert nicht. Nicht ändern.
+      RETENTION_TAGE: "3650"
     volumes:
       - uploads_data:/app/uploads
     depends_on:

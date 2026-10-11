@@ -239,20 +239,77 @@ git pull
 
 ## 13. Loesch-Moratorium (VMA-Nachkorrektur 2026)
 
-Der 90-Tage-Loeschjob (`services/retention.ts`) ist ausgesetzt: `docker-compose.prod.yml` setzt
-`RETENTION_TAGE` standardmaessig auf **3650**. Grund: Die Auslands-VMA wurden bis zum VMA-Fix
-um rund 20 % zu hoch berechnet; Reisetage und Reiseland werden fuer die lohnsteuerliche
-Nachkorrektur 2026 gebraucht (Art. 17 Abs. 3 lit. b/e DSGVO). **Pruefermin: 31.03.2027** —
-danach mit Datenschutzbeauftragtem neu entscheiden (Aufhebung erst mit Archivquittung aus DokuBit).
+Der Loeschjob (`services/retention.ts`) loescht zugestellte Vorgaenge (`GESENDET`) `RETENTION_FRIST_TAGE`
+nach der Einreichung (Standard **90** Tage, Wert im Code). Ausgenommen ist bis zum **31.03.2027** der
+**Reisekosten-Altbestand**: Reisekosten ohne Land je Reisetag, also eingereicht vor Release 1b — genau die
+Belege, die `backend/scripts/vma-nachkorrektur-2026.sql` liest. Das Enddatum steht im Code
+(`STANDARD_MORATORIUM_BIS`), `RETENTION_MORATORIUM_BIS` in `.env.production` ueberschreibt es. Grund: Die
+Auslands-VMA wurden bis zum VMA-Fix um rund 20 % zu hoch berechnet; Reisetage und Reiseland werden fuer die
+lohnsteuerliche Nachkorrektur 2026 gebraucht (Art. 17 Abs. 3 lit. b/e DSGVO). Datenminimierung
+(Art. 5 Abs. 1 lit. c/e DSGVO): IBAN, Belege und PDF braucht die Nachkorrektur nicht.
+
+| Nach Ablauf der Frist | Was passiert |
+|---|---|
+| Erstattung, Sammelfahrt, Klassenfahrt, Reisekosten ab Release 1b | komplett geloescht (Datensatz, Belege, PDF, `email_log`) |
+| Reisekosten-Altbestand — wird entfernt (minimiert) | IBAN, Kontoinhaber, Beleg-Dateien und PDF (samt Verweisen in der DB) |
+| Reisekosten-Altbestand — bleibt erhalten | Name, Personalnr., Mandant, Reiseanlass und -ziel, Abfahrt/Rueckkehr, Reiseland, Verkehrsmittel/km, Reisetage mit Mahlzeiten und Betraegen, weitere Kosten (Art, Beschreibung, Betrag), Versandprotokoll (`email_log`: Betreff mit Name, Message-ID, Fehlertext) |
+
+Die Nachkorrektur liest davon nur Name, Personalnr., Mandant, Abfahrt/Rueckkehr, Reiseland und Reisetage; der
+uebrige Datensatz wird nicht weiter gekuerzt. Laesst sich eine Datei nicht loeschen, bleibt ihr Verweis in der
+DB und der naechste Lauf versucht es erneut (Log: `[Retention] RK-…: Datei nicht loeschbar`).
+Das Skript `vma-nachkorrektur-2026.sql` kommt mit dem VMA-Fix (Release 1a–1c); wird dieser Abschnitt vorab
+einzeln auf `main` uebernommen, gibt es das Skript dort erst nach dem Merge.
+
+> **Offene Entscheidung VOR dem Deploy (Analyse L11/P03, Code-Review SEC-M1):** Bisher galt: Aufhebung des
+> Moratoriums erst mit **Archivquittung aus DokuBit**. Diese Quittung gibt es noch nicht (P03 offen) —
+> `GESENDET` heisst nur, dass SMTP die Mail angenommen hat. Mit diesem Stand loescht der Job ab dem ersten Lauf
+> (60 s nach dem Start; produktiv seit ca. 16.07.2026, also ab ca. 14.10.2026 relevant) Erstattungen, Sammel-
+> und Klassenfahrten sowie neue Reisekosten nach 90 Tagen vollstaendig und beim Reisekosten-Altbestand PDF und
+> Belege. Ging eine Mail im DMS verloren, ist der Buchungsbeleg dann endgueltig weg (GoBD Rz. 142; es gibt noch
+> kein Backup, Analyse S6). Mit dem Datenschutzbeauftragten entscheiden und hier eintragen:
+>
+> - **(a) Bis zur Archivquittung nichts loeschen:** `RETENTION_FRIST_TAGE=3650` in `.env.production`. Fail-closed-
+>   Pruefung und Moratorium bleiben; kein Code-Eingriff noetig.
+> - **(b) Loeschen nach 90 Tagen, aber nur nach DokuBit-Abgleich:** Vor dem Deploy die Belegnummern der Liste
+>   unten in DokuBit pruefen (jede muss dort archiviert sein; fehlende neu senden, bevor sie faellig werden),
+>   danach monatlich wiederholen. Die Liste enthaelt alles, was in den naechsten 30 Tagen faellig wird.
+>
+> **Entscheidung:** (eintragen: Datum, Variante, wer)
+
+```bash
+docker exec credo-finanz-db psql -U credo -d finanzportal -c "SELECT beleg_nr, typ, created_at::date FROM einreichungen WHERE status = 'GESENDET' AND created_at < now() - interval '60 days' ORDER BY created_at;"
+```
+
+Das Moratorium endet automatisch: **Ab dem 31.03.2027** loescht der Job auch den Reisekosten-Altbestand nach
+der normalen Frist, ohne Eingriff. Ab dem 01.03.2027 warnt jeder Lauf im Log (`Moratorium REISEKOSTEN endet
+am …`). **Prueftermin: 01.03.2027** — Kalendertermin mit dem Datenschutzbeauftragten anlegen: Ist die
+Nachkorrektur abgeschlossen? Falls nicht, das Enddatum **vor dem 31.03.2027** begruendet in `.env.production`
+verlaengern (`RETENTION_MORATORIUM_BIS=JJJJ-MM-TT`) und wie unten aktivieren. Vorzeitig beenden: ein
+vergangenes Datum eintragen.
+
+Fail-closed: Ist `RETENTION_FRIST_TAGE` keine ganze Zahl ab 1 (z. B. `3.650`, `-1`, `10 Jahre`) oder
+`RETENTION_MORATORIUM_BIS` kein gueltiges Datum `JJJJ-MM-TT`, startet der Loeschjob gar nicht
+(Log: `Scheduler NICHT gestartet`) und loescht nichts — Wert korrigieren und neu aktivieren.
+
+Aeltere Images (z. B. ein getaggtes Vorgaenger-Image als Rueckweg oder `up -d` ohne `--build`) lesen
+`RETENTION_TAGE` und kennen kein Moratorium. `docker-compose.prod.yml` setzt `RETENTION_TAGE` deshalb fest auf
+`3650` — ein solches Image loescht mit dieser Compose-Datei nichts. Der aktuelle Code liest `RETENTION_TAGE`
+nicht mehr; ein alter Eintrag in `.env.production` ist wirkungslos.
 
 Aktivieren bzw. aendern (NICHT `./deploy.sh restart` — das uebernimmt geaenderte Umgebungswerte nicht):
 
 ```bash
 git pull
-# optional abweichender Wert in .env.production: RETENTION_TAGE=3650
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d app
-docker exec credo-finanz-app printenv RETENTION_TAGE        # erwartet: 3650
-docker logs credo-finanz-app 2>&1 | grep Retention           # "Scheduler aktiv (3650-Tage-Frist ..."
+grep RETENTION .env.production       # nur RETENTION_FRIST_TAGE / RETENTION_MORATORIUM_BIS wirken (siehe Entscheidung oben)
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build app
+docker logs credo-finanz-app 2>&1 | grep Retention
+# erwartet (ohne eigene Eintraege): "Scheduler aktiv (90-Tage-Frist, täglich, nur GESENDET). Moratorium REISEKOSTEN aktiv, endet am 2027-03-31: ..."
+```
+
+Kontrolle am Folgetag (Variante b: aelter als 90 Tage nur noch Reisekosten-Altbestand, ohne IBAN und PDF):
+
+```bash
+docker exec credo-finanz-db psql -U credo -d finanzportal -c "SELECT typ, count(*), count(bank_iban) AS mit_iban, count(pdf_dateipfad) AS mit_pdf FROM einreichungen WHERE status = 'GESENDET' AND created_at < now() - interval '90 days' GROUP BY typ;"
 ```
 
 ---
