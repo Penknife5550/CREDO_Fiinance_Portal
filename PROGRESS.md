@@ -383,6 +383,22 @@ Auslöser: Code-Review des VMA-Branches (`CODE-REVIEW_2026-10-11_VMA.md`, 7 Spez
 
 **Verifikation:** Backend-tsc und Tests-tsc grün, Frontend-Build grün, **516 Vitest** unter TZ=UTC, Europe/Berlin und America/New_York (Parität u. a. Staat + Stadt zum Freitext und Satzstände mit Städten), ESLint 0 Fehler (36 Warnungen wie vorher). Frische PG-16-DB 0000–0017 + Seed: 223 Stände, Prüfabfrage leer. API-E2E gegen die Test-DB: 33/33 (Tagesreise bis 8 h 2027 = 0,00 ohne Satz; PDF ohne Luxemburg-Fußnote bei Tag ohne Anspruch, mit Fußnote bei Anspruch; Mallorca/Palma/New York/Washington/Hong Kong/Sankt Petersburg → 400 mit Staat und Stadt; U+2028/U+202E/U+200B im Freitext ersetzt; Client-Tagesbetrag 200 ja, 200,01 nein; Admin lehnt Zeilentrenner und Bidi-Zeichen in Land und Quelle ab). Retention gegen die Test-DB: Erstattung und Reisekosten mit Land je Tag gelöscht, Altbestand minimiert (Datensatz, Reisetage, `email_log` bleiben), gesperrtes PDF behält den Verweis und wird im nächsten Lauf entfernt, idempotent, ab 31.03.2027 normale Frist; Startlog fail-closed bei `3.650` bzw. 30.02. Retention-Änderung isoliert auf `53f3c16`: tsc und Tests grün, Abfrage auch ohne Spalte `land_key` lauffähig. Browser 375 px: Fokus auf Vorname nach „Weiter“, kein Hinweis „nicht hinterlegt“ bei 7 h in 2027, nach Kürzen auf höchstens 8 h kein gesperrtes „Weiter“ mehr.
 
+### Deploy VMA-Release + Löschjob-Vorfall (13.10.2026)
+
+Deploy von `ae4fec0` (Release 1a–1c, Code-Review-Fixes, Entscheidung L11) auf `finance.fes-credo.de`, Migrationen 0013–0017.
+
+| # | Aufgabe | Status | Datum |
+|---|---|---|---|
+| 18.1 | Pre-Deploy-Prüfung: CI grün; lokal tsc, ESLint, Frontend-/Backend-Build, 530 Vitest unter drei Zeitzonen; frische PG-16-DB 0000–0017 + Seed (zweimal, idempotent); Update einer DB mit Stand 0012 (Altdaten, drei `email_config`-Zeilen, im AdminCenter geänderter und gelöschter Auslandssatz) auf 0017; App-Start mit `NODE_ENV=production` (Health ok, Retention 3650 + Moratorium) | ✅ | 2026-10-13 |
+| 18.2 | Doku-Fehler `ENCRYPTION_KEY`: DEPLOYMENT/README/`.env.example` verlangten 32 Zeichen (`openssl rand -hex 16`), der Code seit `60547b6` 64 Hex-Zeichen — ein Schlüssel nach Doku bricht den Start ab (getestet). `ADMIN_INITIAL_PASSWORD` min. 12 Zeichen und stehen lassen (Seed bei jedem Start) | ✅ | 2026-10-13 |
+| 18.3 | `deploy.sh`: Platzhalter-Prüfung griff nie (`HIER_` statt `change-me`); Env-Datei `.env.production` **oder** `.env` (Server nutzt `.env`); DB-Backup vor jedem Deploy nach `backups/` mit Lesbarkeitsprüfung (`backup` als eigener Befehl); Health-Check wartet bis 2 min und meldet `unhealthy` als Fehler — vorher traf `grep healthy` auch „unhealthy“. Getestet mit Docker-Attrappe (nur `.env`, beide Dateien, healthy, unhealthy, Timeout, pg_dump-Fehler) | ✅ | 2026-10-13 |
+| 18.4 | Server-Checks vor dem Deploy (ohne Werte auszugeben): Commit `ae4fec0`, `.env` mit 64-Hex-Schlüssel (= Container), Admin-Passwort 12 Zeichen, keine `RETENTION`-Einträge, `docker compose config` ohne Warnungen; Backup `~/finanz_2026-10-13_1107.dump` (474 KB, 21 Tabellen, lesbar) | ✅ | 2026-10-13 |
+| 18.5 | Deploy: `Migrations complete.`, `Seeding complete!`, `[Retention] Scheduler aktiv (3650-Tage-Frist …). Moratorium REISEKOSTEN aktiv, endet am 2027-03-31` | ✅ | 2026-10-13 |
+| 18.6 | **Vorfall:** Der alte Container (24.07.2026, 90-Tage-Job ohne Moratorium) hat bis zum Deploy gelöscht, u. a. RK-2026-00016/-00017, KE-2026-00076 bis -00086 — `DEPLOYMENT.md` §13a mit Sachverhalt, Folgen und offenen Aufgaben (DokuBit-Abgleich, VMA-Nachkorrektur, DSB); `backend/scripts/belegnummern-luecken.sql` rekonstruiert die fehlenden Belegnummern | ✅ dokumentiert, Aufgaben offen | 2026-10-13 |
+| 18.7 | `DEPLOYMENT.md`: Env-Datei (§3), Script-Schritte und Backup (§5), Rollback mit Backup — nur in leere DB, getestet — und Warnung vor Commits vor `2bb23d4` (§11), Update-Ablauf mit `sudo` und Server-Stand-Prüfung (§12), §13 korrigiert („ab ca. 14.10. relevant“ war falsch) | ✅ | 2026-10-13 |
+
+**Offen:** §13a Aufgaben 1–5 (Liste der gelöschten Belege, DokuBit-Abgleich, Reisekosten für die Nachkorrektur, Bewertung durch den DSB, Backup auf ein zweites System); Prüfabfrage `pruefe-auslandspauschalen.sql` nach dem Deploy und Smoke-Test (§9) — Ergebnis eintragen.
+
 ---
 
 ## Produktivsetzung (Vorbereitung, 16.07.2026)
@@ -492,6 +508,8 @@ Auslöser: Feedback Schulleiter zum Verpflegungs-Schritt im Reisekosten-Wizard. 
 | 2026-05-09 | Apple-like Startseite im CREDO-CI | Monochrome Icons (Primärgrau) statt bunter Backgrounds. Akzent über dünnen Strich oben pro Card in CREDO-Farbe (Gelb/Grün/Blau analog HTML-Mail). Entkoppelt visuelle Hierarchie von Farbsignalen. |
 | 2026-07-13 | Erstattungs-Kategorien pro Mandant konfigurierbar (DB statt Enum) | Wunsch: Kategorien von Dimitri pflegbar, pro Mandant. pgEnum blockierte neue Werte → Migration auf `varchar` + Tabelle `erstattung_kategorien`. Muster kombiniert aus Auslandspauschalen-CRUD + Kostenstellen-Mandant-Scoping. Key stabil (aus Bezeichnung abgeleitet), Label editierbar. Mandant 40 erhält „Schulleiterbudget". |
 | 2026-07-13 | Plan „PLAN_Aenderungen_2026-07.md" in 3 Teilen (Kategorien → SMTP → Klassenfahrt) | Reihenfolge nach Nutzen/Abhängigkeit. Teil 1 zuerst (kleinster Block, sofort nutzbar). HTML-Prozessdokumente als Abstimmungsgrundlage, adversariale Lückenprüfung vor Umsetzung. |
+| 2026-10-11 | Löschjob bis zur DokuBit-Archivquittung ausgesetzt (Variante (a), Frist 3650 Tage per Compose-Default) | Ohne Archivquittung wäre der einzige Beleg nach 90 Tagen weg (GoBD); Analyse L11, `DEPLOYMENT.md` §13 |
+| 2026-10-13 | Server behält `.env`; `deploy.sh` erkennt `.env.production` oder `.env` und sichert vor jedem Deploy die DB | Server nutzt seit 26.03.2026 `.env`; ohne Backup wäre ein misslungenes Deploy (Migrationen ändern Daten) nicht rückgängig zu machen |
 
 ---
 

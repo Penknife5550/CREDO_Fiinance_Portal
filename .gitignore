@@ -28,3 +28,6 @@ n8n/Textdokument*.txt
 
 # Personenbezogene Exporte (VMA-Nachkorrektur) — nie ins Repo
 vma-nachkorrektur*.csv
+
+# DB-Backups von deploy.sh (personenbezogen, IBAN) — nie ins Repo
+/backups/

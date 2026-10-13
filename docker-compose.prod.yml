@@ -2,7 +2,8 @@
 # CREDO Finanzportal - Produktions-Konfiguration
 # =============================================================================
 # Voraussetzung: Caddy Reverse Proxy mit externem Netzwerk "reverse_proxy"
-# Deployment: docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+# Deployment: ./deploy.sh (Backup + Build + Start). Direkt: mit .env ohne --env-file,
+#             mit .env.production: docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 # Domain: finance.fes-credo.de
 # =============================================================================
 
