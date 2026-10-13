@@ -161,14 +161,14 @@ Alle Werte in `.env.production` anpassen:
 | Variable | Beschreibung | Beispiel |
 |---|---|---|
 | `DB_PASSWORD` | PostgreSQL-Passwort (stark!) | `kF9$mP2xQ...` |
-| `ENCRYPTION_KEY` | 32 Zeichen fuer AES-256 | `a1B2c3D4e5F6g7H8...` |
+| `ENCRYPTION_KEY` | 64 Hex-Zeichen fuer AES-256 (`openssl rand -hex 32`) | `3f9c...` (64 Zeichen) |
 | `SMTP_HOST` | SMTP-Server | `smtp.office365.com` |
 | `SMTP_PORT` | SMTP-Port | `587` |
 | `SMTP_USER` | SMTP-Benutzername | `finanzportal@credo.de` |
 | `SMTP_PASS` | SMTP-Passwort | `...` |
 | `MAIL_FROM_NAME` | Absendername | `CREDO Finanzportal` |
 | `MAIL_FROM_EMAIL` | Absender-E-Mail | `finanzportal@credo.de` |
-| `ADMIN_INITIAL_PASSWORD` | Admin-Passwort | `...` |
+| `ADMIN_INITIAL_PASSWORD` | Admin-Passwort (min. 12 Zeichen, Eintrag stehen lassen) | `...` |
 | `APP_URL` | Oeffentliche URL | `https://finance.fes-credo.de` |
 
 ### 3. Caddy konfigurieren

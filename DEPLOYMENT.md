@@ -38,7 +38,7 @@ Pflichtfelder:
 | Variable | Wert |
 |---|---|
 | `DB_PASSWORD` | Starkes Passwort, min. 16 Zeichen |
-| `ENCRYPTION_KEY` | **Genau 32 Zeichen**, einmalig generieren: `openssl rand -hex 16` |
+| `ENCRYPTION_KEY` | **Genau 64 Hex-Zeichen** (32 Byte, AES-256-GCM), einmalig generieren: `openssl rand -hex 32`. Ein anderes Format bricht den App-Start ab. **Nie wechseln**, sobald im AdminCenter Zugangsdaten gespeichert sind — sie wären sonst nicht mehr lesbar |
 | `JWT_SECRET` | Beliebiger 48+ Zeichen-String, einmalig generieren: `openssl rand -hex 24` |
 | `SMTP_HOST` | SMTP-Server, z.B. `smtp.office365.com` |
 | `SMTP_PORT` | `587` (STARTTLS) bzw. `465` (implizites TLS) |
@@ -46,7 +46,7 @@ Pflichtfelder:
 | `SMTP_PASS` | Postfach-Passwort / App-Passwort |
 | `MAIL_FROM_NAME` | `CREDO Finanzportal` |
 | `MAIL_FROM_EMAIL` | `finanzportal@credo.de` |
-| `ADMIN_INITIAL_PASSWORD` | Initial-Passwort, **muss nach erstem Login geaendert werden** |
+| `ADMIN_INITIAL_PASSWORD` | Initial-Passwort, **min. 12 Zeichen**, muss nach erstem Login geaendert werden. **Eintrag stehen lassen:** Der Seed laeuft bei jedem Container-Start und bricht ohne gueltigen Wert ab (App startet dann nicht) |
 | `APP_URL` | `https://finance.fes-credo.de` |
 
 Die **SMTP-Felder sind Pflicht** — SMTP ist der Default-Versandweg. Nur wenn stattdessen n8n/Webhook genutzt werden soll, im AdminCenter auf `WEBHOOK` umstellen (siehe Punkt 7); dann dürfen die SMTP-Felder leer bleiben.

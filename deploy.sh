@@ -23,9 +23,10 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-# Prüfe ob Platzhalter noch drin stehen
-if grep -q "HIER_" "$ENV_FILE"; then
-  echo "WARNUNG: $ENV_FILE enthält noch Platzhalter (HIER_...)!"
+# Prüfe ob Platzhalter noch drin stehen (.env.example nutzt "change-me")
+if grep -qE "HIER_|change-me" "$ENV_FILE"; then
+  echo "WARNUNG: $ENV_FILE enthält noch Platzhalter (change-me / HIER_...)!"
+  grep -nE "HIER_|change-me" "$ENV_FILE" | cut -d= -f1
   echo "Bitte alle Werte vor dem Deployment anpassen."
   exit 1
 fi
