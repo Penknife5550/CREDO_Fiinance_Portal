@@ -87,11 +87,11 @@ Finance_Portal/
 ├── docker-compose.dev.yml          # Entwicklung (nur DB)
 ├── docker-compose.local.yml        # Lokaler Voll-Stack-Test (Port direkt exponiert)
 ├── docker-entrypoint.sh            # Auto-Migration + Start
-├── deploy.sh                       # Deployment-Script
+├── deploy.sh                       # Deployment-Script (Backup + Build + Start + Health-Check)
 ├── Caddyfile.example               # Caddy-Konfiguration
 ├── DEPLOYMENT.md                   # GoLive-Schritte
 ├── .env.example                    # Umgebungsvariablen-Template
-└── .env.production                 # Produktions-Geheimnisse (nicht committed)
+└── .env.production bzw. .env       # Produktions-Geheimnisse (nicht committed; Server nutzt .env)
 ```
 
 ---
@@ -156,7 +156,7 @@ cd CREDO_Fiinance_Portal
 cp .env.example .env.production
 ```
 
-Alle Werte in `.env.production` anpassen:
+Alle Werte in `.env.production` anpassen (oder `.env` — der Produktivserver nutzt `.env`, `deploy.sh` erkennt beide; siehe DEPLOYMENT.md §3):
 
 | Variable | Beschreibung | Beispiel |
 |---|---|---|
@@ -194,16 +194,18 @@ docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
 Das Script:
-1. Prueft ob `.env.production` existiert und keine Platzhalter enthaelt
-2. Baut das Docker-Image (Multi-Stage: Frontend + Backend)
-3. Startet die Container (App + PostgreSQL)
-4. Fuehrt automatisch DB-Migrationen + Seed aus
-5. Prueft den Health-Check
+1. Waehlt die Env-Datei (`.env.production`, sonst `.env`) und prueft sie auf Platzhalter
+2. Sichert die laufende DB nach `backups/` (`pg_dump`, bricht bei Fehler ab)
+3. Baut das Docker-Image (Multi-Stage: Frontend + Backend)
+4. Startet die Container (App + PostgreSQL)
+5. Fuehrt automatisch DB-Migrationen + Seed aus
+6. Wartet bis zu 2 Minuten auf den Health-Check (Fehler → letzte Log-Zeilen, Exit 1)
 
 ### Deploy-Script Befehle
 
 ```bash
-./deploy.sh              # Bauen + Starten
+./deploy.sh              # Backup + Bauen + Starten
+./deploy.sh backup       # nur DB-Backup nach backups/
 ./deploy.sh logs         # Live-Logs anzeigen
 ./deploy.sh stop         # Container stoppen
 ./deploy.sh restart      # Neustart (ohne Neubauen)

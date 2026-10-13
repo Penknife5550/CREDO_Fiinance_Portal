@@ -33,6 +33,13 @@ cp .env.example .env.production
 nano .env.production
 ```
 
+> **Env-Datei: `.env.production` oder `.env`.** Der Produktivserver (`/vol/container/credo-finanzportal`) nutzt seit
+> 26.03.2026 **`.env`** — so lassen. `deploy.sh` erkennt beide (sind beide da, gewinnt `.env.production`). Bei
+> **direkten** `docker compose`-Aufrufen gilt: mit `.env` **kein** `--env-file` angeben (Compose liest sie automatisch);
+> mit `.env.production` **immer** `--env-file .env.production` — sonst sind alle Variablen leer und die App startet
+> nicht. `<Env-Datei>` steht im Folgenden für die jeweilige Datei. Auf dem Server gehören Repo und Docker root:
+> `sudo ./deploy.sh`, `sudo git …` (ohne `sudo` meldet Git „dubious ownership“).
+
 Pflichtfelder:
 
 | Variable | Wert |
@@ -52,7 +59,7 @@ Pflichtfelder:
 Die **SMTP-Felder sind Pflicht** — SMTP ist der Default-Versandweg. Nur wenn stattdessen n8n/Webhook genutzt werden soll, im AdminCenter auf `WEBHOOK` umstellen (siehe Punkt 7); dann dürfen die SMTP-Felder leer bleiben.
 
 ```bash
-chmod 600 .env.production
+chmod 600 <Env-Datei>
 ```
 
 ---
@@ -91,13 +98,19 @@ docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
 Das Script:
-1. Prueft `.env.production` (kein `HIER_` Platzhalter)
-2. Baut Multi-Stage-Image (Frontend + Backend)
-3. Startet `credo-finanz-db` und `credo-finanz-app`
-4. Wartet auf DB-Health, fuehrt automatisch alle Migrationen aus (`docker-entrypoint.sh`)
-5. Seedet 7 Mandanten + Pauschalen + Admin-Konto
+1. Waehlt die Env-Datei (`.env.production`, sonst `.env`) und prueft sie auf Platzhalter (`change-me`, `HIER_`)
+2. Sichert die laufende DB nach `backups/finanzportal_<Datum>.dump` (`pg_dump`, Lesbarkeit per `pg_restore -l` geprueft, nur fuer root lesbar) — schlaegt das fehl, bricht es ab, bevor etwas gebaut wird
+3. Baut Multi-Stage-Image (Frontend + Backend)
+4. Startet `credo-finanz-db` und `credo-finanz-app`
+5. Wartet auf DB-Health, fuehrt automatisch alle Migrationen aus (`docker-entrypoint.sh`)
+6. Seedet 7 Mandanten + Pauschalen + Admin-Konto
+7. Wartet bis zu 2 Minuten auf den Health-Check; ist die App nicht `healthy`, zeigt es die letzten Log-Zeilen und endet mit Fehler
 
-**Migrationen 0000–0017 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`), 0000–0014 erneut am 10.10.2026, 0000–0015 und 0000–0017 ebenfalls am 10.10.2026. Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012), `email_config` als Singleton (0013), vollständige BMF-Auslandspauschalen 2026 (0014), Land je Reisetag + Übernachtungsangabe (0015), Städte mit eigenem Satz unter „Häufige Ziele“ (0016), Auslandspauschalen je Satzstand/Jahr + angewandter Satz je Reisetag (0017).
+`./deploy.sh backup` legt nur ein Backup an. Das Backup liegt auf demselben Server: Es sichert gegen ein misslungenes
+Deploy, nicht gegen Plattenverlust (Analyse S6 offen) — fuer Letzteres die Dumps regelmaessig auf ein anderes System
+kopieren. Die Dumps enthalten personenbezogene Daten (IBAN): alte Dumps loeschen, Aufbewahrung: (eintragen).
+
+**Migrationen 0000–0017 laufen automatisch** über `docker-entrypoint.sh` (Drizzle-Migrator, jede Migration genau einmal). `0006_sammelfahrt.sql` und `0011_klassenfahrt.sql` nutzen `ALTER TYPE ADD VALUE IF NOT EXISTS` — funktioniert mit PostgreSQL ≥ 12 (Repo nutzt 16). Der komplette Lauf 0000–0012 + Seed wurde gegen eine **frische PG-16-DB verifiziert** (20 Tabellen, 7 Mandanten, 43 Erstattungs-Kategorien, leerer `beleg_counter`), 0000–0014 erneut am 10.10.2026, 0000–0015 und 0000–0017 ebenfalls am 10.10.2026, 0000–0017 erneut am 13.10.2026 sowie das **Update** einer DB mit Stand 0012 (Altdaten, drei `email_config`-Zeilen, im AdminCenter geaenderter und geloeschter Auslandssatz) auf 0017: konfigurierte SMTP-Zeile bleibt, AdminCenter-Wert bleibt und wird von der Pruefabfrage gemeldet, Luxemburg neu angelegt. Neu seit 0006: `erstattung_kategorien` (0009), `email_log` + SMTP-Versand (0010), Klassenfahrt-Tabellen + `KLASSENFAHRT`-Enum (0011), `beleg_counter` für race-freie Belegnummern (0012), `email_config` als Singleton (0013), vollständige BMF-Auslandspauschalen 2026 (0014), Land je Reisetag + Übernachtungsangabe (0015), Städte mit eigenem Satz unter „Häufige Ziele“ (0016), Auslandspauschalen je Satzstand/Jahr + angewandter Satz je Reisetag (0017).
 
 **0014 (Auslandspauschalen nach BMF-Schreiben vom 05.12.2025):** legt alle Länder/Städte an (223 Zeilen inkl. 9 Verweisstaaten) und korrigiert die 19 Bestandszeilen nur dort, wo noch der alte Seed-Wert steht — im AdminCenter gepflegte Werte bleiben unberührt. Vor und nach dem Deploy prüfen:
 
@@ -203,16 +216,43 @@ Im AdminCenter → Protokoll: Versand-Log mit Status pro Einreichung.
 
 ## 11. Rollback
 
-Bei Problemen vor dem ersten echten Vorgang:
+**Mit Backup (Standard):** `deploy.sh` legt vor jedem Deploy `backups/finanzportal_<Datum>.dump` an. Zurueck auf den
+Stand vor dem Deploy:
+
+```bash
+sudo docker stop credo-finanz-app                      # keine Schreibzugriffe mehr
+sudo docker exec credo-finanz-db dropdb -U credo finanzportal
+sudo docker exec credo-finanz-db createdb -U credo finanzportal
+sudo docker exec -i credo-finanz-db pg_restore -U credo -d finanzportal < backups/finanzportal_<Datum>.dump
+sudo git checkout <vorheriger-commit>
+sudo ./deploy.sh                                       # Vorherige Version starten (legt vorher ein neues Backup an)
+```
+
+Nur in eine **leere** DB zurueckspielen (`dropdb`/`createdb`): In eine bestehende DB meldet `pg_restore` Fehler und
+hinterlaesst einen Mischstand (getestet 13.10.2026). Was nach dem Backup eingereicht wurde, ist danach nicht mehr in der
+DB (das PDF ist im DMS) — vorher pruefen: `SELECT beleg_nr FROM einreichungen WHERE created_at > '<Backup-Zeitpunkt>';`.
+Belege und PDFs im Volume `uploads_data` sind nicht im Backup; ein Deploy aendert sie nicht.
+
+> **Commit vor `2bb23d4` (11.10.2026)?** Dessen `docker-compose.prod.yml` setzt keine 3650-Tage-Frist — der Loeschjob
+> loescht dann wieder nach 90 Tagen (§13a). Und dessen `deploy.sh` kennt nur `.env.production`. In diesem Fall nach
+> dem `git checkout` die aktuelle Compose-Datei zurueckholen und direkt starten:
+>
+> ```bash
+> sudo git checkout main -- docker-compose.prod.yml
+> sudo docker compose -f docker-compose.prod.yml up -d --build      # mit .env; bei .env.production: --env-file .env.production
+> sudo docker logs credo-finanz-app 2>&1 | grep Retention            # muss 3650 zeigen
+> ```
+
+**Erstinstallation ohne echte Vorgaenge** (nie auf dem Produktivsystem):
 
 ```bash
 ./deploy.sh stop                        # Stack runter
-docker compose -f docker-compose.prod.yml --env-file .env.production down -v  # ACHTUNG: -v loescht DB-Volume
+docker compose -f docker-compose.prod.yml --env-file <Env-Datei> down -v  # ACHTUNG: -v loescht DB-Volume
 git checkout <vorheriger-commit>
 ./deploy.sh                             # Vorherige Version starten
 ```
 
-Nach echten Vorgaengen: KEIN `down -v` — DB-Migration zurueckrollen ueber manuelles SQL (Phase B = Migration 0006).
+Ohne Backup nach echten Vorgaengen: KEIN `down -v` — DB-Migration zurueckrollen ueber manuelles SQL (Phase B = Migration 0006).
 
 **Rollback-SQL fuer 0006:**
 
@@ -228,12 +268,23 @@ DROP TABLE IF EXISTS fahrten;
 ## 12. Updates / neue Releases
 
 ```bash
-cd CREDO_Fiinance_Portal
-git pull
-./deploy.sh   # Image neu bauen + Container neu starten
+cd /vol/container/credo-finanzportal
+sudo git pull
+sudo git log -1 --oneline     # erwarteter Commit?
+sudo ./deploy.sh              # Backup + Image neu bauen + Container neu starten + Health-Check
+sudo docker logs credo-finanz-app 2>&1 | grep -E "Migrations|Seeding complete|Retention|Fehler|FEHLER"
 ```
 
-`docker-entrypoint.sh` fuehrt automatisch neue Migrationen aus.
+`docker-entrypoint.sh` fuehrt automatisch neue Migrationen aus. Erwartet im Log: `Migrations complete.`,
+`Seeding complete!` und `[Retention] Scheduler aktiv (3650-Tage-Frist, …)` — solange Variante (a) aus §13 gilt.
+Danach die Release-Hinweise pruefen (z. B. Pruefabfrage in §5) und den Smoke-Test (§9).
+
+**Stand auf dem Server pruefen** (z. B. ob eine Betriebsentscheidung schon wirkt):
+
+```bash
+sudo docker inspect -f '{{.Created}}' credo-finanz-app     # Alter des laufenden Containers
+sudo docker logs credo-finanz-app 2>&1 | grep Retention | tail -3
+```
 
 ---
 
@@ -243,7 +294,7 @@ Der Loeschjob (`services/retention.ts`) loescht zugestellte Vorgaenge (`GESENDET
 nach der Einreichung (Standard **90** Tage, Wert im Code). Ausgenommen ist bis zum **31.03.2027** der
 **Reisekosten-Altbestand**: Reisekosten ohne Land je Reisetag, also eingereicht vor Release 1b — genau die
 Belege, die `backend/scripts/vma-nachkorrektur-2026.sql` liest. Das Enddatum steht im Code
-(`STANDARD_MORATORIUM_BIS`), `RETENTION_MORATORIUM_BIS` in `.env.production` ueberschreibt es. Grund: Die
+(`STANDARD_MORATORIUM_BIS`), `RETENTION_MORATORIUM_BIS` in der `<Env-Datei>` ueberschreibt es. Grund: Die
 Auslands-VMA wurden bis zum VMA-Fix um rund 20 % zu hoch berechnet; Reisetage und Reiseland werden fuer die
 lohnsteuerliche Nachkorrektur 2026 gebraucht (Art. 17 Abs. 3 lit. b/e DSGVO). Datenminimierung
 (Art. 5 Abs. 1 lit. c/e DSGVO): IBAN, Belege und PDF braucht die Nachkorrektur nicht.
@@ -263,12 +314,12 @@ einzeln auf `main` uebernommen, gibt es das Skript dort erst nach dem Merge.
 > **Offene Entscheidung VOR dem Deploy (Analyse L11/P03, Code-Review SEC-M1):** Bisher galt: Aufhebung des
 > Moratoriums erst mit **Archivquittung aus DokuBit**. Diese Quittung gibt es noch nicht (P03 offen) —
 > `GESENDET` heisst nur, dass SMTP die Mail angenommen hat. Mit diesem Stand loescht der Job ab dem ersten Lauf
-> (60 s nach dem Start; produktiv seit ca. 16.07.2026, also ab ca. 14.10.2026 relevant) Erstattungen, Sammel-
+> (60 s nach dem Start, danach taeglich) Erstattungen, Sammel-
 > und Klassenfahrten sowie neue Reisekosten nach 90 Tagen vollstaendig und beim Reisekosten-Altbestand PDF und
 > Belege. Ging eine Mail im DMS verloren, ist der Buchungsbeleg dann endgueltig weg (GoBD Rz. 142; es gibt noch
 > kein Backup, Analyse S6). Mit dem Datenschutzbeauftragten entscheiden und hier eintragen:
 >
-> - **(a) Bis zur Archivquittung nichts loeschen:** `RETENTION_FRIST_TAGE=3650` in `.env.production`. Fail-closed-
+> - **(a) Bis zur Archivquittung nichts loeschen:** `RETENTION_FRIST_TAGE=3650` in der `<Env-Datei>`. Fail-closed-
 >   Pruefung und Moratorium bleiben; kein Code-Eingriff noetig.
 > - **(b) Loeschen nach 90 Tagen, aber nur nach DokuBit-Abgleich:** Vor dem Deploy die Belegnummern der Liste
 >   unten in DokuBit pruefen (jede muss dort archiviert sein; fehlende neu senden, bevor sie faellig werden),
@@ -276,7 +327,8 @@ einzeln auf `main` uebernommen, gibt es das Skript dort erst nach dem Merge.
 >
 > **Entscheidung:** 11.10.2026, **Variante (a)**, Dimitri Riesen. Umgesetzt als Compose-Default
 > `RETENTION_FRIST_TAGE: ${RETENTION_FRIST_TAGE:-3650}` (`docker-compose.prod.yml`, `docker-compose.yml`) — auf dem
-> Server ist kein Eintrag noetig. Folge: Bis zur Archivquittung wird nichts geloescht und auch der
+> Server ist kein Eintrag noetig. **Wirksam erst mit dem Deploy am 13.10.2026** — bis dahin hat der alte Container
+> bereits geloescht (die Annahme „ab ca. 14.10.2026 relevant“ war falsch), siehe §13a. Folge: Bis zur Archivquittung wird nichts geloescht und auch der
 > Reisekosten-Altbestand nicht minimiert (IBAN/PDF bleiben). Mit dem Datenschutzbeauftragten dokumentieren
 > (Aufbewahrung, bis die Archivierung im DMS nachgewiesen ist). Aufheben: Archivquittung (P03) umsetzen, dann
 > den Default wieder entfernen bzw. `RETENTION_FRIST_TAGE=90` setzen.
@@ -288,7 +340,7 @@ docker exec credo-finanz-db psql -U credo -d finanzportal -c "SELECT beleg_nr, t
 Das Moratorium endet automatisch: **Ab dem 31.03.2027** loescht der Job auch den Reisekosten-Altbestand nach
 der normalen Frist, ohne Eingriff. Ab dem 01.03.2027 warnt jeder Lauf im Log (`Moratorium REISEKOSTEN endet
 am …`). **Prueftermin: 01.03.2027** — Kalendertermin mit dem Datenschutzbeauftragten anlegen: Ist die
-Nachkorrektur abgeschlossen? Falls nicht, das Enddatum **vor dem 31.03.2027** begruendet in `.env.production`
+Nachkorrektur abgeschlossen? Falls nicht, das Enddatum **vor dem 31.03.2027** begruendet in der `<Env-Datei>`
 verlaengern (`RETENTION_MORATORIUM_BIS=JJJJ-MM-TT`) und wie unten aktivieren. Vorzeitig beenden: ein
 vergangenes Datum eintragen.
 
@@ -299,15 +351,15 @@ Fail-closed: Ist `RETENTION_FRIST_TAGE` keine ganze Zahl ab 1 (z. B. `3.650`, `-
 Aeltere Images (z. B. ein getaggtes Vorgaenger-Image als Rueckweg oder `up -d` ohne `--build`) lesen
 `RETENTION_TAGE` und kennen kein Moratorium. `docker-compose.prod.yml` setzt `RETENTION_TAGE` deshalb fest auf
 `3650` — ein solches Image loescht mit dieser Compose-Datei nichts. Der aktuelle Code liest `RETENTION_TAGE`
-nicht mehr; ein alter Eintrag in `.env.production` ist wirkungslos.
+nicht mehr; ein alter Eintrag in der `<Env-Datei>` ist wirkungslos.
 
 Aktivieren bzw. aendern (NICHT `./deploy.sh restart` — das uebernimmt geaenderte Umgebungswerte nicht):
 
 ```bash
-git pull
-grep RETENTION .env.production       # leer lassen = Variante (a); nur RETENTION_FRIST_TAGE / RETENTION_MORATORIUM_BIS wirken
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build app
-docker logs credo-finanz-app 2>&1 | grep Retention
+sudo git pull
+sudo grep RETENTION <Env-Datei>      # leer lassen = Variante (a); nur RETENTION_FRIST_TAGE / RETENTION_MORATORIUM_BIS wirken
+sudo ./deploy.sh                     # Backup + neu bauen + starten (uebernimmt geaenderte Env-Werte)
+sudo docker logs credo-finanz-app 2>&1 | grep Retention
 # erwartet (Variante a, ohne eigene Eintraege): "Scheduler aktiv (3650-Tage-Frist, täglich, nur GESENDET). Moratorium REISEKOSTEN aktiv, endet am 2027-03-31: ..."
 ```
 
@@ -316,6 +368,55 @@ Kontrolle am Folgetag (Variante b: aelter als 90 Tage nur noch Reisekosten-Altbe
 ```bash
 docker exec credo-finanz-db psql -U credo -d finanzportal -c "SELECT typ, count(*), count(bank_iban) AS mit_iban, count(pdf_dateipfad) AS mit_pdf FROM einreichungen WHERE status = 'GESENDET' AND created_at < now() - interval '90 days' GROUP BY typ;"
 ```
+
+---
+
+## 13a. Vorfall 13.10.2026: Loeschungen vor Umsetzung der Entscheidung L11
+
+**Sachverhalt.** Der Produktiv-Container (erstellt 24.07.2026, Code-Stand mit 90-Tage-Loeschjob aus `755fe6e`/`56aac48`)
+lief bis zum Deploy am 13.10.2026. Die damalige `docker-compose.prod.yml` setzte keine Frist, der Job loeschte also
+taeglich zugestellte Vorgaenge (`GESENDET`) aelter als **90 Tage vollstaendig**: Datensatz, Beleg-Dateien, PDF und
+`email_log`. Ein Moratorium fuer den Reisekosten-Altbestand kannte dieser Stand nicht. Die Entscheidung L11
+(Variante (a), 11.10.2026) und das Moratorium (§13) wurden erst mit dem Deploy wirksam. Die Annahme in §13, das
+Loeschen werde „ab ca. 14.10.2026 relevant“, war falsch.
+
+**Belegt** (Container-Log vom 13.10.2026, nur die letzten zwei Laeufe ausgewertet):
+
+| Lauf | Geloescht |
+|---|---|
+| vorletzter | 8 Vorgaenge, 28 Dateien: KE-2026-00076, RK-2026-00016, RK-2026-00017, KE-2026-00077 bis KE-2026-00081 |
+| letzter | 5 Vorgaenge, 13 Dateien: KE-2026-00082 bis KE-2026-00086 |
+| fruehere | nicht ausgewertet — vollstaendige Liste siehe unten |
+
+Mit dem Deploy wurde der alte Container ersetzt; seine Logs sind damit nicht mehr abrufbar, es sei denn, sie wurden
+vorher gesichert (gesichert: (eintragen ja/nein, Ablageort)). Ohne gesichertes Log liefert
+`backend/scripts/belegnummern-luecken.sql` die fehlenden Belegnummern je Praefix und Jahr (Obergrenze — auch
+Test-Loeschungen und abgebrochene Einreichungen erzeugen Luecken):
+
+```bash
+sudo docker exec -i credo-finanz-db psql -U credo -d finanzportal < backend/scripts/belegnummern-luecken.sql
+```
+
+**Behoben.** Deploy `ae4fec0` am 13.10.2026 vormittags (direkt nach dem Backup 11:07). Log danach:
+`[Retention] Scheduler aktiv (3650-Tage-Frist, täglich, nur GESENDET). Moratorium REISEKOSTEN aktiv, endet am
+2027-03-31 …` — seitdem wird nichts geloescht. Backup vor dem Deploy: `~/finanz_2026-10-13_1107.dump` (Benutzer
+`fes-linux-adm`, 474 KB, 21 Tabellen, lesbar). Es entstand **nach** den Loeschungen und enthaelt die geloeschten
+Vorgaenge nicht; deren einzige Kopie ist das PDF im DMS (DokuBit), sofern es dort archiviert wurde. `GESENDET` heisst
+nur, dass SMTP die Mail angenommen hat (P03).
+
+**Offen:**
+
+| # | Aufgabe | Verantwortlich | Erledigt |
+|---|---|---|---|
+| 1 | Vollstaendige Liste der geloeschten Belegnummern (Log oder Luecken-Abfrage) | (eintragen) | |
+| 2 | Jede Nummer in DokuBit pruefen: archiviert? Fehlende vom Mitarbeiter neu einreichen lassen (GoBD) | (eintragen) | |
+| 3 | RK-2026-00016, RK-2026-00017 und weitere geloeschte Reisekosten: Auslandsreise? Falls ja, Reisetage und Land fuer die VMA-Nachkorrektur aus dem PDF im DMS uebernehmen — `vma-nachkorrektur-2026.sql` findet sie nicht mehr in der DB | (eintragen) | |
+| 4 | Datenschutzbeauftragten informieren: Loeschung erfolgte nach dem damals beschlossenen 90-Tage-Konzept, aber vor Wirksamwerden von L11; Bewertung, ob ein meldepflichtiger Verlust (Art. 4 Nr. 12, Art. 33 DSGVO, Frist 72 h ab Kenntnis 13.10.2026) vorliegt, trifft der DSB | Dimitri Riesen | |
+| 5 | Backup `~/finanz_2026-10-13_1107.dump` nach `backups/` bzw. auf ein zweites System kopieren | (eintragen) | |
+
+**Lehre.** Eine Betriebsentscheidung wirkt erst mit dem Deploy. Bei Entscheidungen zum Loeschjob den Stand auf dem
+Server pruefen (§12, „Stand auf dem Server pruefen“) und zeitnah deployen. `deploy.sh` sichert seither vor jedem Deploy
+die DB (§5).
 
 ---
 
